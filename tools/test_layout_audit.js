@@ -168,7 +168,10 @@ function overlapRatio(a, b) {
   await audit('build-full');
 
   { const lb = await centerOf("window.__rap.btnRect('launch')"); await click(lb.x, lb.y); }
-  await sleep(800);
+  await sleep(300);
+  // 出发横幅（只活 2 秒，必须趁它还在的时候审）
+  await audit('run-banner', '1-1');
+  await sleep(2400);
   await audit('run');
 
   { const pb = await centerOf("window.__rap.btnRect('pause')"); await click(pb.x, pb.y); }

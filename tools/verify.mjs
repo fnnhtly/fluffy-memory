@@ -31,6 +31,7 @@ const SCRIPTS = [
   'test_intro.js',
   'test_no_autospin.js',
   'test_arrow_visibility.js',
+  'test_run_banner.js',
   'test_fullplay.js',
   'test_drive_sequence.js',
   'test_wheel_spin.js',
