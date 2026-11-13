@@ -69,7 +69,7 @@
   }
  ],
  "challenge": {
-  "type": "none"
+  "type": "noBreak"
  },
  "timeLimit": 120
 }

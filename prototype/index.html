@@ -136,30 +136,76 @@
   try {
     progress = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
   } catch (e) { progress = {}; }
-  // 金币是"最好成绩那一次"对应的，不是累加 —— 否则重刷同一关能无限刷金币，
-  // 结算页那个金币数就成了一个骗人的数字。
+
+  /* 三星是**累计**的，不是一局定生死。
+   *
+   * 这是照《捣蛋猪》改的（见 docs/reference-badpiggies.md §3）：
+   * 参考里一篇百科原话是「每一关的三星是采用累计的方式获得……分别三次获取也算作三星通关」。
+   * 我们原来的做法是"这一局同时满足几个条件就算几星"，后果是玩家一旦没在一局里
+   * 全做到，就必须整关重来——第三颗星从目标变成了惩罚。
+   *
+   * 现在每一颗星是一个**永久标记**（到达 / 全木箱 / 挑战条件），
+   * 满足一次就永久点亮，此后任何一局失败都不会熄灭它。
+   */
+  const GOALS = ['arrive', 'boxes', 'challenge'];
+  function mergeGoals(oldGoals, newGoals) {
+    const g = Object.assign({ arrive: false, boxes: false, challenge: false }, oldGoals || {});
+    GOALS.forEach(k => { if (newGoals && newGoals[k]) g[k] = true; });
+    return g;
+  }
+  function starsOf(goals) {
+    return GOALS.reduce((n, k) => n + (goals && goals[k] ? 1 : 0), 0);
+  }
+  // 存档里可能还是旧格式（只有 stars 数字，没有 goals）。不迁移的话，
+  // 老存档的星会显示成 0 颗——看起来像"进度丢了"，实际是格式变了。
+  function migrateRecord(rec) {
+    if (!rec) return null;
+    if (rec.goals) return rec;
+    const g = { arrive: (rec.stars || 0) >= 1, boxes: (rec.stars || 0) >= 2,
+                challenge: (rec.stars || 0) >= 3 };
+    return Object.assign({}, rec, { goals: g });
+  }
+  function readRecord(levelId) {
+    let rec = progress[levelId];
+    try {
+      const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
+      if (raw[levelId]) rec = raw[levelId];
+    } catch (e) {}
+    return migrateRecord(rec);
+  }
+
+  // 金币跟着星走：一关的金币 = 该关**已点亮**的星数 ×50 + 木箱 ×30。
+  // 这样重刷不会无限刷金币（金币永远由永久标记推导），也不需要单独存一个会漂移的数字。
   function coinsOf(stars, boxesGot) {
     return (stars || 0) * 50 + (boxesGot || 0) * 30;
   }
   function totalCoins() {
     let sum = 0;
     levels.forEach(lv => {
-      let pr = progress[lv.levelId];
-      try {
-        const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
-        if (raw[lv.levelId]) pr = raw[lv.levelId];
-      } catch (e) {}
-      if (pr && pr.coins) sum += pr.coins;
+      const pr = readRecord(lv.levelId);
+      if (pr) sum += coinsOf(starsOf(pr.goals), pr.boxes || 0);
     });
     return sum;
   }
-  function saveProgress(levelId, stars, time, coins) {
-    const cur = progress[levelId] || { stars: 0, best: null, coins: 0 };
-    if (stars > cur.stars) cur.stars = stars;
+  function totalStars() {
+    return levels.reduce((n, lv) => {
+      const pr = readRecord(lv.levelId);
+      return n + (pr ? starsOf(pr.goals) : 0);
+    }, 0);
+  }
+  /* 写存档：goals 取并集（只增不减），木箱取最好，时间取最短。
+   * 返回 { before, after }，让调用方知道"这一次到底点亮了哪颗新星"。 */
+  function saveProgress(levelId, goals, time, boxesGot) {
+    const cur = migrateRecord(progress[levelId]) ||
+      { goals: { arrive: false, boxes: false, challenge: false }, best: null, boxes: 0 };
+    const before = Object.assign({}, cur.goals);
+    cur.goals = mergeGoals(cur.goals, goals);
     if (!cur.best || time < cur.best) cur.best = time;
-    if (typeof coins === 'number' && coins > (cur.coins || 0)) cur.coins = coins;
+    if (typeof boxesGot === 'number' && boxesGot > (cur.boxes || 0)) cur.boxes = boxesGot;
+    cur.stars = starsOf(cur.goals);        // 冗余字段：给旧代码/旧存档读
     progress[levelId] = cur;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(progress)); } catch (e) {}
+    return { before, after: Object.assign({}, cur.goals) };
   }
   const level = () => levels[state.levelIndex];
 
@@ -370,9 +416,40 @@
         return { type: ch.type, label: '不用马达',
                  value: '已用 ' + (st.motorUse || 0).toFixed(1) + ' s',
                  pass: (st.motorUse || 0) <= (ch.max || 0) };
+      /* 「限时／速通」——参考里最常见的第三颗星（秒表图标）。
+       * 它奖励的是"把车造轻、路线走直"，和「不散架」正好是两种相反的造车取向：
+       * 前者要快而脆，后者要结实而慢。这也是参考让人愿意重打同一关的原因。 */
+      case 'time':
+        return { type: ch.type, label: '限时 ≤ ' + (ch.max || 0).toFixed(1) + ' s',
+                 value: '现在 ' + (st.time || 0).toFixed(1) + ' s',
+                 pass: (st.time || 0) <= (ch.max || 0) };
+      /* 不散架（KRAK SNAP）：参考里最经典的那颗星 —— 载具没散架、猪也没掉出来。 */
+      case 'noBreak':
+        if (st.hullBroken) {
+          return { type: ch.type, label: '不散架', value: '木框已碎', pass: false };
+        }
+        if (st.pigEjected) {
+          return { type: ch.type, label: '不散架', value: '猪掉出来了', pass: false };
+        }
+        return { type: ch.type, label: '不散架', value: '结构完好', pass: true };
       default:
         return { type: 'none', label: '本关没有 ★★★', value: '', pass: false };
     }
+  }
+  /* 三颗星的名字（结算页与实时状态条共用一份，避免两处文案漂移）。
+   * 照参考的顺序：① 到终点 ② 全木箱 ③ 关卡特殊条件。 */
+  function goalNames() {
+    const ch = (level() || {}).challenge || { type: 'none' };
+    const cmp = {
+      none: '本关没有特殊条件',
+      pumpPress: '不按打气筒',
+      energyLeft: '能量剩 ≥ ' + (ch.min || 0),
+      noFlip: '全程不翻车',
+      motorUse: '不用马达通关',
+      noBreak: '不散架（KRAK SNAP）',
+      time: '限时 ≤ ' + (ch.max || 0).toFixed(1) + ' s'
+    };
+    return { arrive: '小猪抵达终点', boxes: '收齐所有木箱', challenge: cmp[ch.type] || '特殊条件' };
   }
   function hit(rect, mx, my) { return rect && mx >= rect.x && mx <= rect.x + rect.w && my >= rect.y && my <= rect.y + rect.h; }
 
@@ -435,6 +512,27 @@
     state.runBanner = 2.0;      // 出发横幅：关卡名 + 本关目标
     SFX.launch();
     state.replayT = 0; state.replayIdx = 0;
+  }
+
+  /* 标准解发射：给测试用的一步到位入口。
+   * `_presses` 里的按下/松开时刻会在跑的过程中按时送到 `RAP.pressInteract`
+   * —— 和玩家按 1/2/3 键走的是同一条代码路径，不是伪造状态。
+   * 之所以需要它：1-2 改成"必须按一下打气筒"之后，光是把零件摆好并不能通关，
+   * 用 SPECS 自动跑关的测试必须也能复现"什么时候按"。 */
+  function launchSpec(levelIndex, specKey) {
+    if (typeof levelIndex === 'number') startLevel(levelIndex);
+    const lv = level();
+    const spec = RAP.SPECS[specKey];
+    if (!spec) { toast('没有这个标准解：' + specKey); return false; }
+    state.build = RAP.newBuild();
+    RAP.applySpec(lv, state.build, spec);
+    const chk = RAP.canLaunch(state.build);
+    if (!chk.ok) { toast('标准解装不上：' + chk.reason); return false; }
+    launch();
+    RAP.applySpecRuntime(state.run, spec);
+    state.run.pressScript = (spec._presses || []).slice();
+    state.welcome = 0; state.introT = 1;
+    return true;
   }
 
   // ---------- 输入 ----------
@@ -2449,7 +2547,7 @@ const BIOMES = {
     const ease = 1 - Math.pow(1 - state.resultT, 3);
     const cardY = 150 - (1 - ease) * 420;
 
-    const W = 760, H = 372, X = DW / 2 - W / 2;
+    const W = 760, H = 424, X = DW / 2 - W / 2;
     // 卡片：深蓝夜色 + 金线，和 HUD / 建造坞同一套语言（原来是一整块纯绿，像另一个游戏）
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
@@ -2512,15 +2610,29 @@ const BIOMES = {
       }
     }
 
-    // 星级（三颗小星，间隔 0.3s 依次弹出）
-    const stars = win ? st.stars : 0;
+    /* 三颗星 = 三个**永久标记**（到达 / 全木箱 / 特殊条件），累计制。
+     * 参考里「分别三次获取也算作三星通关」，所以这里画的不是"这一局拿了几颗"，
+     * 而是"这一关现在一共亮了几颗"，并把**这一局新点亮**的那颗标上 NEW。
+     * 玩家失败一次不该看到星全灭 —— 那会让累计制退回一局定生死。 */
+    const tgoals = state.totalGoals || (win ? st.starGoals : null) ||
+      { arrive: false, boxes: false, challenge: false };
+    const newG = state.newGoals || [];
+    const gnames = goalNames();
     for (let i = 0; i < 3; i++) {
       const pop = Math.max(0, Math.min(1, (state.resultT - 0.25 - i * 0.12) * 4));
       if (pop <= 0) continue;
-      const cx = X + W / 2 - 84 + i * 84, cy = cardY + 268;
+      const gk = GOALS[i];
+      const on = !!tgoals[gk];
+      const isNew = on && newG.indexOf(gk) >= 0;
+      const cx = X + W / 2 - 108 + i * 108, cy = cardY + 268;
       ctx.save();
       ctx.translate(cx, cy); ctx.scale(pop, pop);
-      ctx.fillStyle = i < stars ? '#ffd93d' : 'rgba(255,255,255,.16)';
+      if (isNew) {
+        // 新点亮的星：一圈金色光环（只在这一局真的推进进度时出现）
+        ctx.fillStyle = 'rgba(255,217,61,.20)';
+        ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = on ? '#ffd93d' : 'rgba(255,255,255,.16)';
       ctx.beginPath();
       for (let k = 0; k < 10; k++) {
         const ang = -Math.PI / 2 + k * Math.PI / 5;
@@ -2528,20 +2640,35 @@ const BIOMES = {
         ctx[k === 0 ? 'moveTo' : 'lineTo'](Math.cos(ang) * rad, Math.sin(ang) * rad);
       }
       ctx.closePath(); ctx.fill();
+      if (on) {
+        ctx.strokeStyle = 'rgba(120,86,10,.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+      }
       ctx.restore();
+      // 星下面的小标签：说清这颗星是哪一件事。
+      // 未点亮的也要看得清 —— 玩家得先看见"还差什么"才可能去补，所以用 70% 白而不是暗灰。
+      text(gnames[gk] || gk, cx, cy + 46, 11,
+        on ? (isNew ? '#ffe9b0' : 'rgba(214,232,244,.9)') : 'rgba(214,228,240,.72)', 'center');
+      if (isNew) text('NEW', cx, cy - 44, 10, '#ffd93d', 'center', true);
     }
 
-    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 322, 16, '#cfe0ec', 'left');
-    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 322, 16, '#cfe0ec', 'center');
-    text(`能量剩 ${Math.round(st.car.energy)}`, X + W - 42, cardY + 322, 16, '#cfe0ec', 'right');
+    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 400, 16, '#cfe0ec', 'left');
+    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 400, 16, '#cfe0ec', 'center');
+    text(`能量剩 ${Math.round(st.car.energy)}`, X + W - 42, cardY + 400, 16, '#cfe0ec', 'right');
+
+    // 这一关的累计星数 —— 让"还差一颗"变成一件看得见的事
+    text('本关 ★ ' + starsOf(tgoals) + ' / 3　总计 ★ ' + totalStars() + ' / ' + (levels.length * 3),
+      X + W / 2, cardY + 428, 13, 'rgba(200,222,238,.85)', 'center');
 
     if (!win) text('原因：' + failText(st.failReason), X + 42, cardY + 352, 15, '#ffc9bb', 'left');
     else {
-      const ch = level().challenge || {};
-      const names = { none: '本关没有 ★★★', pumpPress: '不按打气筒通关', energyLeft: '能量剩 ≥ 30',
-                      noFlip: '全程不翻车', motorUse: '不用马达通关' };
-      text('★★★ 条件：' + (names[ch.type] || ch.type), X + 42, cardY + 352, 15,
-        stars === 3 ? '#b6ff9e' : '#8fa3b4', 'left');
+      // 列出这一局**没**点亮的那几颗，并直接说清怎么拿
+      const missing = GOALS.filter(k => !tgoals[k]);
+      if (!missing.length) {
+        text('全部三星达成！', X + 42, cardY + 352, 15, '#b6ff9e', 'left', true);
+      } else {
+        text('还差：' + missing.map(k => gnames[k]).join(' / '), X + 42, cardY + 352, 15,
+          '#8fa3b4', 'left');
+      }
     }
 
     // 新纪录徽章（滑入后 0.7s 登场，带轻微弹跳）
@@ -2587,16 +2714,17 @@ const BIOMES = {
       ctx.save();
       ctx.globalAlpha = coinT;
       const cy2 = cardY + 74;       // 与标题同一行右侧（新纪录徽章下方不会挡）
-      // 金币：★ 数 + 木箱数 → 金币（结算页与存档用同一个函数算，避免两处公式漂移）
-      const coins = win ? coinsOf(stars, st.boxesGot) : 0;
+      // 金币：按这一局实际拿到的木箱数结算（星星本身是永久标记，不重复计价）
+      const coins = win ? coinsOf(1, st.boxesGot) : 0;
       const badgeX = X + W - 190;
       ctx.fillStyle = '#f0c040';
       ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#8a6a10';
       ctx.beginPath(); ctx.arc(badgeX, cy2, 9, 0, Math.PI * 2); ctx.fill();
-      text('×' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
-      // 评级
-      const grade = !win ? 'F' : (stars >= 3 ? 'S' : (stars === 2 ? 'A' : 'B'));
+      text('+' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
+      // 评级：看**累计**星数（累计 3 星 = S），而不是这一局
+      const accStars = starsOf(tgoals);
+      const grade = !win ? 'F' : (accStars >= 3 ? 'S' : (accStars === 2 ? 'A' : 'B'));
       const gx = X + W - 44;
       ctx.fillStyle = win ? (grade === 'S' ? '#ffd93d' : (grade === 'A' ? '#8fd66a' : '#7fb0d0')) : '#e8816a';
       ctx.beginPath(); ctx.arc(gx, cy2, 19, 0, Math.PI * 2); ctx.fill();
@@ -2920,10 +3048,9 @@ const BIOMES = {
       const x = (DW - totalW) / 2 + i * (CW + GAP);
       const y = 168;
       // 每次都从 localStorage 重新读，避免只在启动时读一次
-      let pr = progress[lv.levelId];
-      try { const rawAll = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
-            if (rawAll[lv.levelId]) pr = rawAll[lv.levelId]; } catch (e) {}
-      pr = pr || { stars: 0, best: null };
+      const pr = readRecord(lv.levelId) ||
+        { goals: { arrive: false, boxes: false, challenge: false }, best: null, boxes: 0 };
+      const prStars = starsOf(pr.goals);
       const isCur = i === state.levelIndex;
       // 卡面
       ctx.save();
@@ -2947,10 +3074,12 @@ const BIOMES = {
       // 关卡号
       text(lv.levelId, x + CW / 2, y + 42, 26, isCur ? '#ffe9b0' : '#e8f2fa', 'center', true);
       text(lv.name, x + CW / 2, y + 70, 15, '#cfe0ee', 'center');
-      // 星级
-      for (let k = 0; k < 3; k++) {
+      // 星级：三颗星各自代表一个永久标记（到达 / 全木箱 / 特殊条件）。
+      // 参考里这三颗是"分别达成也算"，所以这里必须按标记点亮，而不是按星星数量涂满。
+      GOALS.forEach((gk, k) => {
         const cx2 = x + CW / 2 - 44 + k * 44, cy2 = y + 104;
-        ctx.fillStyle = k < pr.stars ? '#ffd93d' : 'rgba(255,255,255,.14)';
+        const on = !!pr.goals[gk];
+        ctx.fillStyle = on ? '#ffd93d' : 'rgba(255,255,255,.14)';
         ctx.beginPath();
         for (let q = 0; q < 10; q++) {
           const ang = -Math.PI / 2 + q * Math.PI / 5;
@@ -2959,15 +3088,23 @@ const BIOMES = {
           q === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
         }
         ctx.closePath(); ctx.fill();
-      }
+        if (on) {
+          ctx.strokeStyle = 'rgba(120,86,10,.65)'; ctx.lineWidth = 1.2; ctx.stroke();
+        }
+      });
       // 最佳时间
       text(pr.best ? '最佳 ' + pr.best.toFixed(2) + ' s' : '未通关',
         x + CW / 2, y + 140, 12, pr.best ? '#9fe0a8' : '#7f97a6', 'center');
-      // ★★★ 条件
-      const chNames = { none: '无 ★★★', pumpPress: '不按打气筒', energyLeft: '能量剩 ≥ 30',
-                        noFlip: '不翻车', motorUse: '不用马达' };
-      text('★★★：' + (chNames[(lv.challenge || {}).type] || '—'),
-        x + CW / 2, y + 166, 11, '#8fb6c9', 'center');
+      // 第三颗星的条件（说清"这颗星要做什么"）
+      const gn = (function (lvx) {
+        const ch = lvx.challenge || { type: 'none' };
+        const m = { none: '无特殊条件', pumpPress: '不按打气筒', energyLeft: '能量剩 ≥ 30',
+                    noFlip: '不翻车', motorUse: '不用马达', noBreak: '不散架（KSP）',
+                    time: '限时 ≤ ' + ((ch.max || 0).toFixed(1)) + ' s' };
+        return m[ch.type] || '—';
+      })(lv);
+      text('★★★：' + gn, x + CW / 2, y + 166, 11,
+        pr.goals.challenge ? '#b6ff9e' : '#8fb6c9', 'center');
       // 零件箱
       // 地形缩略图：从 44px 加高到 56px，能看出坡度和坑的深浅
       drawLevelThumb(lv, x + 12, y + 172, CW - 24, 56);
@@ -2979,11 +3116,10 @@ const BIOMES = {
     {
       let tot = 0, got = 0, cleared = 0;
       levels.forEach(lv => {
-        let pr = progress[lv.levelId];
-        try { const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
-              if (raw[lv.levelId]) pr = raw[lv.levelId]; } catch (e) {}
-        pr = pr || { stars: 0, best: null };
-        tot += 3; got += (pr.stars || 0); if (pr.best) cleared++;
+        const pr = readRecord(lv.levelId);
+        tot += 3;
+        got += pr ? starsOf(pr.goals) : 0;
+        if (pr && pr.best) cleared++;
       });
       const BW = 520, BX = DW / 2 - BW / 2, BY = 478;
       ctx.fillStyle = 'rgba(14,28,34,.9)';
@@ -3295,6 +3431,16 @@ const BIOMES = {
         let guard = 0;
         while (state.run.acc >= 1 / 60 && guard++ < 5) {
           state.run.acc -= 1 / 60;
+          // 标准解里的"按下/松开"时刻（只由 launchSpec 注入）：
+          // 走的是玩家按 1/2/3 键的同一函数，不是伪造 pumpPress。
+          if (state.run.pressScript && state.run.pressScript.length) {
+            const ps = state.run.pressScript;
+            while (ps.length && ps[0].t <= state.run.time) {
+              const a = ps.shift();
+              if (a.k === 'release') RAP.releaseInteract(state.run, a.n || 1);
+              else RAP.pressInteract(state.run, a.n || 1);
+            }
+          }
           RAP.step(state.run, 1 / 60);
           // 撞击检测（用事件流，避免改物理）
           const evs = state.run.events || [];
@@ -3349,21 +3495,27 @@ const BIOMES = {
           SFX.cheer();
         }
         if (state.run.result === 'win') {
-          // 先读旧记录，判断是否破纪录，再写
-          let oldBest = null, oldStars = 0;
-          try {
-            const all = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
-            const rec = all[level().levelId];
-            if (rec) { oldBest = rec.best; oldStars = rec.stars; }
-          } catch (e) {}
+          // 先读旧记录，判断破没破纪录、点亮了几颗新星，再写
+          const rec = readRecord(level().levelId);
+          const oldBest = rec ? rec.best : null;
+          const oldStars = rec ? starsOf(rec.goals) : 0;
           state.newBest = (oldBest === null || state.run.time < oldBest);
           state.oldBest = oldBest;
-          state.newStarRecord = state.run.stars > oldStars;
-          saveProgress(level().levelId, state.run.stars, state.run.time,
-            coinsOf(state.run.stars, state.run.boxesGot));
+          // 这一局点亮了哪几颗**新**星（用于结算页的"新星"提示）
+          const goals = state.run.starGoals ||
+            { arrive: state.run.stars >= 1, boxes: state.run.stars >= 2, challenge: state.run.stars >= 3 };
+          const res = saveProgress(level().levelId, goals, state.run.time, state.run.boxesGot);
+          state.newGoals = GOALS.filter(k => goals[k] && !res.before[k]);
+          state.totalGoals = mergeGoals(res.after);
+          state.newStarRecord = starsOf(res.after) > oldStars;
+          state.didSave = true;
         } else {
           state.newBest = false;
-          state.newStarRecord = false;
+          state.didSave = false;
+          state.newGoals = [];
+          // 失败也要让玩家看到"这一关已经亮了几颗" —— 否则累计制读不出来
+          const rec2 = readRecord(level().levelId);
+          state.totalGoals = rec2 ? mergeGoals(rec2.goals) : mergeGoals(null);
         }
         if (state.run.result === 'win') SFX.win(); else SFX.fail();
       }
@@ -3406,10 +3558,12 @@ const BIOMES = {
     if (!localStorage.getItem('rap-welcomed-v1')) state.welcome = 1;
   } catch (e) { state.welcome = 1; }
 
-  window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos,
+  window.__rap = { state, RAP, levels, startLevel, launch, launchSpec, buildOrigin, BUILD_PX, cellAt, canvasPos,
                    trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,
                    welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect,
-                   runChallengeRect, challengeStatus, coinsOf, totalCoins, SAVE_KEY };
+                   runChallengeRect, challengeStatus, coinsOf, totalCoins, SAVE_KEY,
+                   readRecord, saveProgress, starsOf, mergeGoals, goalNames,
+                   totalStars, GOALS, RAP };
   startLevel(0);
   requestAnimationFrame(frame);
 })();

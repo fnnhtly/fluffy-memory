@@ -56,6 +56,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       out.push({tag:tag, type:r.type, label:r.label, value:r.value, pass:r.pass});
     };
     test(1, {pumpPress:0, car:{energy:100}}, '1-2 一次没按');
+    test(1, {pumpPress:1, car:{energy:100}}, '1-2 按了一次');
     test(1, {pumpPress:2, car:{energy:100}}, '1-2 按了两次');
     test(2, {car:{energy:45}}, '1-3 能量 45');
     test(2, {car:{energy:12}}, '1-3 能量 12');
@@ -63,14 +64,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     test(3, {maxAngle:1.4, car:{energy:100}}, '1-4 倾角 80°');
     test(4, {motorUse:0, car:{energy:100}}, '1-5 没用马达');
     test(4, {motorUse:3.2, car:{energy:100}}, '1-5 用了 3.2s');
-    test(0, {car:{energy:100}}, '1-1 本关无 ★★★');
+    test(0, {hullBroken:false, pigEjected:false, car:{energy:100}}, '1-1 结构完好');
+    test(0, {hullBroken:true, pigEjected:false, car:{energy:100}}, '1-1 木框碎了');
     return JSON.stringify(out);
   })()`));
   fn.forEach(r => A.log(r.tag + ' → ' + r.type + ' / ' + r.label + ' / ' +
     (r.value || '—') + ' / ' + (r.pass ? '满足' : '不满足')));
 
   const byTag = t => fn.find(r => r.tag.indexOf(t) === 0);
-  A.chk('1-2 没按打气筒时条件满足', byTag('1-2 一次没按').pass === true);
+  A.chk('1-2 没按打气筒时条件满足（≤1 次）', byTag('1-2 一次没按').pass === true);
+  A.chk('1-2 按了一次仍满足（这颗星叫「只按一下」）', byTag('1-2 按了一次').pass === true);
   A.chk('1-2 按了两次后条件不满足', byTag('1-2 按了两次').pass === false);
   A.chk('1-3 能量 45 满足（≥30）', byTag('1-3 能量 45').pass === true);
   A.chk('1-3 能量 12 不满足', byTag('1-3 能量 12').pass === false);
@@ -78,8 +81,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('1-4 倾角 80° 不满足（翻车了）', byTag('1-4 倾角 80').pass === false);
   A.chk('1-5 没用马达满足', byTag('1-5 没用马达').pass === true);
   A.chk('1-5 用了 3.2s 不满足', byTag('1-5 用了 3.2s').pass === false);
-  A.chk('1-1 没有 ★★★ 条件时恒为不满足', byTag('1-1 本关无').pass === false &&
-    byTag('1-1 本关无').type === 'none');
+  A.chk('1-1 的第三星是「不散架」，结构完好时满足', byTag('1-1 结构完好').pass === true &&
+    byTag('1-1 结构完好').type === 'noBreak');
+  A.chk('1-1 木框碎了时不满足', byTag('1-1 木框碎了').pass === false);
 
   // 2)+3) 真行为 + 像素：跑 1-2，真按一次打气筒，看状态条颜色翻面
   await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[1];
@@ -110,16 +114,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('满足状态用绿字（G 明显高于 R）', before.g > before.r + 20,
     'rgb(' + before.r + ',' + before.g + ',' + before.b + ')');
 
-  // 真按一下打气筒（走 RAP.pressInteract，就是玩家按 1 键走的那条路）
+  // 真按一下打气筒（走 RAP.pressInteract，就是玩家按 1 键走的那条路）。
+  // 1-2 的第三星是「只按一下」（max 1），所以按**一次**应该仍然满足 ——
+  // 这条本身就是一个断言：如果这颗星还是旧的 max 0，这里会立刻红。
   await ev(`(()=>{const R=window.__rap.RAP; R.pressInteract(window.__rap.state.run, 1); return 1;})()`);
+  await sleep(300);
+  const passOne = await ev('window.__rap.challengeStatus(window.__rap.state.run).pass');
+  const cntOne = await ev('window.__rap.state.run.pumpPress');
+  A.chk('按了一下后 pumpPress = 1', cntOne === 1, cntOne + ' 次');
+  A.chk('按一下仍然满足（星名是「只按一下」）', passOne === true);
+
+  // 再按一下 → 超了，状态条必须翻红
+  await ev(`(()=>{const R=window.__rap.RAP; R.pressInteract(window.__rap.state.run, 1);
+    R.releaseInteract(window.__rap.state.run, 1); return 1;})()`);
   await sleep(400);
   const after = await badgeColor();
   const passAfter = await ev('window.__rap.challengeStatus(window.__rap.state.run).pass');
   const cnt = await ev('window.__rap.state.run.pumpPress');
-  A.log('按了一次打气筒：pumpPress=' + cnt + '，状态条 rgb(' +
+  A.log('按了两次打气筒：pumpPress=' + cnt + '，状态条 rgb(' +
     after.r + ',' + after.g + ',' + after.b + ')');
-  A.chk('按过打气筒后 pumpPress 确实 +1', cnt >= 1, cnt + ' 次');
-  A.chk('按过打气筒后条件不满足（结构上）', passAfter === false);
+  A.chk('按过两次后 pumpPress ≥ 2', cnt >= 2, cnt + ' 次');
+  A.chk('按过两次后条件不满足（结构上）', passAfter === false);
   A.chk('不满足状态用红字（R 明显高于 G）', after.r > after.g + 20,
     'rgb(' + after.r + ',' + after.g + ',' + after.b + ')');
   A.chk('两种状态的颜色确实不同（度量尺能区分）',

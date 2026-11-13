@@ -365,7 +365,12 @@
       time: 0, acc: 0,
       boxes: (level.boxes || []).map(function (b, i) { return { i: i + 1, col: b.col, row: b.row, got: false }; }),
       boxesGot: 0, wallHits: 0, pigHP: 3, motorUse: 0, pumpPress: 0, maxAngle: 0,
+      // 「不散架 KRAK SNAP」用：参考里这一颗星要求"载具没散架，且猪没从载具里掉出来"。
+      // 两个标记必须分开，因为"框碎了但猪还卡在上面"和"框好好的猪却掉出来了"都该判失败。
+      hullBroken: false, pigEjected: false,
       result: null, failReason: '', stars: 0,
+      // 三颗星各自独立达成（参考的累计制）：到终点 / 全木箱 / 挑战条件
+      starGoals: { arrive: false, boxes: false, challenge: false },
       events: [],
       replay: []
     };
@@ -401,7 +406,15 @@
     // 同一段路连续磕碰只算一次（0.35 秒冷却），否则木框会被接触帧打穿
     if (state.time - (state.lastStructHurt || -9) < 0.35) return;
     state.lastStructHurt = state.time;
-    var dmg = vn > 14 ? 2 : 1;
+    /* 伤害分档必须和"物理上真的到得了的速度"对齐。
+     * 旧代码写的是 `vn > 14 ? 2 : 1`，但 Params.maxSpeed = 12 给整车速度设了硬上限，
+     * 实测 30 米自由落体砸地也只能到 11.97 m/s —— 那个 2 点档是**死档**，
+     * 永远进不去。改成下面的三段，每一段都实测可达：
+     *   6 ~ 8   磕一下      1 点（木框裂一道）
+     *   8 ~ 11  撞狠了      2 点（木框接近散）
+     *   ≥ 11    从高处砸下来 直接散架（这一档只有坠落能触发，平地跑最快也才 2.3）
+     * 平地正常跑起来的最大法向速度约 2.3 m/s，所以这三档在日常通关里都不会误伤。 */
+    var dmg = vn >= 11 ? 9 : (vn >= 8 ? 2 : 1);
     var broken = [];
     state.car.parts.forEach(function (p) {
       if (!p.def.structure) return;
@@ -409,6 +422,7 @@
       if (p.hp <= 0) broken.push(p);
     });
     if (broken.length) {
+      state.hullBroken = true;      // 「不散架」星：哪怕只碎一格，这颗星就没了
       broken.forEach(function (p) {
         log(state, 'part_broken part=' + p.part + ' at=' + p.r + ',' + p.c);
       });
@@ -425,7 +439,10 @@
           a: 0, w: (Math.random() - 0.5) * 4, r: 0.34, rest: 0
         });
         log(state, 'part_loose part=' + p.part);
-        if (p.def.pig) { state.car.hasPig = false; state.pigLooseAt = state.time; }
+        if (p.def.pig) {
+          state.car.hasPig = false; state.pigLooseAt = state.time;
+          state.pigEjected = true;   // 「不散架」星：猪掉出来了，这颗星也没了
+        }
       });
       state.car.parts = state.car.parts.filter(function (p) {
         return broken.indexOf(p) < 0 && !(p.inner && brokenKeys.indexOf(p.host) >= 0);
@@ -474,14 +491,26 @@
     state.phase = 'resolved';
     if (reason === 'win') {
       state.result = 'win';
-      state.stars = 1;
-      if (state.boxesGot === state.boxes.length) state.stars++;
-      if (challengePass(state)) state.stars++;
-      log(state, 'win stars=' + state.stars + ' box=' + state.boxesGot +
+      // 三颗星各自独立达成（参考的累计制）：一局只拿到其中一颗是正常玩法，
+      // 剩下的靠"换一种造法再跑一次"补上，而不是要求一局全中。
+      state.starGoals = {
+        arrive: true,
+        boxes: state.boxesGot === state.boxes.length,
+        challenge: challengePass(state)
+      };
+      state.stars = (state.starGoals.arrive ? 1 : 0) +
+                    (state.starGoals.boxes ? 1 : 0) +
+                    (state.starGoals.challenge ? 1 : 0);
+      log(state, 'win stars=' + state.stars + ' goals=arrive' +
+        (state.starGoals.boxes ? ',boxes' : '') + (state.starGoals.challenge ? ',challenge' : '') +
+        ' box=' + state.boxesGot +
         ' energy=' + Math.round(state.car ? state.car.energy : 0) + ' time=' + state.time.toFixed(1));
     } else {
       state.result = 'fail';
       state.failReason = reason;
+      // 没到终点 → 这一局一颗星都不进账（星盒和挑战都以"到达"为前提）
+      state.starGoals = { arrive: false, boxes: false, challenge: false };
+      state.stars = 0;
       log(state, 'fail ' + reason);
     }
     log(state, 'phase resolved');
@@ -495,6 +524,14 @@
       case 'energyLeft': return state.car && state.car.energy >= (ch.min || 0);
       case 'noFlip': return (state.maxAngle || 0) <= (ch.maxAngle || 0.785);
       case 'motorUse': return state.motorUse <= (ch.max || 0);
+      /* 「限时」——参考里是最常见的第三颗星（秒表图标）。用关卡自己的 timeLimit
+       * 之外再给一个更紧的 max，两档时间在参考里就是"疾驶猪"的 A/B 档。 */
+      case 'time': return state.time <= (ch.max || 0);
+      /* 「不散架 KRAK SNAP」——参考里最经典的那一颗。
+       * 判据必须两条都满足：载具本体没散架，并且猪没从载具里掉出来。
+       * 只判前者的话，"框好好的、猪却从缺口滑出去了"会被误判成成功；
+       * 只判后者的话，"框全碎了但猪还卡在一角"同样不该算。 */
+      case 'noBreak': return !state.hullBroken && !state.pigEjected;
       default: return false;
     }
   }
@@ -767,10 +804,17 @@
   }
 
   // ---------------- 测试脚手架：不开浏览器也能跑一局 ----------------
+  /* SPECS 里除了零件摆位，还可以带两类元数据（都以 _ 开头，applySpec 会跳过）：
+   *   _dirs   : { pump: 0 } —— 打气筒朝向，0=右 1=上 2=左 3=下
+   *   _presses: [{t:0.8,k:'press'},{t:1.5,k:'release'}] —— 运行期按下/松开的时刻
+   * 1-2 从"按不按都行"改成"必须按一下"之后，标准解就不再是一组摆位了，
+   * 它必须包含"什么时候按" —— 否则任何一条用 SPECS 自动跑关的测试都会误判失败。 */
   var SPECS = {
     // 每关的标准解（与 tests/cases.md 的点击序列一致）
     '1-1': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]], pig: [[4, 2]] },
-    '1-2': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]], pump: [[3, 2]], pig: [[4, 2]] },
+    '1-2': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]], pump: [[3, 2]], pig: [[4, 2]],
+             _dirs: { pump: 0 },                                  // 打气筒朝右
+             _presses: [{ t: 0.8, k: 'press' }, { t: 1.5, k: 'release' }] },
     '1-3': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], wood_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
     '1-4i': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], iron_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
     '1-4w': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], wood_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
@@ -780,11 +824,25 @@
 
   function applySpec(level, build, spec) {
     Object.keys(spec).forEach(function (part) {
+      if (part.charAt(0) === '_') return;                 // 元数据不是零件
       spec[part].forEach(function (rc) {
         tryPlace(level, build, part, rc[0], rc[1]);
       });
     });
     return build;
+  }
+
+  /* 把一个 spec 的元数据（朝向、按下时刻）装到一局运行上。
+   * 浏览器里由玩家按键，Node 里由 simulate 调 —— 两条路径共用这一份，
+   * 免得测试通过而实际玩不通（或反过来）。 */
+  function applySpecRuntime(state, spec) {
+    if (!spec) return state;
+    var dirs = spec._dirs || {};
+    Object.keys(dirs).forEach(function (partKey) {
+      var def = PARTS[partKey];
+      state.car.parts.forEach(function (p) { if (p.def === def) p.dir = dirs[partKey]; });
+    });
+    return state;
   }
 
   function simulate(level, spec, opts) {
@@ -793,9 +851,20 @@
     var build = newBuild();
     applySpec(level, build, spec);
     var state = createRun(level, build);
+    applySpecRuntime(state, spec);
     var dt = 1 / 60;
     var maxT = opts.maxTime || 70;
-    while (state.phase === 'run' && state.time < maxT) step(state, dt);
+    var acts = ((spec && spec._presses) || opts.presses || []).slice()
+      .sort(function (a, b) { return a.t - b.t; });
+    var ai = 0;
+    while (state.phase === 'run' && state.time < maxT) {
+      while (ai < acts.length && acts[ai].t <= state.time) {
+        if (acts[ai].k === 'press' || !acts[ai].k) pressInteract(state, 1);
+        else releaseInteract(state, 1);
+        ai++;
+      }
+      step(state, dt);
+    }
     return state;
   }
 
@@ -811,7 +880,8 @@
     interactiveCount: interactiveCount, buildVehicle: buildVehicle,
     createRun: createRun, step: step, stepLoose: stepLoose, damageCar: damageCar, setBrake: setBrake, pressInteract: pressInteract,
     releaseInteract: releaseInteract, challengePass: challengePass,
-    SPECS: SPECS, applySpec: applySpec, simulate: simulate, partPos: partPos
+    SPECS: SPECS, applySpec: applySpec, applySpecRuntime: applySpecRuntime,
+    simulate: simulate, partPos: partPos
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = RAP;

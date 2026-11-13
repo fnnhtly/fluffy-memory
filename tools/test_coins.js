@@ -1,8 +1,11 @@
-/* 金币必须是"最好那一次"，不能靠重刷累加。
+/* 金币与累计星：金币不再是存档里一个独立的数字，而是从**永久星标记**推导出来的。
  *
- * 起因：结算卡上画了 `×金币`，选关页有"总进度"，但金币从来没进存档——
- * 玩家看到的数字关掉页面就没了。这一轮补上存档，同时把最容易写错的
- * 那条语义钉住：**重刷同一关不许刷金币**（否则这个数字就是在骗人）。
+ * 为什么要改：从《捣蛋猪》抄来的累计三星（见 docs/reference-badpiggies.md §3）意味着
+ * 星是"点亮过就永久亮"的标记，而金币如果还单独存一个数，两者迟早会漂移
+ * （改公式、旧存档、作弊写入都会让它们对不上）。
+ * 现在金币 = f(已点亮星, 最好木箱数)，只有一处真相。
+ *
+ * 这一版同时验证：旧格式存档（只有 stars 数字）能迁移，不会显示成 0 星。
  */
 const fs = require('fs');
 const path = require('path');
@@ -17,7 +20,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const child = spawn(EDGE, ['--headless=new', '--hide-scrollbars',
-    '--remote-debugging-port=' + PORT, '--user-data-dir=' + path.join(os.tmpdir(), 'edgeCn-' + Date.now()),
+    '--remote-debugging-port=' + PORT, '--user-data-dir=' + path.join(os.tmpdir(), 'edgeCo-' + Date.now()),
     '--window-size=1280,800', '--force-device-scale-factor=1', '--no-first-run',
     '--allow-file-access-from-files', 'about:blank'], { stdio: 'ignore' });
   let wsUrl = null;
@@ -36,67 +39,97 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     ws.send(JSON.stringify({ id: i, method: m, params: p || {} })); });
   await send('Page.enable'); await send('Runtime.enable');
   await send('Page.navigate', { url: PAGE }); await sleep(700);
-  await send('Runtime.evaluate', { expression:
-    "localStorage.setItem('rap-welcomed-v1','1');localStorage.removeItem('rap-progress-v1')" });
-  await send('Page.navigate', { url: PAGE }); await sleep(1200);
+  await send('Runtime.evaluate', { expression: "localStorage.clear(); localStorage.setItem('rap-welcomed-v1','1')" });
+  await send('Page.navigate', { url: PAGE }); await sleep(1100);
   const ev = async e => { const r = await send('Runtime.evaluate', { expression: e, returnByValue: true });
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || 'eval');
     return r.result.value; };
 
-  // 公式本身
-  const f = JSON.parse(await ev(`(()=>{const R=window.__rap;
-    return JSON.stringify({ s1b0: R.coinsOf(1,0), s1b1: R.coinsOf(1,1), s3b2: R.coinsOf(3,2) });})()`));
-  A.log('coinsOf：1★0箱=' + f.s1b0 + '，1★1箱=' + f.s1b1 + '，3★2箱=' + f.s3b2);
+  const runLevel = async (idx, spec) => {
+    await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[${idx}];
+      window.__rap.startLevel(${idx}); s.welcome=0; s.introT=1;
+      R.applySpec(lv, s.build, R.SPECS['${spec}']);
+      window.__rap.launch(); s.runBanner=0; return 1;})()`);
+    for (let i = 0; i < 250; i++) {
+      await sleep(200);
+      if ((await ev('window.__rap.state.phase')) === 'resolved') return true;
+    }
+    return false;
+  };
+
+  // ---- 1) 纯函数 ----
+  const f = JSON.parse(await ev(`(()=>{const R=window.__rap;return JSON.stringify({
+    s1b0:R.coinsOf(1,0), s1b1:R.coinsOf(1,1), s3b2:R.coinsOf(3,2)});})()`));
   A.chk('coinsOf(1,0) = 50', f.s1b0 === 50, String(f.s1b0));
-  A.chk('coinsOf(1,1) = 80（多拿一个箱子多 30）', f.s1b1 === 80, String(f.s1b1));
+  A.chk('coinsOf(1,1) = 80（多一个箱子多 30）', f.s1b1 === 80, String(f.s1b1));
   A.chk('coinsOf(3,2) = 210', f.s3b2 === 210, String(f.s3b2));
   A.chk('刚开始时总金币为 0', (await ev('window.__rap.totalCoins()')) === 0);
 
-  // 真跑一关拿金币
-  await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[0];
-    window.__rap.startLevel(0); s.welcome=0; s.introT=1;
-    R.applySpec(lv, s.build, R.SPECS['1-1']);
-    window.__rap.launch(); s.runBanner=0; return 1;})()`);
-  let done = false;
-  for (let i = 0; i < 200; i++) {
-    await sleep(200);
-    if ((await ev('window.__rap.state.phase')) === 'resolved') { done = true; break; }
-  }
-  A.chk('1-1 跑到了结算', done);
+  // ---- 2) 真跑一关 ----
+  A.chk('1-1 跑到结算', await runLevel(0, '1-1'));
   const r1 = JSON.parse(await ev(`(()=>{const r=window.__rap.state.run;
-    return JSON.stringify({win:r.result==='win', stars:r.stars, boxes:r.boxesGot});})()`));
+    return JSON.stringify({win:r.result==='win', stars:r.stars, boxes:r.boxesGot,
+      goals:r.starGoals});})()`));
   const saved = JSON.parse(await ev(`localStorage.getItem(window.__rap.SAVE_KEY)||'{}'`));
-  A.log('1-1 结果：' + r1.stars + ' 星 / 木箱 ' + r1.boxes +
-    '；存档 = ' + JSON.stringify(saved['1-1']));
+  A.log('1-1 结果：' + r1.stars + ' 星 / 木箱 ' + r1.boxes + '；存档 = ' + JSON.stringify(saved['1-1']));
   A.chk('胜利后 1-1 进了存档', !!saved['1-1']);
-  A.chk('存档里的金币 = coinsOf(星, 箱)',
-    saved['1-1'].coins === 50 * r1.stars + 30 * r1.boxes,
-    saved['1-1'].coins + ' vs ' + (50 * r1.stars + 30 * r1.boxes));
+  A.chk('存档里记的是三个星标记（不是单个数字）',
+    !!(saved['1-1'] && saved['1-1'].goals && typeof saved['1-1'].goals.arrive === 'boolean'),
+    JSON.stringify(saved['1-1'] && saved['1-1'].goals));
+  A.chk('1-1 拿满木箱 → boxes 标记点亮', saved['1-1'].goals.boxes === true);
+  // 1-1 的第三颗星是「不散架」（noBreak）。标准解一路开得很稳，
+  // 所以这颗也该亮 —— 如果这里变 false，说明木框在正常通关路径上就碎了，
+  // 那这颗星就变成了"不可能"，必须当失败处理。
+  A.chk('1-1 的「不散架」星在正常通关时点亮', saved['1-1'].goals.challenge === true,
+    JSON.stringify(saved['1-1'].goals));
+
+  // 金币由标记推导：3 个星标记里亮了几个 ×50 + 木箱 ×30
+  const expectCoins = 50 * (['arrive', 'boxes', 'challenge']
+    .filter(k => saved['1-1'].goals[k]).length) + 30 * (saved['1-1'].boxes || 0);
   const total1 = await ev('window.__rap.totalCoins()');
-  A.chk('总金币等于这一关的金币', total1 === saved['1-1'].coins, total1 + ' / ' + saved['1-1'].coins);
+  A.chk('存档里不再单独存金币数字（只有一处真相）',
+    saved['1-1'].coins === undefined, 'coins=' + saved['1-1'].coins);
+  A.chk('总金币 = 已点亮星 ×50 + 最好木箱 ×30', total1 === expectCoins,
+    total1 + ' vs ' + expectCoins);
 
-  // 重刷同一关：金币不许翻倍
-  await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[0];
-    window.__rap.startLevel(0); s.welcome=0; s.introT=1;
-    R.applySpec(lv, s.build, R.SPECS['1-1']);
-    window.__rap.launch(); s.runBanner=0; return 1;})()`);
-  for (let i = 0; i < 200; i++) {
-    await sleep(200);
-    if ((await ev('window.__rap.state.phase')) === 'resolved') break;
-  }
+  // ---- 3) 重刷不累加 ----
+  A.chk('重刷 1-1 也能跑完', await runLevel(0, '1-1'));
   const total2 = await ev('window.__rap.totalCoins()');
-  A.chk('重刷同一关后总金币没有翻倍（这就是"不累加"的意思）',
-    total2 === total1, total1 + ' → ' + total2);
+  A.chk('重刷同一关后总金币没有翻倍', total2 === total1, total1 + ' → ' + total2);
 
-  // 分数更低的一次不许把记录改小
+  // ---- 4) 旧格式存档要能迁移 ----
   await ev(`(()=>{
-    const R=window.__rap, all=JSON.parse(localStorage.getItem(R.SAVE_KEY)||'{}');
-    all['1-1']={stars:1,best:99.9,coins:50};
-    localStorage.setItem(R.SAVE_KEY, JSON.stringify(all));
+    const R=window.__rap;
+    localStorage.setItem(R.SAVE_KEY, JSON.stringify({'1-1':{stars:1,best:99.9,coins:50}}));
     return 1;})()`);
   await send('Page.navigate', { url: PAGE }); await sleep(1100);
-  const t3 = await ev('window.__rap.totalCoins()');
-  A.chk('刷新后总金币从存档恢复', t3 === 50, String(t3));
+  const mig = JSON.parse(await ev(`(()=>{const R=window.__rap;return JSON.stringify({
+    stars:R.totalStars(), coins:R.totalCoins()});})()`));
+  A.log('旧存档 {stars:1} → 迁移后 ' + mig.stars + ' 星 / ' + mig.coins + ' 金币');
+  A.chk('旧格式存档不会显示成 0 星（stars:1 → arrive 标记）', mig.stars === 1, String(mig.stars));
+  A.chk('旧格式存档的金币由迁移后的标记算出，而不是读旧的 coins 字段',
+    mig.coins === 50, String(mig.coins));
+
+  // ---- 5) 累计：一次只拿一颗星也算数 ----
+  await ev(`(()=>{
+    const R=window.__rap;
+    localStorage.setItem(R.SAVE_KEY, JSON.stringify({
+      '1-1':{goals:{arrive:true,boxes:false,challenge:false},best:9.1,boxes:0}}));
+    return 1;})()`);
+  await send('Page.navigate', { url: PAGE }); await sleep(1100);
+  const before = await ev('window.__rap.totalStars()');
+  A.chk('前置：只有 arrive 时是 1 星', before === 1, String(before));
+  // 再跑一次、这一局只要木箱（模拟"分两次拿"）
+  await ev(`(()=>{
+    const R=window.__rap, all=JSON.parse(localStorage.getItem(R.SAVE_KEY)||'{}');
+    // 直接走 saveProgress：模拟"另一局点亮了 boxes"
+    R.saveProgress('1-1', {arrive:true,boxes:true,challenge:false}, 8.0, 1);
+    return 1;})()`);
+  const after = JSON.parse(await ev(`(()=>{const R=window.__rap;return JSON.stringify({
+    stars:R.totalStars(), rec:JSON.parse(localStorage.getItem(R.SAVE_KEY))['1-1']});})()`));
+  A.chk('分两次拿：先 arrive、再 boxes → 累计 2 星（不会互相覆盖）',
+    after.stars === 2, JSON.stringify(after.rec.goals));
+  A.chk('分两次拿之后 best 仍取更快的那次', after.rec.best === 8.0, String(after.rec.best));
 
   A.finish(ws, child, errs);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

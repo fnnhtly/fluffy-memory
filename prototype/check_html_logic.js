@@ -34,11 +34,18 @@ function summary(s) {
 // ---------------- 1-1 ----------------
 let s = run('1-1', '1-1');
 ok('1-1 标准解通关', s.result === 'win', summary(s));
-ok('1-1 拿满 2 星（★ + ★★ 木箱）', s.stars === 2, summary(s));
+// 1-1 的第三颗星是「不散架 KRAK SNAP」（照捣蛋猪的经典第三星），
+// 标准解一路很稳，所以三颗全亮。
+ok('1-1 拿满 3 星（★ 到达 + ★★ 木箱 + ★★★ 不散架）', s.stars === 3, summary(s));
+ok('1-1 结算时结构完好（不散架这颗不是白送的）', s.hullBroken === false && s.pigEjected === false,
+  'hullBroken=' + s.hullBroken + ' pigEjected=' + s.pigEjected);
 
 // ---------------- 1-2 ----------------
 s = run('1-2', '1-2');
-ok('1-2 不按打气筒也能通关 → 3 星', s.result === 'win' && s.stars === 3, summary(s));
+// 1-2 改成"必须按一下打气筒"之后，标准解带上了按下时刻（SPECS['1-2']._presses）。
+ok('1-2 按一下打气筒通关 → 3 星', s.result === 'win' && s.stars === 3, summary(s));
+ok('1-2 的 pumpPress 恰好 = 1（「只按一下」这颗星是可达的）', s.pumpPress === 1,
+  'pumpPress=' + s.pumpPress);
 
 // ---------------- 1-3 ----------------
 s = run('1-3', '1-3');
@@ -112,12 +119,24 @@ ok('1-5 不用马达也能通关 → 3 星（重力即动力）',
   const host = st.car.parts.filter(p => p.def.structure)[1];   // 中间那个（装猪的）
   ok('木框初始耐久 3', host.hp === 3, 'hp=' + host.hp);
   st.spawnGrace = 0;
-  st.time = 1;
-  RAP.damageCar(st, 20);
-  ok('大冲击后耐久 3 → 1（掉 2）', host.hp === 1, 'hp=' + host.hp);
-  st.time = 2;
-  RAP.damageCar(st, 20);
-  ok('耐久归零 → part_broken', st.events.some(e => e.indexOf('part_broken') === 0), st.events.join('|'));
+
+  /* 伤害分档必须和"物理上真到得了的速度"对齐（见 game.js damageCar 注释）：
+   *   6 ~ 8   → 1 点（磕一下）
+   *   8 ~ 11  → 2 点（撞狠了）
+   *   ≥ 11    → 直接散架（只有坠落能触发）
+   * 下面三段各验一次，并**在每段之前恢复耐久**，
+   * 否则前一段的伤害会污染后一段 —— 之前的版本就是这样让"掉 2"变成 hp=-6 的。 */
+  const reset = () => { st.car.parts.forEach(p => { if (p.def.structure) p.hp = 3; }); };
+  reset(); st.time = 1;
+  RAP.damageCar(st, 7);
+  ok('磕一下（v=7）扣 1 点 → 耐久 2', host.hp === 2, 'hp=' + host.hp);
+  reset(); st.time = 2;
+  RAP.damageCar(st, 9);
+  ok('撞狠了（v=9）扣 2 点 → 耐久 1', host.hp === 1, 'hp=' + host.hp);
+  reset(); st.time = 3;
+  RAP.damageCar(st, 12);
+  ok('从高处砸下来（v=12）直接散架', st.events.some(e => e.indexOf('part_broken') === 0),
+    st.events.join('|'));
   ok('框碎了 → 小猪变成自由体掉出来', (st.loose || []).length === 1 && st.loose[0].part === 'pig',
     JSON.stringify(st.loose));
   ok('车体不再有猪（hasPig=false）', st.car.hasPig === false, 'hasPig=' + st.car.hasPig);

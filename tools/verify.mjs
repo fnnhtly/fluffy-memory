@@ -30,6 +30,8 @@ const SCRIPTS = [
   'test_progress_track.js',
   'test_challenge_bar.js',
   'test_coins.js',
+  'test_no_break.js',
+  'test_launch_spec.js',
   'test_ghost_buttons.js',
   'test_brake.js',
   'test_pig_mood.js',

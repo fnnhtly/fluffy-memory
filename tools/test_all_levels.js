@@ -55,12 +55,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ];
 
   for (const cs of CASES) {
-    const setup = await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[${cs.idx}];
-      window.__rap.startLevel(${cs.idx}); s.welcome=0; s.introT=1;
-      R.applySpec(lv, s.build, R.SPECS['${cs.spec}']);
-      const chk = R.canLaunch(s.build);
-      if (!chk.ok) return 'launch-denied:' + chk.reason;
-      window.__rap.launch();
+    // 用 launchSpec 而不是 applySpec+launch：1-2 的标准解现在带"什么时候按打气筒"，
+    // 光把零件摆好并不足以通关。launchSpec 会把 _presses 按时送进 pressInteract，
+    // 走的是玩家按 1 键的同一条路径。
+    const setup = await ev(`(()=>{
+      const ok = window.__rap.launchSpec(${cs.idx}, '${cs.spec}');
+      if (!ok) return 'launch-denied';
       return 'ok';})()`);
     if (setup !== 'ok') {
       A.chk(cs.name + ' 能发射', false, setup);
@@ -92,10 +92,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // 1-5 不用马达应该能拿满 ★★★（"马达 vs 省星"的取舍）
   {
-    await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[4];
-      window.__rap.startLevel(4); s.welcome=0; s.introT=1;
-      R.applySpec(lv, s.build, R.SPECS['1-5n']);
-      window.__rap.launch(); return 1;})()`);
+    await ev(`window.__rap.launchSpec(4, '1-5n')`);
     for (let i = 0; i < 260; i++) {
       await sleep(200);
       if ((await ev('window.__rap.state.phase')) === 'resolved') break;
