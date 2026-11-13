@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const PORT = 9433;
+const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
 const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\/g, '/');
 const sleep = ms => new Promise(r => setTimeout(r, ms));

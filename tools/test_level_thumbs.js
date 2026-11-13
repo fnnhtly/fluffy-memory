@@ -5,11 +5,12 @@
  * 判据：五张两两之间色值必须拉开；冰面关必须偏蓝白；起伏必须与关卡数据吻合。
  */
 const fs = require('fs');
+const A = require('./lib/asserts');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const PORT = 9475;
+const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
 const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\/g, '/');
 const SHOTS = path.join(ROOT, 'records', 'shots');
@@ -120,6 +121,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log(out.join('\n'));
   console.log(bad ? ('FAIL ' + bad) : 'ALL PASS');
   console.log('errors:', errs.length ? errs.join(' | ') : '(none)');
-  ws.close(); child.kill();
+  ws.close(); A.killTree(child);
   process.exit(bad === 0 && errs.length === 0 ? 0 : 1);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

@@ -8,11 +8,12 @@
  *     → 传 marker，只审计 marker 之后画的那批
  */
 const fs = require('fs');
+const A = require('./lib/asserts');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const PORT = 9455;
+const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
 const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\/g, '/');
 const SHOTS = path.join(ROOT, 'records', 'shots');
@@ -206,7 +207,7 @@ function overlapRatio(a, b) {
   console.log(all.join('\n'));
   console.log('\n合计问题: ' + totalBad);
   console.log('errors:', errs.length ? errs.join(' | ') : '(none)');
-  ws.close(); child.kill();
+  ws.close(); A.killTree(child);
   // 有排版问题就以非 0 退出，verify 才能真的拦住回归
   process.exit(totalBad === 0 && errs.length === 0 ? 0 : 1);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

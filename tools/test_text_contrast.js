@@ -9,11 +9,12 @@
  * 为什么必须这样做：我没有办法"看"截图，只能让画面自己交出数字。
  */
 const fs = require('fs');
+const A = require('./lib/asserts');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const PORT = 9471;
+const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
 const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\/g, '/');
 const SHOTS = path.join(ROOT, 'records', 'shots');
@@ -217,6 +218,6 @@ const MEASURE = `(() => {
   console.log(all.join('\n'));
   console.log('\n低对比文字: ' + bad + ' / ' + total);
   console.log('errors:', errs.length ? errs.join(' | ') : '(none)');
-  ws.close(); child.kill();
+  ws.close(); A.killTree(child);
   process.exit(bad > 0 || errs.length ? 1 : 0);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

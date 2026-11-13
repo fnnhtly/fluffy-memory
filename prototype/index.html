@@ -136,10 +136,28 @@
   try {
     progress = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
   } catch (e) { progress = {}; }
-  function saveProgress(levelId, stars, time) {
-    const cur = progress[levelId] || { stars: 0, best: null };
+  // 金币是"最好成绩那一次"对应的，不是累加 —— 否则重刷同一关能无限刷金币，
+  // 结算页那个金币数就成了一个骗人的数字。
+  function coinsOf(stars, boxesGot) {
+    return (stars || 0) * 50 + (boxesGot || 0) * 30;
+  }
+  function totalCoins() {
+    let sum = 0;
+    levels.forEach(lv => {
+      let pr = progress[lv.levelId];
+      try {
+        const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
+        if (raw[lv.levelId]) pr = raw[lv.levelId];
+      } catch (e) {}
+      if (pr && pr.coins) sum += pr.coins;
+    });
+    return sum;
+  }
+  function saveProgress(levelId, stars, time, coins) {
+    const cur = progress[levelId] || { stars: 0, best: null, coins: 0 };
     if (stars > cur.stars) cur.stars = stars;
     if (!cur.best || time < cur.best) cur.best = time;
+    if (typeof coins === 'number' && coins > (cur.coins || 0)) cur.coins = coins;
     progress[levelId] = cur;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(progress)); } catch (e) {}
   }
@@ -321,6 +339,36 @@
       timer: { x: DW - 224, y: 138, w: 192, h: 30 },
       box: { x: DW - 224, y: 174, w: 192, h: 26 }
     };
+  }
+  // 行驶期的「★★★ 条件」状态条：把奖励条件做成实时读数，
+  // 否则玩家整趟都在猜"我这算不算没按打气筒"。纯函数，供绘制与测试共用。
+  function runChallengeRect() {
+    return { x: 84, y: 162, w: 552, h: 28 };
+  }
+  function challengeStatus(run) {
+    const lv = level();
+    const ch = (lv && lv.challenge) || { type: 'none' };
+    const st = run || {};
+    const car = st.car || {};
+    switch (ch.type) {
+      case 'pumpPress':
+        return { type: ch.type, label: '不按打气筒', value: '已按 ' + (st.pumpPress || 0) + ' 次',
+                 pass: (st.pumpPress || 0) <= (ch.max || 0) };
+      case 'energyLeft':
+        return { type: ch.type, label: '能量剩 ≥' + (ch.min || 0),
+                 value: '现在 ' + Math.round(car.energy || 0),
+                 pass: (car.energy || 0) >= (ch.min || 0) };
+      case 'noFlip':
+        return { type: ch.type, label: '全程不翻车',
+                 value: '最大倾角 ' + Math.round((st.maxAngle || 0) * 180 / Math.PI) + '°',
+                 pass: (st.maxAngle || 0) <= (ch.maxAngle || 0.785) };
+      case 'motorUse':
+        return { type: ch.type, label: '不用马达',
+                 value: '已用 ' + (st.motorUse || 0).toFixed(1) + ' s',
+                 pass: (st.motorUse || 0) <= (ch.max || 0) };
+      default:
+        return { type: 'none', label: '本关没有 ★★★', value: '', pass: false };
+    }
   }
   function hit(rect, mx, my) { return rect && mx >= rect.x && mx <= rect.x + rect.w && my >= rect.y && my <= rect.y + rect.h; }
 
@@ -1984,6 +2032,21 @@ const BIOMES = {
       text('距终点 ' + left2.toFixed(0) + ' m', PR.panel.x + PR.panel.w - 12, PR.panel.y + 20, 12,
         left2 < 5 ? '#b6ff9e' : 'rgba(200,222,238,.9)', 'right');
       text('起点', PR.panel.x + 12, PR.panel.y + 20, 11, 'rgba(160,186,206,.85)', 'left');
+
+      // ★★★ 条件实时状态：整趟都能看到"现在还满不满足"，不必等到结算才知道
+      const CR = runChallengeRect();
+      const cs = challengeStatus(state.run);
+      ctx.fillStyle = 'rgba(10,18,24,.80)';
+      roundRect(CR.x, CR.y, CR.w, CR.h, 8); ctx.fill();
+      ctx.strokeStyle = cs.pass ? 'rgba(182,255,158,.34)' : 'rgba(224,129,106,.38)';
+      ctx.lineWidth = 1; ctx.stroke();
+      text((cs.pass ? '★ ' : '✕ ') + '★★★：' + cs.label,
+        CR.x + 12, CR.y + 19, 12, cs.pass ? '#b6ff9e' : '#ffb4a2', 'left', true);
+      if (cs.pass && cs.value) {
+        text(cs.value, CR.x + CR.w - 12, CR.y + 19, 12, 'rgba(200,222,238,.85)', 'right');
+      } else if (!cs.pass && cs.value) {
+        text(cs.value, CR.x + CR.w - 12, CR.y + 19, 12, '#ffb4a2', 'right');
+      }
     }
     if (state.phase === 'build') {
       // 三行说明文字底衬（亮天空下必须，否则白字看不见）
@@ -2518,8 +2581,8 @@ const BIOMES = {
       ctx.save();
       ctx.globalAlpha = coinT;
       const cy2 = cardY + 74;       // 与标题同一行右侧（新纪录徽章下方不会挡）
-      // 金币：★ 数 + 木箱数 → 金币
-      const coins = (win ? stars * 50 : 0) + (win ? st.boxesGot * 30 : 0);
+      // 金币：★ 数 + 木箱数 → 金币（结算页与存档用同一个函数算，避免两处公式漂移）
+      const coins = win ? coinsOf(stars, st.boxesGot) : 0;
       const badgeX = X + W - 190;
       ctx.fillStyle = '#f0c040';
       ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
@@ -2946,6 +3009,16 @@ const BIOMES = {
         }
       }
       text(got + ' / ' + tot + ' 星', BX + BW / 2, BY + 52, 13, got === tot ? '#ffe9b0' : 'rgba(190,214,232,.6)', 'center', true);
+      // 金币总数：每关只记"最好那一次"，重刷不会累加（公式见 coinsOf）
+      const tc = totalCoins();
+      {
+        const cxc = BX + BW - 26, cyc = BY + 47;
+        ctx.fillStyle = '#f0c040';
+        ctx.beginPath(); ctx.arc(cxc, cyc, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#8a6a10';
+        ctx.beginPath(); ctx.arc(cxc, cyc, 4.5, 0, Math.PI * 2); ctx.fill();
+        text('×' + tc, cxc + 13, cyc + 5, 12, tc > 0 ? '#ffd93d' : 'rgba(214,232,244,.86)', 'left', true);
+      }
     }
 
     // 「玩法说明」按钮：重新打开欢迎引导
@@ -3280,7 +3353,8 @@ const BIOMES = {
           state.newBest = (oldBest === null || state.run.time < oldBest);
           state.oldBest = oldBest;
           state.newStarRecord = state.run.stars > oldStars;
-          saveProgress(level().levelId, state.run.stars, state.run.time);
+          saveProgress(level().levelId, state.run.stars, state.run.time,
+            coinsOf(state.run.stars, state.run.boxesGot));
         } else {
           state.newBest = false;
           state.newStarRecord = false;
@@ -3328,7 +3402,8 @@ const BIOMES = {
 
   window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos,
                    trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,
-                   welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect };
+                   welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect,
+                   runChallengeRect, challengeStatus, coinsOf, totalCoins, SAVE_KEY };
   startLevel(0);
   requestAnimationFrame(frame);
 })();

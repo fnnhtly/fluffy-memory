@@ -88,9 +88,36 @@ t('finish 的输出格式能被 verify.mjs 解析', () => {
 
 // 确认模块导出的函数真的存在（避免 require 到空对象还"通过"）
 t('模块导出完整', () => {
-  ['chk', 'near', 'within', 'all', 'log', 'finish'].forEach(k =>
+  ['chk', 'near', 'within', 'all', 'log', 'finish', 'killTree'].forEach(k =>
     assert.strictEqual(typeof A[k], 'function', '缺少导出 ' + k));
   assert.ok(A.state && typeof A.state === 'object');
 });
+
+// killTree：必须真的能杀掉一个进程。
+// 起因：Windows 上 child.kill() 只杀 launcher，Edge 的浏览器进程树留在后台，
+// 跑完十几个脚本就堆了一堆 headless Edge，帧率掉下去、CDP 端口被抢，
+// 于是测试开始随机"崩溃或超时"——假红和真回归长得一模一样，必须从根上消掉。
+function waitGone(pid, ms) {
+  const { execFileSync } = require('child_process');
+  const end = Date.now() + ms;
+  let alive = true;
+  while (Date.now() < end) {
+    try { process.kill(pid, 0); } catch (e) { alive = false; break; }
+    try { execFileSync(process.platform === 'win32' ? 'ping' : 'sleep',
+      process.platform === 'win32' ? ['-n', '1', '-w', '80', '127.0.0.1'] : ['0.08'],
+      { stdio: 'ignore' }); } catch (e) {}
+  }
+  return !alive;
+}
+{
+  const { spawn } = require('child_process');
+  const kid = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+  const pid = kid.pid;
+  assert.ok(pid > 0, '没起来子进程');
+  A.killTree(kid);
+  assert.ok(waitGone(pid, 4000), 'killTree 之后进程仍然活着（pid ' + pid + '）');
+  console.log('✓ killTree 之后子进程确实退出了（pid ' + pid + '）');
+  n++;
+}
 
 console.log('\nPASS ' + n + ' / FAIL 0');

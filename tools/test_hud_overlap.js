@@ -10,7 +10,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const PORT = 9438;
+const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
 const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\/g, '/');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -50,7 +50,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const r=R.btnRect(n); if(r) add(n,r);
     });
     if (s.phase==='run') { const t=R.runTimeRects(); add('timer',t.timer); add('box',t.box);
-      const pp=R.runProgressRect(); add('progress',pp.panel); add('infoBarRun',{x:84,y:90,w:700,h:30}); }
+      const pp=R.runProgressRect(); add('progress',pp.panel); add('infoBarRun',{x:84,y:90,w:700,h:30});
+      add('challenge', R.runChallengeRect()); }
     if (s.phase==='build') {
       // 顶部信息条 / 三行说明底衬 / 整车统计卡 / 建造网格
       add('infoBar',{x:84,y:90,w:700,h:30});

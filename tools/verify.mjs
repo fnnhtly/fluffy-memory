@@ -28,6 +28,8 @@ const SCRIPTS = [
   'test_help_pause.js',
   'test_hud_overlap.js',
   'test_progress_track.js',
+  'test_challenge_bar.js',
+  'test_coins.js',
   'test_brake.js',
   'test_pig_mood.js',
   'test_levelselect.js',
@@ -159,8 +161,20 @@ if (!fast) {
 //    没有 ASSERTS 行 = 退回了"只打印不判定"，直接算失败。
 if (!fast) {
   for (const s of SCRIPTS) {
-    const r = run(process.execPath, [path.join('tools', s)], s.replace('.js', ''));
-    const v = verdict(r.out, r.ok);
+    let r = run(process.execPath, [path.join('tools', s)], s.replace('.js', ''));
+    let v = verdict(r.out, r.ok);
+    // 每个脚本自己起一个 headless Edge。偶尔会有"浏览器没在 15 秒内起来"
+    // 这类基础设施抖动（不是回归），所以失败后**只重试一次**：
+    // 真回归一定两次都红，抖动第二次就过去了。
+    if (!v.ok) {
+      const r2 = run(process.execPath, [path.join('tools', s)], s.replace('.js', '') + '（重试）');
+      const v2 = verdict(r2.out, r2.ok);
+      if (v2.ok) {
+        results.push({ ...r2, label: s.replace('.js', ''), ok: true, detail: v2.reason + '（首次抖动）' });
+        continue;
+      }
+      r = r2; v = v2;
+    }
     results.push({ ...r, ok: v.ok, detail: v.reason });
   }
 }

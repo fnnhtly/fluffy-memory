@@ -48,6 +48,25 @@ function all(label, pairs) {
 
 function log(msg) { state.lines.push(msg); }
 
+/* 杀进程树。
+ *
+ * `child.kill()` 只杀 launcher 进程，Edge 真正的浏览器进程是它的子孙，
+ * 于是每跑一个脚本就留下一整棵浏览器树。跑到第 15 个脚本时，
+ * 机器上已经堆了十几个 headless Edge —— 帧率掉下去、CDP 端口被抢、
+ * 个别脚本连不上浏览器，表现成"崩溃或超时"。
+ * 这些红全是假的，但它们和真回归长得一模一样，所以必须从根上消掉。 */
+function killTree(child) {
+  if (!child || !child.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      require('child_process').spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'],
+        { stdio: 'ignore' });
+    } else {
+      child.kill('SIGKILL');
+    }
+  } catch (x) {}
+}
+
 /* 收尾：打印、判定、退出。errs = 页面异常列表，非空必然失败。 */
 function finish(ws, child, errs) {
   console.log(state.lines.join('\n'));
@@ -56,8 +75,8 @@ function finish(ws, child, errs) {
   console.log('errors:', e.length ? e.join(' | ') : '(none)');
   if (state.fail) console.log('失败项：' + state.failures.join(' / '));
   try { ws && ws.close(); } catch (x) {}
-  try { child && child.kill(); } catch (x) {}
+  killTree(child);
   process.exit(state.fail === 0 && e.length === 0 ? 0 : 1);
 }
 
-module.exports = { chk, near, within, all, log, finish, state };
+module.exports = { chk, near, within, all, log, finish, killTree, state };
