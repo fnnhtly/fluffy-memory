@@ -233,8 +233,8 @@
 
   // ---------- 坐标 ----------
   const BUILD_PX = 44;   // 建造格显示尺寸
-  // 面板整体避开顶部信息条（y<190），否则最上面两行格子被信息条盖住
-  const buildOrigin = () => ({ x: DW / 2 - RAP.BUILD_COLS * BUILD_PX / 2 - 40, y: 214 });
+  // 面板整体避开顶部信息条（y<190）：格子顶边 188 > 说明底衬底边 186，刚好不压
+  const buildOrigin = () => ({ x: DW / 2 - RAP.BUILD_COLS * BUILD_PX / 2 - 40, y: 222 });
   function worldToScreen(wx, wy, cam) {
     const s = PPM * cam.zoom;                 // zoom 是"倍率"，实际每米像素 = PPM * zoom
     return { x: DW / 2 + (wx - cam.x) * s, y: DH / 2 - (wy - cam.y) * s };
@@ -267,6 +267,18 @@
     return { r, c };
   }
   function tabRect(i) { return { x: 24 + i * 86, y: 18, w: 80, h: 30 }; }
+  // 暂停面板的几何：绘制与点击共用一份，避免"看得见点不着"
+  function pausePanel() {
+    const PW = 420, PH = 236;
+    return { x: DW / 2 - PW / 2, y: DH / 2 - PH / 2 - 10, w: PW, h: PH };
+  }
+  function pauseRowRects() {
+    const P = pausePanel(), rx = P.x + 32, rw = P.w - 64;
+    return {
+      resume: { x: rx, y: P.y + 100, w: rw, h: 44 },
+      back: { x: rx, y: P.y + 156, w: rw, h: 44 }
+    };
+  }
   function btnRect(name) {
     if (state.phase === 'build') {
       if (name === 'launch') return { x: DW / 2 + 150, y: 258, w: 76, h: 76 };
@@ -373,13 +385,23 @@
     // 零件说明面板开着时：点任何地方都先关掉它（不会误触到下面的按钮）
     if (state.helpOpen) { state.helpOpen = false; return; }
 
+    // 暂停面板：两张"行"必须先判，否则点继续会落到下面的 HUD 按钮上
+    if (state.paused && state.phase === 'run') {
+      const PY2 = pauseRowRects();
+      if (hit(PY2.resume, p.x, p.y)) { state.paused = false; return; }
+      if (hit(PY2.back, p.x, p.y)) {
+        state.phase = 'build'; state.run = null; state.paused = false; return;
+      }
+      return;   // 暂停时其余点击一律吞掉，避免误触刹车/交互
+    }
+
     // 选关页：点卡片进入，点空白关闭
     if (state.levelSelect) {
       for (let i = 0; i < levels.length; i++) {
         const r0 = levelCardRect(i);
         if (hit(r0, p.x, p.y)) { state.levelSelect = false; startLevel(i); return; }
       }
-      const hbr = { x: DW / 2 - 80, y: DH - 96, w: 160, h: 38 };
+      const hbr = { x: DW / 2 - 80, y: DH - 84, w: 160, h: 38 };
       if (hit(hbr, p.x, p.y)) { state.levelSelect = false; state.welcome = 1; return; }
       state.levelSelect = false;
       return;
@@ -605,6 +627,21 @@
   });
   window.addEventListener('keydown', ev => {
     const k = ev.key.toLowerCase();
+    // 欢迎引导：Enter/空格翻页，Esc 跳过（面板上写了，就得真的能用）
+    if (state.welcome) {
+      if (k === 'enter' || k === ' ') {
+        if (state.welcome >= WELCOME_PAGES.length) closeWelcome(); else state.welcome++;
+        ev.preventDefault(); return;
+      }
+      if (k === 'escape') { closeWelcome(); return; }
+      return;
+    }
+    // 暂停优先：面板上写着空格/Esc 继续、R 回建造，键盘就必须真的这么走
+    if (state.paused && state.phase === 'run') {
+      if (k === ' ' || k === 'escape') { state.paused = false; ev.preventDefault(); return; }
+      if (k === 'r') { state.phase = 'build'; state.run = null; state.paused = false; return; }
+      return;
+    }
     if (k === 'escape' || k === 'l') { state.levelSelect = !state.levelSelect; return; }
     if (k === 'f1' || k === 'f2' || k === 'f3' || k === 'f4' || k === 'f5') {
       curPreset = parseInt(k.slice(1), 10) - 1;
@@ -1775,13 +1812,8 @@ const BIOMES = {
     }
 
     if (state.phase === 'resolved') {
-      const R = btnRect('retry'), N = btnRect('next');
-      ctx.fillStyle = '#63bf3f'; roundRect(R.x, R.y, R.w, R.h, 14); ctx.fill();
-      text('重试（保留拼装）', R.x + R.w / 2, R.y + R.h / 2 + 6, 18, '#fff', 'center');
-      const hasNext = state.levelIndex < levels.length - 1;
-      ctx.fillStyle = hasNext ? '#63bf3f' : '#5a6450';
-      roundRect(N.x, N.y, N.w, N.h, 14); ctx.fill();
-      text(hasNext ? '下一关' : '已是最后一关', N.x + N.w / 2, N.y + N.h / 2 + 6, 18, '#fff', 'center');
+      // 结算页的两个按钮由 drawResult 一并绘制（跟随卡片滑入 + 主次分级），
+      // 这里再画一遍会盖在上面，变成一坨没描边的绿块。
     }
   }
 
@@ -1844,9 +1876,33 @@ const BIOMES = {
       text('?', hcx, hcy + 8, 22, '#ffe9b0', 'center', true);
     }
     if (state.paused && state.phase === 'run') {
-      fillScreen('rgba(6,12,14,.35)');
-      text('已暂停', DW / 2, DH / 2 - 6, 38, '#eaf4fb', 'center', true);
-      text('点左上绿钮继续　·　绿圈回建造（零件保留）', DW / 2, DH / 2 + 34, 15, '#a8bfd0', 'center');
+      fillScreen('rgba(6,12,14,.52)');
+      // 暂停面板：标题 + 两行真实可点的动作，别再只丢一行说明文字
+      const P = pausePanel(), RR = pauseRowRects();
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 24; ctx.shadowOffsetY = 8;
+      ctx.fillStyle = 'rgba(12,24,30,.96)';
+      roundRect(P.x, P.y, P.w, P.h, 16); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(232,200,122,.5)'; ctx.lineWidth = 2;
+      roundRect(P.x, P.y, P.w, P.h, 16); ctx.stroke();
+      text('已暂停', DW / 2, P.y + 52, 30, '#ffe9b0', 'center', true);
+      text('时间已停住，可以慢慢想', DW / 2, P.y + 78, 13, '#8fa3b4', 'center');
+
+      const row = (r, label, key, main) => {
+        ctx.fillStyle = main ? 'rgba(232,200,122,.92)' : 'rgba(24,40,50,.92)';
+        roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
+        ctx.strokeStyle = main ? 'rgba(255,241,196,.9)' : 'rgba(232,200,122,.4)';
+        ctx.lineWidth = 1.5; roundRect(r.x, r.y, r.w, r.h, 10); ctx.stroke();
+        text(label, r.x + r.w / 2 - 16, r.y + 28, 15, main ? '#20180a' : '#e3eef6', 'center', true);
+        // 右侧键帽
+        ctx.fillStyle = main ? 'rgba(32,24,10,.18)' : 'rgba(255,255,255,.10)';
+        roundRect(r.x + r.w - 54, r.y + 11, 38, 22, 6); ctx.fill();
+        text(key, r.x + r.w - 35, r.y + 27, 11.5, main ? '#20180a' : '#9fb2c2', 'center', true);
+      };
+      row(RR.resume, '继续开', '空格', true);
+      row(RR.back, '回建造（保留拼装）', 'R', false);
+      text('Esc 也可以继续', DW / 2, P.y + P.h + 26, 12, 'rgba(180,200,214,.6)', 'center');
     }
 
     // 顶部信息条
@@ -2211,24 +2267,44 @@ const BIOMES = {
     const cardY = 150 - (1 - ease) * 420;
 
     const W = 760, H = 372, X = DW / 2 - W / 2;
+    // 卡片：深蓝夜色 + 金线，和 HUD / 建造坞同一套语言（原来是一整块纯绿，像另一个游戏）
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
-    ctx.fillStyle = win ? '#20623a' : '#5c2c2c';
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
+    ctx.fillStyle = win ? 'rgba(14,28,34,.96)' : 'rgba(30,18,20,.96)';
     roundRect(X, cardY, W, H, 18); ctx.fill();
     ctx.restore();
-    ctx.fillStyle = win ? '#63d97e' : '#e8816a';
-    roundRect(X, cardY + 6, W, 8, 4); ctx.fill();
+    ctx.strokeStyle = win ? 'rgba(232,200,122,.55)' : 'rgba(224,129,106,.55)';
+    ctx.lineWidth = 2; roundRect(X, cardY, W, H, 18); ctx.stroke();
+    // 顶部色条：语义色，但只占一条细线，不铺满整张卡
+    const accent = win ? '#63d97e' : '#e8816a';
+    ctx.save();
+    ctx.beginPath(); roundRect(X, cardY, W, H, 18); ctx.clip();
+    // 细线两端收淡，避免像贴了一条电工胶带
+    const ag = ctx.createLinearGradient(X, 0, X + W, 0);
+    ag.addColorStop(0, 'rgba(0,0,0,0)');
+    ag.addColorStop(0.18, accent);
+    ag.addColorStop(0.82, accent);
+    ag.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = ag;
+    ctx.fillRect(X, cardY + 1.5, W, 2);
+    const tg = ctx.createLinearGradient(X, cardY, X, cardY + 96);
+    tg.addColorStop(0, win ? 'rgba(99,217,126,.14)' : 'rgba(224,129,106,.14)');
+    tg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = tg; ctx.fillRect(X, cardY, W, 96);
+    ctx.restore();
 
-    text(win ? '到达终点！' : '这一趟失败了', X + 42, cardY + 86, 36, win ? '#b6ff9e' : '#ffb4a2', 'left', true);
+    text(win ? '到达终点！' : '这一趟失败了', X + 42, cardY + 86, 36,
+      win ? '#ffe9b0' : '#ffb4a2', 'left', true);
 
     // 三枚圆形徽章：猪 / 星 / 秒表
     const by = cardY + 172;
     const bx = [X + 168, X + W / 2, X + W - 168];
-    badge(bx[0], by, 46, '#3f8a4e', '#6fc25a');
+    const RING = 'rgba(232,200,122,.30)';
+    badge(bx[0], by, 46, RING, '#2f5a3e');
     drawPig(bx[0], by, 26, 0);
-    badge(bx[1], by, 46, '#3f8a4e', win ? '#ffe066' : '#4a5a4a');
+    badge(bx[1], by, 46, RING, win ? '#4a3a12' : '#2a3038');
     // 星形
-    ctx.fillStyle = win ? '#ffd93d' : '#7c8a7c';
+    ctx.fillStyle = win ? '#ffd93d' : '#6a747c';
     ctx.beginPath();
     for (let k = 0; k < 10; k++) {
       const ang = -Math.PI / 2 + k * Math.PI / 5;
@@ -2236,12 +2312,12 @@ const BIOMES = {
       ctx[k === 0 ? 'moveTo' : 'lineTo'](bx[1] + Math.cos(ang) * rad, by + Math.sin(ang) * rad);
     }
     ctx.closePath(); ctx.fill();
-    badge(bx[2], by, 46, '#3f8a4e', '#f0c040');
+    badge(bx[2], by, 46, RING, win ? '#4a3a12' : '#2a3038');
     // 秒表指针：分针从圆心向上，指针从圆心斜向
-    ctx.strokeStyle = '#6a5410'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.strokeStyle = win ? '#e8c87a' : '#7c868e'; ctx.lineWidth = 4; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(bx[2], by); ctx.lineTo(bx[2], by - 20); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx[2], by); ctx.lineTo(bx[2] + 13, by + 7); ctx.stroke();
-    ctx.fillStyle = '#6a5410';
+    ctx.fillStyle = win ? '#e8c87a' : '#7c868e';
     ctx.beginPath(); ctx.arc(bx[2], by, 3.5, 0, Math.PI * 2); ctx.fill();
 
     // 星级音效（每弹出一颗响一次）
@@ -2272,9 +2348,9 @@ const BIOMES = {
       ctx.restore();
     }
 
-    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 322, 16, '#dff0d8', 'left');
-    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 322, 16, '#dff0d8', 'center');
-    text(`能量剩 ${Math.round(st.car.energy)}`, X + W - 42, cardY + 322, 16, '#dff0d8', 'right');
+    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 322, 16, '#cfe0ec', 'left');
+    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 322, 16, '#cfe0ec', 'center');
+    text(`能量剩 ${Math.round(st.car.energy)}`, X + W - 42, cardY + 322, 16, '#cfe0ec', 'right');
 
     if (!win) text('原因：' + failText(st.failReason), X + 42, cardY + 352, 15, '#ffc9bb', 'left');
     else {
@@ -2282,7 +2358,7 @@ const BIOMES = {
       const names = { none: '本关没有 ★★★', pumpPress: '不按打气筒通关', energyLeft: '能量剩 ≥ 30',
                       noFlip: '全程不翻车', motorUse: '不用马达通关' };
       text('★★★ 条件：' + (names[ch.type] || ch.type), X + 42, cardY + 352, 15,
-        stars === 3 ? '#b6ff9e' : '#9fb2c2', 'left');
+        stars === 3 ? '#b6ff9e' : '#8fa3b4', 'left');
     }
 
     // 新纪录徽章（滑入后 0.7s 登场，带轻微弹跳）
@@ -2341,19 +2417,29 @@ const BIOMES = {
       const gx = X + W - 44;
       ctx.fillStyle = win ? (grade === 'S' ? '#ffd93d' : (grade === 'A' ? '#8fd66a' : '#7fb0d0')) : '#e8816a';
       ctx.beginPath(); ctx.arc(gx, cy2, 19, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2; ctx.stroke();
       text(grade, gx, cy2 + 8, 22, '#12222c', 'center', true);
 
       ctx.restore();
     }
 
-    // 底部两个按钮（跟随卡片滑入）
+    // 底部两个按钮（跟随卡片滑入）：主按钮金色描边，次按钮深底金线
     const btnY = cardY + H + 34;
-    ctx.fillStyle = '#63bf3f'; roundRect(DW / 2 - 300, btnY, 260, 72, 14); ctx.fill();
-    text('重试（保留拼装）', DW / 2 - 170, btnY + 44, 18, '#fff', 'center');
+    const btn = (bx2, bw, label, primary, disabled) => {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
+      ctx.fillStyle = disabled ? 'rgba(30,40,48,.9)'
+        : (primary ? 'rgba(232,200,122,.95)' : 'rgba(16,30,40,.95)');
+      roundRect(bx2, btnY, bw, 72, 14); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = disabled ? 'rgba(140,155,168,.35)' : (primary ? '#fff1c4' : 'rgba(232,200,122,.65)');
+      ctx.lineWidth = 2; roundRect(bx2, btnY, bw, 72, 14); ctx.stroke();
+      text(label, bx2 + bw / 2, btnY + 44, 18,
+        disabled ? '#8d9aa4' : (primary ? '#20180a' : '#ffe9b0'), 'center', true);
+    };
+    btn(DW / 2 - 300, 260, '重试（保留拼装）', false, false);
     const hasNext = state.levelIndex < levels.length - 1;
-    ctx.fillStyle = hasNext ? '#63bf3f' : '#5a6450';
-    roundRect(DW / 2 + 40, btnY, 260, 72, 14); ctx.fill();
-    text(hasNext ? '下一关' : '已是最后一关', DW / 2 + 170, btnY + 44, 18, '#fff', 'center');
+    btn(DW / 2 + 40, 260, hasNext ? '下一关' : '已是最后一关', true, !hasNext);
     state.resultBtnY = btnY;
   }
 
@@ -2395,27 +2481,40 @@ const BIOMES = {
     }
   ];
 
+  // 引导卡几何：绘制与点击共用，按钮放到卡片下方（和结算页同一套"对话框 + 底部动作"）
+  function welcomeCard() { return { x: (DW - 760) / 2, y: 132, w: 760, h: 306 }; }
   function welcomeBtnRect() {
-    return { x: DW / 2 + 120, y: 508, w: 180, h: 56 };
+    const C = welcomeCard();
+    return { x: DW / 2 + 120, y: C.y + C.h + 22, w: 180, h: 54 };
   }
   function welcomeSkipRect() {
-    return { x: DW / 2 - 300, y: 508, w: 180, h: 56 };
+    const C = welcomeCard();
+    return { x: DW / 2 - 300, y: C.y + C.h + 22, w: 180, h: 54 };
   }
 
   function drawWelcome() {
     if (!state.welcome) return;
     const page = WELCOME_PAGES[state.welcome - 1];
     if (!page) { state.welcome = 0; return; }
-    fillScreen('rgba(6,12,16,.86)');
+    fillScreen('rgba(4,9,13,.90)');
 
-    const W = 760, H = 430, X = (DW - W) / 2, Y = 130;
+    const C = welcomeCard(), W = C.w, H = C.h, X = C.x, Y = C.y;
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
-    ctx.fillStyle = '#14262f'; roundRect(X, Y, W, H, 18); ctx.fill();
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 28; ctx.shadowOffsetY = 12;
+    ctx.fillStyle = 'rgba(14,28,36,.97)'; roundRect(X, Y, W, H, 18); ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = 'rgba(232,200,122,.5)'; ctx.lineWidth = 2; ctx.stroke();
+    // 描边要自己开路径（只设 strokeStyle 再 stroke() 会描到上一条残留路径上）
+    ctx.strokeStyle = 'rgba(232,200,122,.5)'; ctx.lineWidth = 2;
+    roundRect(X, Y, W, H, 18); ctx.stroke();
+    // 标题栏分隔金线
+    const hg = ctx.createLinearGradient(X, 0, X + W, 0);
+    hg.addColorStop(0, 'rgba(232,200,122,.55)');
+    hg.addColorStop(1, 'rgba(232,200,122,0)');
+    ctx.fillStyle = hg; ctx.fillRect(X + 2, Y + 84, W - 4, 1.5);
 
-    text(page.title, X + 40, Y + 58, 26, '#ffe9b0', 'left', true);
+    text(page.title, X + 40, Y + 56, 26, '#ffe9b0', 'left', true);
+    text((state.welcome) + ' / ' + WELCOME_PAGES.length, X + W - 40, Y + 56, 13,
+      'rgba(190,214,232,.55)', 'right', true);
 
     // 左侧插图
     if (page.art === 'car') {
@@ -2461,24 +2560,35 @@ const BIOMES = {
       text(ln, X + 250, Y + 108 + i * 30, 15, ln ? '#d8e8f4' : '#000', 'left');
     });
 
-    // 页码点
+    // 页码点（贴在卡片底边内侧）
     for (let i = 0; i < WELCOME_PAGES.length; i++) {
-      ctx.fillStyle = i === state.welcome - 1 ? '#ffe9b0' : 'rgba(255,255,255,.22)';
-      ctx.beginPath();
-      ctx.arc(X + W / 2 - 24 + i * 24, Y + H - 30, 6, 0, Math.PI * 2);
-      ctx.fill();
+      const dx2 = X + W / 2 - 24 + i * 24, dy2 = Y + H - 22;
+      if (i === state.welcome - 1) {
+        ctx.fillStyle = '#ffe9b0';
+        ctx.beginPath(); ctx.arc(dx2, dy2, 6, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,.18)';
+        ctx.beginPath(); ctx.arc(dx2, dy2, 4.5, 0, Math.PI * 2); ctx.fill();
+      }
     }
 
-    // 按钮
+    // 按钮：跳过（次）+ 下一步/开始（主）
     const bk = welcomeSkipRect(), bn = welcomeBtnRect();
-    ctx.fillStyle = 'rgba(24,34,42,.9)';
-    roundRect(bk.x, bk.y, bk.w, bk.h, 12); ctx.fill();
-    ctx.strokeStyle = 'rgba(200,218,232,.4)'; ctx.lineWidth = 1.5; ctx.stroke();
-    text('跳过', bk.x + bk.w / 2, bk.y + 36, 17, '#c3d4e2', 'center');
-    ctx.fillStyle = '#4a9be0';
-    roundRect(bn.x, bn.y, bn.w, bn.h, 12); ctx.fill();
+    const wbtn = (r, label, primary) => {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
+      ctx.fillStyle = primary ? 'rgba(232,200,122,.96)' : 'rgba(20,34,44,.96)';
+      roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = primary ? '#fff1c4' : 'rgba(200,218,232,.42)';
+      ctx.lineWidth = 1.8; roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
+      text(label, r.x + r.w / 2, r.y + 35, 17, primary ? '#20180a' : '#c3d4e2', 'center', true);
+    };
+    wbtn(bk, '跳过', false);
     const last = state.welcome >= WELCOME_PAGES.length;
-    text(last ? '开始搭车！' : '下一步 →', bn.x + bn.w / 2, bn.y + 36, 17, '#ffffff', 'center', true);
+    wbtn(bn, last ? '开始搭车！' : '下一步 →', true);
+    // 小提示：键盘也可以翻页
+    text('Enter 继续　·　Esc 跳过', DW / 2, bn.y + bn.h + 26, 12, 'rgba(170,192,208,.55)', 'center');
   }
 
   // 关卡地形缩略图：把 mapRows 压成一条剖面
@@ -2545,15 +2655,27 @@ const BIOMES = {
 
   function drawLevelSelect() {
     if (!state.levelSelect) return;
-    fillScreen('rgba(6,12,16,.82)');
+    // 选关是"独立一屏"：用不透明底，底下的建造 UI 一点都别透出来
+    fillScreen('#08111a');
+    // 顶部一层极淡的暖光，避免整屏死黑
+    const svg = ctx.createRadialGradient(DW * 0.5, -60, 40, DW * 0.5, -60, DH * 0.95);
+    svg.addColorStop(0, 'rgba(232,200,122,.10)');
+    svg.addColorStop(1, 'rgba(232,200,122,0)');
+    fillScreen(svg);
     text('选择关卡', DW / 2, 92, 30, '#ffe9b0', 'center', true);
     text('★★ 拿木箱　★★★ 每关的特殊条件', DW / 2, 124, 13, '#9fb2c2', 'center');
+    // 标题下的金色细线，和结算卡同一套语言
+    const lg = ctx.createLinearGradient(0, 0, DW, 0);
+    lg.addColorStop(0, 'rgba(232,200,122,0)');
+    lg.addColorStop(0.5, 'rgba(232,200,122,.55)');
+    lg.addColorStop(1, 'rgba(232,200,122,0)');
+    ctx.fillStyle = lg; ctx.fillRect(0, 138, DW, 1.5);
 
     const CW = 216, CH = 250, GAP = 18;
     const totalW = levels.length * CW + (levels.length - 1) * GAP;
     levels.forEach((lv, i) => {
       const x = (DW - totalW) / 2 + i * (CW + GAP);
-      const y = 150;
+      const y = 168;
       // 每次都从 localStorage 重新读，避免只在启动时读一次
       let pr = progress[lv.levelId];
       try { const rawAll = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
@@ -2562,14 +2684,25 @@ const BIOMES = {
       const isCur = i === state.levelIndex;
       // 卡面
       ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 6;
-      ctx.fillStyle = isCur ? '#1c4a34' : '#152a33';
+      ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 7;
+      ctx.fillStyle = isCur ? 'rgba(20,44,38,.98)' : 'rgba(14,28,34,.96)';
       roundRect(x, y, CW, CH, 14); ctx.fill();
       ctx.restore();
-      ctx.strokeStyle = isCur ? 'rgba(160,255,180,.75)' : 'rgba(232,200,122,.32)';
-      ctx.lineWidth = isCur ? 2.5 : 1.5; ctx.stroke();
+      // 描边必须自己开一条路径：之前只设了 strokeStyle 就 stroke()，
+      // 描的是上一个残留路径，所以卡片根本没有边框。
+      ctx.strokeStyle = isCur ? 'rgba(232,200,122,.85)' : 'rgba(232,200,122,.26)';
+      ctx.lineWidth = isCur ? 2.5 : 1.5;
+      roundRect(x, y, CW, CH, 14); ctx.stroke();
+      // 当前关卡：左侧金条（比整卡变绿更克制）
+      if (isCur) {
+        ctx.save();
+        ctx.beginPath(); roundRect(x, y, CW, CH, 14); ctx.clip();
+        ctx.fillStyle = 'rgba(232,200,122,.9)';
+        ctx.fillRect(x, y + 10, 3.5, CH - 20);
+        ctx.restore();
+      }
       // 关卡号
-      text(lv.levelId, x + CW / 2, y + 42, 26, isCur ? '#b6ff9e' : '#e8f2fa', 'center', true);
+      text(lv.levelId, x + CW / 2, y + 42, 26, isCur ? '#ffe9b0' : '#e8f2fa', 'center', true);
       text(lv.name, x + CW / 2, y + 70, 15, '#cfe0ee', 'center');
       // 星级
       for (let k = 0; k < 3; k++) {
@@ -2599,18 +2732,62 @@ const BIOMES = {
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + lv.partsBox[k]).join(' ');
       text(boxTxt, x + CW / 2, y + 236, 10, 'rgba(200,218,232,.55)', 'center');
     });
+    // 底部进度条带：填掉卡片下方的大片空白，同时给一个"总进度"的目标感
+    {
+      let tot = 0, got = 0, cleared = 0;
+      levels.forEach(lv => {
+        let pr = progress[lv.levelId];
+        try { const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
+              if (raw[lv.levelId]) pr = raw[lv.levelId]; } catch (e) {}
+        pr = pr || { stars: 0, best: null };
+        tot += 3; got += (pr.stars || 0); if (pr.best) cleared++;
+      });
+      const BW = 520, BX = DW / 2 - BW / 2, BY = 478;
+      ctx.fillStyle = 'rgba(14,28,34,.9)';
+      roundRect(BX - 22, BY - 26, BW + 44, 92, 14); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.22)'; ctx.lineWidth = 1.5;
+      roundRect(BX - 22, BY - 26, BW + 44, 92, 14); ctx.stroke();
+      text('总进度', BX, BY, 12, 'rgba(190,214,232,.7)', 'left', true);
+      text('通关 ' + cleared + ' / ' + levels.length + ' 关', BX + BW, BY, 12, '#9fb2c2', 'right');
+      ctx.fillStyle = 'rgba(255,255,255,.10)';
+      roundRect(BX, BY + 12, BW, 12, 6); ctx.fill();
+      if (got > 0) {
+        const gw = Math.max(12, BW * got / tot);
+        const gb = ctx.createLinearGradient(BX, 0, BX + gw, 0);
+        gb.addColorStop(0, '#e8c87a'); gb.addColorStop(1, '#ffe9b0');
+        ctx.fillStyle = gb; roundRect(BX, BY + 12, gw, 12, 6); ctx.fill();
+      }
+      // 星标
+      for (let k = 0; k < tot; k++) {
+        const sx3 = BX + (BW / tot) * (k + 0.5);
+        if (k < got) {
+          ctx.fillStyle = '#2a1e08';
+          ctx.beginPath();
+          for (let q = 0; q < 10; q++) {
+            const a3 = -Math.PI / 2 + q * Math.PI / 5, r3 = (q % 2 === 0) ? 4.6 : 1.9;
+            const px3 = sx3 + Math.cos(a3) * r3, py3 = BY + 18 + Math.sin(a3) * r3;
+            q === 0 ? ctx.moveTo(px3, py3) : ctx.lineTo(px3, py3);
+          }
+          ctx.closePath(); ctx.fill();
+        }
+      }
+      text(got + ' / ' + tot + ' 星', BX + BW / 2, BY + 52, 13, got === tot ? '#ffe9b0' : 'rgba(190,214,232,.6)', 'center', true);
+    }
+
     // 「玩法说明」按钮：重新打开欢迎引导
-    const hb2 = { x: DW / 2 - 80, y: DH - 96, w: 160, h: 38 };
-    ctx.fillStyle = 'rgba(74,123,168,.9)';
+    const hb2 = { x: DW / 2 - 80, y: DH - 84, w: 160, h: 38 };
+    ctx.fillStyle = 'rgba(16,30,40,.95)';
     roundRect(hb2.x, hb2.y, hb2.w, hb2.h, 10); ctx.fill();
-    text('? 玩法说明', hb2.x + hb2.w / 2, hb2.y + 25, 14, '#ffffff', 'center', true);
+    ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 1.5;
+    roundRect(hb2.x, hb2.y, hb2.w, hb2.h, 10); ctx.stroke();
+    text('? 玩法说明', hb2.x + hb2.w / 2, hb2.y + 25, 14, '#ffe9b0', 'center', true);
     text('点卡片进入关卡　·　按 ESC 或点空白关闭', DW / 2, DH - 18, 12, '#7f97a6', 'center');
   }
 
   function levelCardRect(i) {
     const CW = 216, CH = 250, GAP = 18;
     const totalW = levels.length * CW + (levels.length - 1) * GAP;
-    return { x: (DW - totalW) / 2 + i * (CW + GAP), y: 150, w: CW, h: CH };
+    return { x: (DW - totalW) / 2 + i * (CW + GAP), y: 168, w: CW, h: CH };
   }
 
   function drawHelp() {
@@ -2969,7 +3146,8 @@ const BIOMES = {
     if (!localStorage.getItem('rap-welcomed-v1')) state.welcome = 1;
   } catch (e) { state.welcome = 1; }
 
-  window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos };
+  window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos,
+                   trayRect, btnRect, TRAY, pauseRowRects, level };
   startLevel(0);
   requestAnimationFrame(frame);
 })();

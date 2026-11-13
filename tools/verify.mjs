@@ -22,6 +22,7 @@ const fast = process.argv.includes('--fast');
 const SCRIPTS = [
   'test_eraser.js',
   'test_help_close.js',
+  'test_help_pause.js',
   'test_brake.js',
   'test_pig_mood.js',
   'test_levelselect.js',
@@ -67,7 +68,24 @@ const results = [];
   results.push({ ...r, ok: r.ok && /all inline scripts OK/.test(r.out), detail: r.ok ? 'OK' : '语法错误' });
 }
 
-// 3) 交互脚本
+// 3) 审计器自检（判定逻辑本身必须被证明：能抓真问题、不报假问题）
+{
+  const r = run(process.execPath, [path.join('tools', 'selftest_audit.js')], '审计器自检');
+  const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
+  const pass = !!(m && m[2] === '0' && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
+}
+
+// 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字）
+if (!fast) {
+  const r = run(process.execPath, [path.join('tools', 'test_layout_audit.js')], '排版审计');
+  const m = (r.out || '').match(/合计问题: (\d+)/);
+  const hasErr = /errors: \(none\)/.test(r.out);
+  const pass = !!(r.ok && m && m[1] === '0' && hasErr);
+  results.push({ ...r, ok: pass, detail: m ? `问题 ${m[1]} 条${hasErr ? '' : ' + 有异常'}` : '无法解析' });
+}
+
+// 5) 交互脚本
 if (!fast) {
   for (const s of SCRIPTS) {
     const r = run(process.execPath, [path.join('tools', s)], s.replace('.js', ''));
