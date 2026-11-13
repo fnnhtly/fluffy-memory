@@ -1,0 +1,96 @@
+{
+ "format": "qxqy-autotest",
+ "version": 1,
+ "name": "t07-interact-limit",
+ "dt": 0.03333333333333333,
+ "events": [
+  {
+   "t": 0.3,
+   "kind": "click",
+   "payload": {
+    "name": "LevelTab_2"
+   }
+  },
+  {
+   "t": 0.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_wood_frame"
+   }
+  },
+  {
+   "t": 0.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_1"
+   }
+  },
+  {
+   "t": 1.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_2"
+   }
+  },
+  {
+   "t": 1.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_3"
+   }
+  },
+  {
+   "t": 1.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_pump"
+   }
+  },
+  {
+   "t": 1.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_3_1"
+   }
+  },
+  {
+   "t": 2.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_3_2"
+   }
+  },
+  {
+   "t": 2.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_3_3"
+   }
+  },
+  {
+   "t": 2.6,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_2_2"
+   }
+  }
+ ],
+ "asserts": [
+  {
+   "at": 3.0,
+   "kind": "log",
+   "contains": "build_place part=pump cell=3,3"
+  },
+  {
+   "at": 3.2,
+   "kind": "log",
+   "contains": "build_blocked reason=interact_limit"
+  },
+  {
+   "at": 3.2,
+   "kind": "tree",
+   "name": "Interact_1",
+   "exists": false
+  }
+ ]
+}

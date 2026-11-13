@@ -1,0 +1,137 @@
+{
+ "format": "qxqy-autotest",
+ "version": 1,
+ "name": "t17-dir-rotate",
+ "dt": 0.03333333333333333,
+ "events": [
+  {
+   "t": 0.3,
+   "kind": "click",
+   "payload": {
+    "name": "LevelTab_2"
+   }
+  },
+  {
+   "t": 0.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_wood_frame"
+   }
+  },
+  {
+   "t": 0.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_1"
+   }
+  },
+  {
+   "t": 1.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_2"
+   }
+  },
+  {
+   "t": 1.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_3"
+   }
+  },
+  {
+   "t": 1.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_wood_wheel"
+   }
+  },
+  {
+   "t": 1.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_5_1"
+   }
+  },
+  {
+   "t": 2.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_5_3"
+   }
+  },
+  {
+   "t": 2.35,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_pig"
+   }
+  },
+  {
+   "t": 2.6,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_2"
+   }
+  },
+  {
+   "t": 2.85,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_pump"
+   }
+  },
+  {
+   "t": 3.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_3_2"
+   }
+  },
+  {
+   "t": 3.35,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_pump"
+   }
+  },
+  {
+   "t": 3.65,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_3_2"
+   }
+  },
+  {
+   "t": 3.95,
+   "kind": "click",
+   "payload": {
+    "name": "LaunchButton"
+   }
+  },
+  {
+   "t": 4.45,
+   "kind": "click",
+   "payload": {
+    "name": "InteractButton_1"
+   }
+  }
+ ],
+ "asserts": [
+  {
+   "at": 1.6,
+   "kind": "log",
+   "contains": "place pump dir=0"
+  },
+  {
+   "at": 2.2,
+   "kind": "log",
+   "contains": "place pump dir=1"
+  },
+  {
+   "at": 2.8,
+   "kind": "log",
+   "contains": "launch"
+  }
+ ]
+}

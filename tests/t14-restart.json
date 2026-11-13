@@ -1,0 +1,115 @@
+{
+ "format": "qxqy-autotest",
+ "version": 1,
+ "name": "t14-restart",
+ "dt": 0.03333333333333333,
+ "events": [
+  {
+   "t": 0.3,
+   "kind": "click",
+   "payload": {
+    "name": "LevelTab_1"
+   }
+  },
+  {
+   "t": 0.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_wood_frame"
+   }
+  },
+  {
+   "t": 0.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_1"
+   }
+  },
+  {
+   "t": 1.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_2"
+   }
+  },
+  {
+   "t": 1.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_3"
+   }
+  },
+  {
+   "t": 1.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_wood_wheel"
+   }
+  },
+  {
+   "t": 1.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_5_1"
+   }
+  },
+  {
+   "t": 2.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_5_3"
+   }
+  },
+  {
+   "t": 2.35,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_pig"
+   }
+  },
+  {
+   "t": 2.6,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_2"
+   }
+  },
+  {
+   "t": 2.85,
+   "kind": "click",
+   "payload": {
+    "name": "LaunchButton"
+   }
+  },
+  {
+   "t": 20,
+   "kind": "click",
+   "payload": {
+    "name": "RetryButton"
+   }
+  }
+ ],
+ "asserts": [
+  {
+   "at": 20,
+   "kind": "log",
+   "contains": "win stars="
+  },
+  {
+   "at": 21,
+   "kind": "log",
+   "contains": "restart"
+  },
+  {
+   "at": 21,
+   "kind": "log",
+   "contains": "phase build"
+  },
+  {
+   "at": 21,
+   "kind": "tree",
+   "name": "Cell_0_0",
+   "exists": true
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+"""插入 3 步新手引导清单（放在 drawHud 的 build 分支里、重心行之前）。"""
+import pathlib
+
+p = pathlib.Path("prototype/index.html")
+t = p.read_text(encoding="utf-8")
+
+anchor = '      // 重心偏移：让玩家知道"车头偏重 / 整体太高"'
+assert anchor in t, "anchor missing"
+
+block = '''      // ---- 3 步新手引导 ----
+      const keysB = Object.keys(state.build.cells);
+      const hasFrame = keysB.some(k => RAP.PARTS[state.build.cells[k].part].structure);
+      const hasWheel = keysB.some(k => RAP.PARTS[state.build.cells[k].part].wheel);
+      const hasPig = keysB.some(k => state.build.cells[k].inner === 'pig');
+      const steps = [
+        { txt: '放一块木框', done: hasFrame, part: 'wood_frame' },
+        { txt: '装一个轮子', done: hasWheel, part: 'wood_wheel' },
+        { txt: '把小猪塞进木框', done: hasPig, part: 'pig' }
+      ];
+      const cur = steps.findIndex(s => !s.done);
+      if (cur >= 0) {
+        const idx = TRAY.indexOf(steps[cur].part);
+        if (idx >= 0) {
+          const rr = trayRect(idx);
+          const a2 = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+          ctx.save(); ctx.globalAlpha = a2;
+          ctx.strokeStyle = '#ffd93d'; ctx.lineWidth = 3;
+          roundRect(rr.x - 4, rr.y - 4, rr.w + 8, rr.h + 8, 10); ctx.stroke();
+          ctx.restore();
+          text('▸ ' + steps[cur].txt, rr.x + rr.w / 2, rr.y - 62, 12, '#ffd93d', 'center', true);
+        }
+      }
+      const px0 = 84, py0 = 196;
+      ctx.fillStyle = 'rgba(12,20,26,.74)';
+      roundRect(px0, py0, 212, 30 + steps.length * 26, 10); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.35)'; ctx.lineWidth = 1; ctx.stroke();
+      text('建造 3 步', px0 + 12, py0 + 20, 13, '#9fd66a', 'left', true);
+      steps.forEach((s, i) => {
+        const yy = py0 + 46 + i * 26;
+        const isCur = i === cur;
+        ctx.fillStyle = s.done ? '#63d97e' : (isCur ? '#ffd93d' : 'rgba(150,170,185,.45)');
+        ctx.beginPath(); ctx.arc(px0 + 20, yy - 4, 7, 0, Math.PI * 2); ctx.fill();
+        if (s.done) {
+          ctx.strokeStyle = '#0f2a18'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(px0 + 16, yy - 4); ctx.lineTo(px0 + 19, yy); ctx.lineTo(px0 + 24, yy - 9);
+          ctx.stroke();
+        }
+        text((i + 1) + '. ' + s.txt, px0 + 34, yy, 13,
+          s.done ? '#9fe0a8' : (isCur ? '#ffe9b0' : '#93a3ae'), 'left', isCur);
+      });
+
+'''
+t = t.replace(anchor, block + anchor)
+p.write_text(t, encoding="utf-8")
+print("checklist inserted:", "建造 3 步" in t)

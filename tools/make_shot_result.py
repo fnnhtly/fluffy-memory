@@ -1,0 +1,65 @@
+"""结算截图脚本：发射后轮询到 phase=resolved 再截图，确保能拍到结算卡片。"""
+import pathlib
+
+p = pathlib.Path("tools/shot_result.js")
+p.write_text(r"""const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+const PORT = 9350;
+const ROOT = path.join(__dirname, '..');
+const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\/g, '/');
+const SHOTS = path.join(ROOT, 'records', 'shots');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => {
+  const child = spawn(EDGE, ['--headless=new','--disable-gpu','--hide-scrollbars',
+    '--remote-debugging-port='+PORT,'--user-data-dir='+path.join(os.tmpdir(),'edgeS-'+Date.now()),
+    '--window-size=1280,800','--force-device-scale-factor=1','--no-first-run',
+    '--allow-file-access-from-files','about:blank'], { stdio: 'ignore' });
+  let wsUrl = null;
+  for (let i=0;i<60&&!wsUrl;i++){ await sleep(250);
+    try { const l = await fetch(`http://127.0.0.1:${PORT}/json/list`).then(r=>r.json());
+      const pg = l.find(t=>t.type==='page'); if (pg) wsUrl = pg.webSocketDebuggerUrl; } catch(e){} }
+  const ws = new WebSocket(wsUrl); let id=0; const pend=new Map();
+  await new Promise(r=>{ws.onopen=r;});
+  ws.onmessage = ev => { const m=JSON.parse(ev.data);
+    if (m.id&&pend.has(m.id)){ const {res,rej}=pend.get(m.id); pend.delete(m.id);
+      m.error?rej(new Error(JSON.stringify(m.error))):res(m.result); } };
+  const send=(method,params)=>new Promise((res,rej)=>{const i=++id;pend.set(i,{res,rej});
+    ws.send(JSON.stringify({id:i,method,params:params||{}}));});
+  await send('Page.enable'); await send('Runtime.enable');
+  await send('Page.navigate',{url:PAGE}); await sleep(1200);
+  const ev = async e => (await send('Runtime.evaluate',{expression:e,returnByValue:true})).result.value;
+  const rect = JSON.parse(await ev(`(()=>{const r=document.getElementById('cv').getBoundingClientRect();return JSON.stringify({l:r.left,t:r.top,w:r.width,h:r.height});})()`));
+  const cl=(dx,dy)=>({x:rect.l+dx*rect.w/1280,y:rect.t+dy*rect.h/720});
+  async function shot(n){const r=await send('Page.captureScreenshot',{format:'png'});
+    fs.writeFileSync(path.join(SHOTS,n+'.png'),Buffer.from(r.data,'base64'));}
+  async function click(dx,dy){const p=cl(dx,dy);
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y:p.y,button:'none'});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+    await sleep(140);}
+  const TRAY=['wood_frame','wood_wheel','iron_wheel','motor','battery','pump','pig','eraser'];
+  const tray=n=>({x:(1280-(8*46+7*7))/2+TRAY.indexOf(n)*53+23,y:720-76+23});
+  const cell=(r,c)=>({x:(1280/2-138-40)+c*46+23,y:128+r*46+23});
+
+  for (const c of [1,2,3]) { await click(tray('wood_frame').x,tray('wood_frame').y); await click(cell(4,c).x,cell(4,c).y); }
+  for (const c of [1,3]) { await click(tray('wood_wheel').x,tray('wood_wheel').y); await click(cell(5,c).x,cell(5,c).y); }
+  await click(tray('pig').x,tray('pig').y); await click(cell(4,2).x,cell(4,2).y);
+  await shot('rs-00-build');
+  await click(830,320);
+  // 轮询到结算
+  for (let i=0;i<80;i++){
+    await sleep(300);
+    const ph = await ev('window.__rap.state.phase');
+    if (ph === 'resolved') break;
+  }
+  await sleep(1400);   // 等卡片滑入 + 金币评级登场
+  await shot('rs-01-result');
+  console.log('phase=', await ev('window.__rap.state.phase'));
+  console.log('stars=', await ev('window.__rap.state.run && window.__rap.state.run.stars'));
+  ws.close(); child.kill(); process.exit(0);
+})().catch(e=>{console.log('FAIL',e);process.exit(1);});
+""", encoding="utf-8")
+print("shot_result.js written")

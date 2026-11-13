@@ -1,0 +1,31 @@
+{
+ "format": "qxqy-autotest",
+ "version": 1,
+ "name": "t01-boot",
+ "dt": 0.03333333333333333,
+ "events": [],
+ "asserts": [
+  {
+   "at": 0.2,
+   "kind": "log",
+   "contains": "game_start"
+  },
+  {
+   "at": 0.2,
+   "kind": "log",
+   "contains": "phase build"
+  },
+  {
+   "at": 0.2,
+   "kind": "tree",
+   "name": "WorldRoot",
+   "exists": true
+  },
+  {
+   "at": 0.2,
+   "kind": "tree",
+   "name": "Cell_0_0",
+   "exists": true
+  }
+ ]
+}

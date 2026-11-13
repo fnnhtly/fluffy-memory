@@ -1,0 +1,118 @@
+{
+ "format": "qxqy-autotest",
+ "version": 1,
+ "name": "t11-ice-iron",
+ "dt": 0.03333333333333333,
+ "events": [
+  {
+   "t": 0.3,
+   "kind": "click",
+   "payload": {
+    "name": "LevelTab_4"
+   }
+  },
+  {
+   "t": 0.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_wood_frame"
+   }
+  },
+  {
+   "t": 0.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_1"
+   }
+  },
+  {
+   "t": 1.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_2"
+   }
+  },
+  {
+   "t": 1.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_3"
+   }
+  },
+  {
+   "t": 1.6,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_4"
+   }
+  },
+  {
+   "t": 1.85,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_iron_wheel"
+   }
+  },
+  {
+   "t": 2.1,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_5_1"
+   }
+  },
+  {
+   "t": 2.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_5_4"
+   }
+  },
+  {
+   "t": 2.6,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_motor"
+   }
+  },
+  {
+   "t": 2.85,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_0"
+   }
+  },
+  {
+   "t": 3.1,
+   "kind": "click",
+   "payload": {
+    "name": "Tray_battery"
+   }
+  },
+  {
+   "t": 3.35,
+   "kind": "click",
+   "payload": {
+    "name": "Cell_4_3"
+   }
+  },
+  {
+   "t": 3.6,
+   "kind": "click",
+   "payload": {
+    "name": "LaunchButton"
+   }
+  }
+ ],
+ "asserts": [
+  {
+   "at": 2.4,
+   "kind": "log",
+   "contains": "launch mass="
+  },
+  {
+   "at": 60,
+   "kind": "log",
+   "contains": "win stars=3"
+  }
+ ]
+}
