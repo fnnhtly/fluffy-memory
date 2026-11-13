@@ -77,7 +77,15 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
 }
 
-// 3b) 像素探针自检
+// 3c) 对比度量尺自检
+{
+  const r = run(process.execPath, [path.join('tools', 'selftest_contrast.js')], '对比度量尺自检');
+  const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
+  const pass = !!(m && m[2] === '0' && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
+}
+
+// 3d) 像素探针自检
 {
   const r = run(process.execPath, [path.join('tools', 'selftest_pixel_probe.js')], '像素探针自检');
   const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
@@ -101,6 +109,15 @@ if (!fast) {
   const hasErr = /errors: \(none\)/.test(r.out);
   const pass = !!(r.ok && m && m[1] === '0' && hasErr);
   results.push({ ...r, ok: pass, detail: m ? `未绘制 ${m[1]} 个${hasErr ? '' : ' + 有异常'}` : '无法解析' });
+}
+
+// 4c) 对比度审计（文字压不压底：同一画面拍两遍，只翻转"要不要画字"）
+if (!fast) {
+  const r = run(process.execPath, [path.join('tools', 'test_text_contrast.js')], '对比度审计');
+  const m = (r.out || '').match(/低对比文字: (\d+) \/ (\d+)/);
+  const hasErr = /errors: \(none\)/.test(r.out);
+  const pass = !!(r.ok && m && m[1] === '0' && hasErr);
+  results.push({ ...r, ok: pass, detail: m ? `低对比 ${m[1]}/${m[2]} 条${hasErr ? '' : ' + 有异常'}` : '无法解析' });
 }
 
 // 5) 交互脚本

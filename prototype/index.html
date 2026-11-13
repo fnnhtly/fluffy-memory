@@ -1119,7 +1119,7 @@ const BIOMES = {
     ctx.fillRect(o.x - 12, o.y - 8, GW + 24, 1.5);
     text('拼装区', o.x - 2, o.y - HD + 10, 12.5, 'rgba(255,233,176,.85)', 'left', true);
     text(RAP.BUILD_COLS + ' × ' + RAP.BUILD_ROWS, o.x + GW + 2, o.y - HD + 10, 11.5,
-      'rgba(190,214,232,.45)', 'right', true);
+      'rgba(196,218,236,.72)', 'right', true);
     // 棋盘染色（很淡，只做可读性）
     for (let r = 0; r < RAP.BUILD_ROWS; r++) {
       for (let c = 0; c < RAP.BUILD_COLS; c++) {
@@ -1700,9 +1700,10 @@ const BIOMES = {
       } else {
         drawPartShape(part, cx, cy, rect.w * 0.46, 0);
       }
+      // 数量：用完的用暗红，但必须仍然看得清（原来是 #ff9c86，压在浅地面上对比只有 3.9）
       text(part === 'eraser' ? '' : String(left),
         rect.x + rect.w / 2, rect.y + rect.h + 14, 12,
-        left > 0 || part === 'eraser' ? '#ffffff' : '#ff9c86', 'center');
+        left > 0 || part === 'eraser' ? '#ffffff' : '#ffd0c4', 'center');
       // 悬停 / 选中 → 在槽上方显示零件名（"选了什么"必须一眼看到）
       if (i === hoverIdx || state.selected === part) {
         const nm = part === 'eraser' ? '橡皮' : RAP.PARTS[part].label;
@@ -1822,7 +1823,7 @@ const BIOMES = {
   function drawTabs() {
     levels.forEach((lv, i) => {
       const t = tabRect(i), active = i === state.levelIndex;
-      ctx.fillStyle = active ? '#4a7aa8' : 'rgba(12,20,26,.88)';
+      ctx.fillStyle = active ? '#3a6490' : 'rgba(12,20,26,.88)';
       roundRect(t.x, t.y, t.w, t.h, 7); ctx.fill();
       if (i === 0) {
         text('☰ 关卡', t.x + t.w / 2, t.y + 21, 13, '#ffe9b0', 'center', true);
@@ -1904,7 +1905,7 @@ const BIOMES = {
       };
       row(RR.resume, '继续开', '空格', true);
       row(RR.back, '回建造（保留拼装）', 'R', false);
-      text('Esc 也可以继续', DW / 2, P.y + P.h + 26, 12, 'rgba(180,200,214,.6)', 'center');
+      text('Esc 也可以继续', DW / 2, P.y + P.h + 26, 12, 'rgba(190,212,228,.78)', 'center');
     }
 
     // 顶部信息条
@@ -1939,7 +1940,7 @@ const BIOMES = {
         rows2.forEach((r, i) => {
           const yy = CY + 54 + i * 27;
           text(r[0], CX + 14, yy, 12, '#8fb6c9', 'left');
-          text(r[1], CX + CW - 14, yy, 14, r[2] ? '#ffb4a2' : '#e8f2fa', 'right', true);
+          text(r[1], CX + CW - 14, yy, 14, r[2] ? '#ff8f77' : '#e8f2fa', 'right', true);
         });
       }
 
@@ -1951,7 +1952,7 @@ const BIOMES = {
         const wheelY = built.wheels.length ? built.wheels.reduce((a, w) => a + w.ly, 0) / built.wheels.length : built.hull.minY;
         const tall = (my / mm) - wheelY;
         const cgText = `重心 前后${cgx >= 0 ? '+' : '−'}${Math.abs(cgx).toFixed(2)}　轮上高度 ${tall.toFixed(2)} m`;
-        text(cgText, 96, 168, 12, Math.abs(cgx) > 0.7 ? '#ffb4a2' : '#9fc3d8');
+        text(cgText, 96, 168, 12, Math.abs(cgx) > 0.7 ? '#ff8f77' : '#a8cbe0');
       }
       // 操作提示（画布内，放最底部一行，不与零件槽重叠）
       // 操作提示：加深色底衬，保证在任何地貌上都看得清
@@ -2011,7 +2012,7 @@ const BIOMES = {
         // 关卡号 + 名字（轻微从右滑入）
         const sl = (1 - Math.min(1, (2.0 - t) / 0.3)) * 26;
         text(lv.levelId + '　' + lv.name, DW / 2 + sl, bandY + 62, 30, '#ffe9b0', 'center', true);
-        text(goals.join('　·　'), DW / 2, bandY + 92, 13, 'rgba(206,224,238,.82)', 'center');
+        text(goals.join('　·　'), DW / 2, bandY + 92, 13, 'rgba(228,240,250,.95)', 'center');
         ctx.restore();
       }
     }
@@ -2556,7 +2557,7 @@ const BIOMES = {
 
     text(page.title, X + 40, Y + 56, 26, '#ffe9b0', 'left', true);
     text((state.welcome) + ' / ' + WELCOME_PAGES.length, X + W - 40, Y + 56, 13,
-      'rgba(190,214,232,.55)', 'right', true);
+      'rgba(196,218,236,.72)', 'right', true);
 
     // 左侧插图
     if (page.art === 'car') {
@@ -2587,7 +2588,7 @@ const BIOMES = {
         }
         // 名称 + 类别
         text(RAP.PARTS[pid].label, rowsX + 46, ry + 18, 14.5, '#ffe9b0', 'left', true);
-        text(cat, rowsX + 132, ry + 18, 11, 'rgba(150,190,215,.75)', 'left');
+        text(cat, rowsX + 132, ry + 18, 11, 'rgba(176,208,230,.92)', 'left');
         // 职责
         text(desc, rowsX + 176, ry + 18, 12.5, '#c9dae8', 'left');
       });
@@ -2646,7 +2647,7 @@ const BIOMES = {
     const last = state.welcome >= WELCOME_PAGES.length;
     wbtn(bn, last ? '开始搭车！' : '下一步 →', true);
     // 小提示：键盘也可以翻页
-    text('Enter 继续　·　Esc 跳过', DW / 2, bn.y + bn.h + 26, 12, 'rgba(170,192,208,.55)', 'center');
+    text('Enter 继续　·　Esc 跳过', DW / 2, bn.y + bn.h + 26, 12, 'rgba(196,216,232,.82)', 'center');
   }
 
   // 关卡地形缩略图：把 mapRows 压成一条剖面
@@ -2788,7 +2789,7 @@ const BIOMES = {
       drawLevelThumb(lv, x + 12, y + 176, CW - 24, 44);
       const boxTxt = Object.keys(lv.partsBox || {})
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + lv.partsBox[k]).join(' ');
-      text(boxTxt, x + CW / 2, y + 236, 10, 'rgba(200,218,232,.55)', 'center');
+      text(boxTxt, x + CW / 2, y + 236, 10, 'rgba(212,228,240,.82)', 'center');
     });
     // 底部进度条带：填掉卡片下方的大片空白，同时给一个"总进度"的目标感
     {
@@ -2805,7 +2806,7 @@ const BIOMES = {
       roundRect(BX - 22, BY - 26, BW + 44, 92, 14); ctx.fill();
       ctx.strokeStyle = 'rgba(232,200,122,.22)'; ctx.lineWidth = 1.5;
       roundRect(BX - 22, BY - 26, BW + 44, 92, 14); ctx.stroke();
-      text('总进度', BX, BY, 12, 'rgba(190,214,232,.7)', 'left', true);
+      text('总进度', BX, BY, 12, 'rgba(200,220,236,.9)', 'left', true);
       text('通关 ' + cleared + ' / ' + levels.length + ' 关', BX + BW, BY, 12, '#9fb2c2', 'right');
       ctx.fillStyle = 'rgba(255,255,255,.10)';
       roundRect(BX, BY + 12, BW, 12, 6); ctx.fill();
