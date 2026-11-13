@@ -6,7 +6,7 @@
  *
  * 检查项：
  *   1. check_html_logic.js     34 项数值校核
- *   2. 12 个交互/流程脚本      真实浏览器 + 真实鼠标，检查 0 控制台异常
+ *   2. 23 个交互/流程脚本      真实浏览器 + 真实鼠标，检查 0 控制台异常
  *   3. 内联脚本语法
  *
  * 退出码：0 全绿；1 有失败
@@ -26,6 +26,8 @@ const SCRIPTS = [
   'test_eraser.js',
   'test_help_close.js',
   'test_help_pause.js',
+  'test_hud_overlap.js',
+  'test_progress_track.js',
   'test_brake.js',
   'test_pig_mood.js',
   'test_levelselect.js',
@@ -36,11 +38,14 @@ const SCRIPTS = [
   'test_arrow_visibility.js',
   'test_run_banner.js',
   'test_fullplay.js',
+  'test_result_keys.js',
+  'test_all_levels.js',
   'test_drive_sequence.js',
   'test_replay.js',
   'test_wheel_spin.js',
   'test_touch_fx.js',
-  'test_touch_all.js'
+  'test_touch_all.js',
+  'test_perf_stable.js'
 ];
 
 function run(cmd, args, label, timeoutMs = 180000) {
