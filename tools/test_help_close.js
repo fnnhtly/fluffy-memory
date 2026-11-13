@@ -10,7 +10,7 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
 const SHOTS = path.join(ROOT, 'records', 'shots');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 (async () => {
-  const child = spawn(EDGE, ['--headless=new', '--disable-gpu', '--hide-scrollbars',
+  const child = spawn(EDGE, ['--headless=new',  '--hide-scrollbars',
     '--remote-debugging-port=' + PORT, '--user-data-dir=' + path.join(os.tmpdir(), 'edge8-' + Date.now()),
     '--window-size=1280,800', '--force-device-scale-factor=1', '--no-first-run',
     '--allow-file-access-from-files', 'about:blank'], { stdio: 'ignore' });

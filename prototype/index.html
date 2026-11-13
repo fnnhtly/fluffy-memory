@@ -937,7 +937,7 @@ const BIOMES = {
     traceTerrain();
     ctx.clip();
     // 见模块级 texHash()
-    const stoneW = 108 * cam.zoom, stoneH = 72 * cam.zoom;
+    const stoneW = 128 * cam.zoom, stoneH = 86 * cam.zoom;
     const baseY = toY(cam.y) + 14;
     // 用可视宽度而不是设计宽度，否则宽屏时两侧没有石头纹理
     const colsN = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / stoneW) + 4;
@@ -1010,7 +1010,7 @@ const BIOMES = {
 
     // 石头表面的小碎石（跟着地形走，一定在石头内部）
     {
-      for (let i = 0; i < pts.length; i += 4) {
+      for (let i = 0; i < pts.length; i += 6) {
         const wx = pts[i][0];
         const h1 = Math.abs(Math.sin(wx * 12.9898) * 43758.5453) % 1;
         const h2 = Math.abs(Math.sin(wx * 39.346) * 24634.6345) % 1;
@@ -1033,7 +1033,7 @@ const BIOMES = {
     // 零星草叶
     ctx.save();
     ctx.strokeStyle = '#5faa42'; ctx.lineWidth = 2.2 * cam.zoom; ctx.lineCap = 'round';
-    for (let i = 0; i < pts.length; i += 3) {
+    for (let i = 0; i < pts.length; i += 5) {
       const wx = pts[i][0];
       const hh = texHash(Math.floor(wx * 3), 17);
       if (hh > 0.55) continue;
