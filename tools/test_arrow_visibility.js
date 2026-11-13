@@ -47,8 +47,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await sleep(500); await shot('av-02-selected-pump');
   console.log('选中打气筒时（应显示箭头）已截图');
 
-  // 悬停其中一个
-  const c = cl((1280/2-138-40) + 2*46 + 23, 128 + 3*46 + 23);
+  // 悬停其中一个（坐标从页面里的 buildOrigin 算，别写死格子尺寸）
+  const o = JSON.parse(await ev("JSON.stringify(window.__rap.buildOrigin())"));
+  const BP = await ev("window.__rap.BUILD_PX");
+  const c = cl(o.x + 3 * BP + BP / 2, o.y + 3 * BP + BP / 2);
   await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:c.x,y:c.y,button:'none'});
   await sleep(400); await shot('av-03-hover');
   console.log('悬停时（该格高亮箭头 + 方向字）已截图');

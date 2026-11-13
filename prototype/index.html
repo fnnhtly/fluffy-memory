@@ -232,8 +232,9 @@
   }
 
   // ---------- 坐标 ----------
-  const BUILD_PX = 46;   // 建造格显示尺寸
-  const buildOrigin = () => ({ x: DW / 2 - RAP.BUILD_COLS * BUILD_PX / 2 - 40, y: 128 });
+  const BUILD_PX = 44;   // 建造格显示尺寸
+  // 面板整体避开顶部信息条（y<190），否则最上面两行格子被信息条盖住
+  const buildOrigin = () => ({ x: DW / 2 - RAP.BUILD_COLS * BUILD_PX / 2 - 40, y: 214 });
   function worldToScreen(wx, wy, cam) {
     const s = PPM * cam.zoom;                 // zoom 是"倍率"，实际每米像素 = PPM * zoom
     return { x: DW / 2 + (wx - cam.x) * s, y: DH / 2 - (wy - cam.y) * s };
@@ -268,11 +269,11 @@
   function tabRect(i) { return { x: 24 + i * 86, y: 18, w: 80, h: 30 }; }
   function btnRect(name) {
     if (state.phase === 'build') {
-      if (name === 'launch') return { x: DW / 2 + 150, y: 288, w: 76, h: 76 };
+      if (name === 'launch') return { x: DW / 2 + 150, y: 258, w: 76, h: 76 };
       if (name === 'clear') return { x: 84, y: 324, w: 56, h: 56 };
       if (name === 'undo') return { x: 84, y: 392, w: 56, h: 56 };
       if (name === 'rotate') return { x: 84, y: 460, w: 56, h: 56 };
-      if (name === 'help') return { x: DW / 2 + 150, y: 372, w: 76, h: 44 };
+      if (name === 'help') return { x: DW / 2 + 144, y: 366, w: 88, h: 38 };
     }
     if (state.phase === 'resolved') {
       const y = state.resultBtnY || 556;
@@ -693,19 +694,19 @@
 const BIOMES = {
   field: { rock: [96, 112, 120], grass: '#79c94f', grass2: '#4f9e3c', grass3: '#a6e070',
     edge: '#12201a', skyTop: '#8FC4E0', skyMid: '#CFE6D8', skyLow: '#F2F0C0',
-    hill: '#6E93A6', jungle: ['#3f7f5c', '#2f6b4a', '#22503a'], cave: false },
+    hill: '#6E93A6', jungle: ['#3f7f5c', '#2f6b4a', '#22503a'], cave: false, dim: 0.26 },
   canyon: { rock: [186, 122, 78], grass: '#d8a24f', grass2: '#a8763a', grass3: '#f0cc84',
     edge: '#4a2a16', skyTop: '#E8A96B', skyMid: '#F4D8A8', skyLow: '#FBF0D2',
-    hill: '#B07A5A', jungle: ['#7d5a3a', '#63452c', '#4a3320'], cave: false },
+    hill: '#B07A5A', jungle: ['#7d5a3a', '#63452c', '#4a3320'], cave: false, dim: 0.26 },
   cave: { rock: [58, 74, 84], grass: '#4e7a52', grass2: '#33543a', grass3: '#6f9e6a',
     edge: '#08110f', skyTop: '#0d1a22', skyMid: '#132530', skyLow: '#1b3340',
-    hill: '#0b1822', jungle: ['#15302a', '#102420', '#0b1a17'], cave: true },
+    hill: '#0b1822', jungle: ['#15302a', '#102420', '#0b1a17'], cave: true, dim: 0.08 },
   ice: { rock: [150, 178, 198], grass: '#cfeef8', grass2: '#9ed4e8', grass3: '#f0ffff',
     edge: '#4a7286', skyTop: '#9FCBE8', skyMid: '#D8EEF8', skyLow: '#F4FCFF',
-    hill: '#8FB6CC', jungle: ['#7FA8BE', '#6B95AC', '#5A8199'], cave: false },
+    hill: '#8FB6CC', jungle: ['#7FA8BE', '#6B95AC', '#5A8199'], cave: false, dim: 0.26 },
   dusk: { rock: [96, 86, 108], grass: '#7a6a4a', grass2: '#544832', grass3: '#a89468',
     edge: '#1a1420', skyTop: '#3B3560', skyMid: '#9A6A72', skyLow: '#E8A870',
-    hill: '#5A4A6A', jungle: ['#2E3A42', '#25303a', '#1C2630'], cave: false }
+    hill: '#5A4A6A', jungle: ['#2E3A42', '#25303a', '#1C2630'], cave: false, dim: 0.17 }
 };
 
   function drawWorld(ter, cam) {
@@ -784,19 +785,20 @@ const BIOMES = {
       fillScreen(caveV);
     }
 
-    // 地平线光晕（暖）
+    // 地平线光晕（暖；洞穴里换成冷光，暖光会让洞窟"漏日光"）
     const glow = ctx.createRadialGradient(DW * 0.5, DH * 0.5, 80, DW * 0.5, DH * 0.5, DW * 0.62);
-    glow.addColorStop(0, 'rgba(255,248,196,.32)');
+    glow.addColorStop(0, CAVE ? 'rgba(150,200,220,.13)' : 'rgba(255,248,196,.32)');
     glow.addColorStop(1, 'rgba(255,248,196,0)');
     fillScreen(glow);
     // 远山剪影（原神感的层峦）
+    // 底边要伸到远景地面之下，否则一圈三角形会在屏幕固定高度上"切"出一条直线
     ctx.fillStyle = PAL.hill;
     for (let i = 0; i < 5; i++) {
       const bx = i * 300 - 80, h = 90 - (i % 3) * 18;
       ctx.beginPath();
-      ctx.moveTo(bx, DH * 0.42);
+      ctx.moveTo(bx, DH * 0.62);
       ctx.lineTo(bx + 150, DH * 0.42 - h);
-      ctx.lineTo(bx + 300, DH * 0.42);
+      ctx.lineTo(bx + 300, DH * 0.62);
       ctx.closePath(); ctx.fill();
     }
 
@@ -830,13 +832,14 @@ const BIOMES = {
     const horizonY = toY(ter.surfaceY(cam.x) + 2.6);
     // 远景地面：先铺满，避免远山与丛林之间漏出天空
     // 从远山顶点之上就开始铺（否则三角形之间会漏出天空）
-    const farGround = ctx.createLinearGradient(0, horizonY - 70, 0, horizonY + 120);
+    // 淡入带要够长，否则远景地面顶端会在屏幕固定高度上出现一条横向"接缝"
+    const farGround = ctx.createLinearGradient(0, horizonY - 170, 0, horizonY + 120);
     farGround.addColorStop(0, CAVE ? 'rgba(10,20,26,0)' : 'rgba(196,216,222,0)');
-    farGround.addColorStop(0.28, PAL.hill);
-    farGround.addColorStop(0.5, PAL.hill);
+    farGround.addColorStop(0.58, PAL.hill);
+    farGround.addColorStop(0.74, PAL.hill);
     farGround.addColorStop(1, PAL.jungle[1]);
     ctx.fillStyle = farGround;
-    ctx.fillRect(-VIEW_OFF_X - 4, horizonY - 70, VIEW_W + VIEW_OFF_X * 2 + 8, 190);
+    ctx.fillRect(-VIEW_OFF_X - 4, horizonY - 170, VIEW_W + VIEW_OFF_X * 2 + 8, 290);
     // 远山（最淡，最高）
     ctx.fillStyle = CAVE ? 'rgba(8,16,22,.85)' : PAL.hill;
     const hillN2 = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / 220) + 3;
@@ -852,11 +855,12 @@ const BIOMES = {
     canopy(horizonY + 34, 42, 0, PAL.jungle[0], 0.9, false);
     // 中景丛林（中）
     canopy(horizonY + 62, 50, 6, PAL.jungle[1], 0.96, false);
-    // 中景与近景之间的雾
+    // 中景与近景之间的雾（洞穴里是冷雾，不能撒暖白）
+    const fogCol = CAVE ? '190,220,235' : '226,240,210';
     const fogM = ctx.createLinearGradient(0, horizonY + 40, 0, horizonY + 130);
-    fogM.addColorStop(0, 'rgba(226,240,210,0)');
-    fogM.addColorStop(0.5, 'rgba(226,240,210,.32)');
-    fogM.addColorStop(1, 'rgba(226,240,210,0)');
+    fogM.addColorStop(0, 'rgba(' + fogCol + ',0)');
+    fogM.addColorStop(0.5, 'rgba(' + fogCol + ',' + (CAVE ? 0.16 : 0.32) + ')');
+    fogM.addColorStop(1, 'rgba(' + fogCol + ',0)');
     ctx.fillStyle = fogM;
     ctx.fillRect(-VIEW_OFF_X - 4, horizonY + 40, VIEW_W + VIEW_OFF_X * 2 + 8, 100);
     // 近景丛林（最实，带叶尖）
@@ -1063,21 +1067,49 @@ const BIOMES = {
   function drawGrid() {
     if (state.phase !== 'build') return;
     const o = buildOrigin();
-    // 建造台底衬：一块半透明板，让网格从背景里"浮"出来
-    const padX = 10, padY = 34;
-    ctx.fillStyle = 'rgba(10,18,24,.34)';
-    roundRect(o.x - padX, o.y - padY, RAP.BUILD_COLS * BUILD_PX + padX * 2,
-      RAP.BUILD_ROWS * BUILD_PX + padY + 16, 14); ctx.fill();
-    ctx.strokeStyle = 'rgba(232,200,122,.28)'; ctx.lineWidth = 1.5; ctx.stroke();
-    text('6 × 8', o.x + RAP.BUILD_COLS * BUILD_PX - 8, o.y + RAP.BUILD_ROWS * BUILD_PX + 2,
-      11, 'rgba(255,233,176,.5)', 'right', true);
+    const GW = RAP.BUILD_COLS * BUILD_PX, GH = RAP.BUILD_ROWS * BUILD_PX;
+    const HD = 26;                       // 面板标题栏高度
+    // 建造台：一块"工程图板"，标题栏 + 细网格线，比原来的橄榄绿玻璃砖干净
+    ctx.fillStyle = 'rgba(8,20,28,.58)';
+    roundRect(o.x - 12, o.y - HD - 8, GW + 24, GH + HD + 14, 14); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.42)'; ctx.lineWidth = 2; ctx.stroke();
+    // 标题栏
+    ctx.fillStyle = 'rgba(16,30,40,.72)';
+    roundRect(o.x - 12, o.y - HD - 8, GW + 24, HD, 14); ctx.fill();
+    ctx.fillStyle = 'rgba(232,200,122,.30)';
+    ctx.fillRect(o.x - 12, o.y - 8, GW + 24, 1.5);
+    text('拼装区', o.x - 2, o.y - HD + 10, 12.5, 'rgba(255,233,176,.85)', 'left', true);
+    text(RAP.BUILD_COLS + ' × ' + RAP.BUILD_ROWS, o.x + GW + 2, o.y - HD + 10, 11.5,
+      'rgba(190,214,232,.45)', 'right', true);
+    // 棋盘染色（很淡，只做可读性）
     for (let r = 0; r < RAP.BUILD_ROWS; r++) {
       for (let c = 0; c < RAP.BUILD_COLS; c++) {
-        const x = o.x + c * BUILD_PX, y = o.y + r * BUILD_PX;
-        ctx.fillStyle = ((r + c) % 2 === 0) ? 'rgba(118,148,68,.38)' : 'rgba(98,128,58,.38)';
-        roundRect(x + 2, y + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.fill();
+        if ((r + c) % 2) continue;
+        ctx.fillStyle = 'rgba(255,255,255,.028)';
+        ctx.fillRect(o.x + c * BUILD_PX, o.y + r * BUILD_PX, BUILD_PX, BUILD_PX);
       }
     }
+    // 网格线
+    ctx.strokeStyle = 'rgba(150,200,235,.15)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let c = 0; c <= RAP.BUILD_COLS; c++) {
+      const x = Math.round(o.x + c * BUILD_PX) + 0.5;
+      ctx.moveTo(x, o.y); ctx.lineTo(x, o.y + GH);
+    }
+    for (let r = 0; r <= RAP.BUILD_ROWS; r++) {
+      const y = Math.round(o.y + r * BUILD_PX) + 0.5;
+      ctx.moveTo(o.x, y); ctx.lineTo(o.x + GW, y);
+    }
+    ctx.stroke();
+    // 四角括角，强化"工作区"的框定感
+    ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    const CK = 12;
+    [[o.x, o.y, 1, 1], [o.x + GW, o.y, -1, 1], [o.x, o.y + GH, 1, -1], [o.x + GW, o.y + GH, -1, -1]]
+      .forEach(([x, y, sx, sy]) => {
+        ctx.beginPath();
+        ctx.moveTo(x + sx * CK, y); ctx.lineTo(x, y); ctx.lineTo(x, y + sy * CK);
+        ctx.stroke();
+      });
     // 拖拽吸附：按住拖动时，光标能落到的格子亮绿（能放）/ 亮红（放不下）
     if (state.mouse.down && (state.dragPart || state.selected !== 'eraser')) {
       const want = state.dragMove ? state.dragMove.part : (state.dragPart || state.selected);
@@ -1649,6 +1681,10 @@ const BIOMES = {
       const chk = RAP.canLaunch(state.build);
       const LC = { x: L.x + L.w / 2, y: L.y + L.h / 2 };
       const ready = chk.ok;
+      // 右侧操作坞（出发 + 零件说明）：统一底板，避免两个浮空按钮各飞各的
+      ctx.fillStyle = 'rgba(8,18,26,.55)';
+      roundRect(L.x - 14, L.y - 10, 104, 166, 18); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.24)'; ctx.lineWidth = 1.5; ctx.stroke();
       // 出发：对勾圆钮（未就绪变灰；就绪时外圈呼吸）
       ctx.fillStyle = ready ? '#4a9be0' : 'rgba(90,104,116,.85)';
       ctx.beginPath(); ctx.arc(LC.x, LC.y, L.w / 2, 0, Math.PI * 2); ctx.fill();
@@ -1664,13 +1700,9 @@ const BIOMES = {
       ctx.stroke();
       text('出发', LC.x, L.y + L.h + 20, 14, ready ? '#dff0ff' : '#93a3ae', 'center', true);
 
-      // 左侧三个小圆钮（图标 + 下方文字，互不遮挡）
+      // 左侧三个小圆钮（图标 + 右侧文字，装在同一个圆角坞里）
       const knob = (rect, drawIcon, label, active) => {
         const c = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
-        // 底板：横向胶囊（圆钮在左、文字在右，永不重叠）
-        const labW = 62;
-        ctx.fillStyle = 'rgba(10,18,24,.62)';
-        roundRect(rect.x - 6, rect.y - 6, rect.w + labW + 16, rect.h + 12, (rect.h + 12) / 2); ctx.fill();
         ctx.fillStyle = active ? 'rgba(74,123,168,.95)' : 'rgba(24,34,42,.9)';
         ctx.beginPath(); ctx.arc(c.x, c.y, rect.w / 2, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = active ? 'rgba(255,255,255,.55)' : 'rgba(150,170,185,.4)';
@@ -1678,6 +1710,10 @@ const BIOMES = {
         drawIcon(c);
         text(label, rect.x + rect.w + 8, c.y + 5, 12.5, active ? '#f0f8ff' : '#d4e2ee', 'left', true);
       };
+      const RDOCK = btnRect('rotate');
+      ctx.fillStyle = 'rgba(8,18,26,.55)';
+      roundRect(C.x - 14, C.y - 14, 148, RDOCK.y + RDOCK.h + 14 - (C.y - 14), 18); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.24)'; ctx.lineWidth = 1.5; ctx.stroke();
       knob(C, (c) => {
         ctx.fillStyle = '#dce6ee';
         ctx.fillRect(c.x - 8, c.y - 9, 16, 4);
@@ -1706,7 +1742,7 @@ const BIOMES = {
       ctx.fillStyle = state.helpOpen ? 'rgba(74,123,168,.95)' : 'rgba(24,34,42,.85)';
       roundRect(HB2.x, HB2.y, HB2.w, HB2.h, 10); ctx.fill();
       ctx.strokeStyle = 'rgba(232,200,122,.6)'; ctx.lineWidth = 1.5; ctx.stroke();
-      text('? 零件说明', HB2.x + HB2.w / 2, HB2.y + 28, 13, '#ffe9b0', 'center', true);
+      text('? 零件说明', HB2.x + HB2.w / 2, HB2.y + 25, 13, '#ffe9b0', 'center', true);
     }
 
     if (state.phase === 'run' && state.run) {
@@ -1866,8 +1902,8 @@ const BIOMES = {
         ctx.font = '10.5px "Microsoft YaHei", sans-serif';
         const tw = ctx.measureText(tipTxt).width;
         ctx.fillStyle = 'rgba(10,18,24,.66)';
-        roundRect(DW / 2 - tw / 2 - 12, DH - 142, tw + 24, 20, 10); ctx.fill();
-        text(tipTxt, DW / 2, DH - 128, 10.5, 'rgba(214,230,242,.88)', 'center');
+        roundRect(DW / 2 - tw / 2 - 12, DH - 136, tw + 24, 20, 10); ctx.fill();
+        text(tipTxt, DW / 2, DH - 122, 10.5, 'rgba(214,230,242,.88)', 'center');
       }
       const boxParts = Object.keys(level().partsBox || {})
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + '×' + level().partsBox[k]).join('　');
@@ -2744,6 +2780,14 @@ const BIOMES = {
         cam.zoom = wide.zoom + (cam.zoom - wide.zoom) * k;
       }
       drawWorld(ter, cam);
+      // 建造阶段的场景压暗：让拼装区成为视觉主体（原样太亮，网格糊在风景里）
+      if (state.introT > 0.2) {
+        // 压暗强度按地貌给：洞穴本身就黑，再压就看不见了
+        const bm = BIOMES[(level() && level().biome) || 'field'] || BIOMES.field;
+        ctx.globalAlpha = Math.min(1, (state.introT - 0.2) / 0.5);
+        fillScreen('rgba(6,14,20,' + (bm.dim || 0.26).toFixed(2) + ')');
+        ctx.globalAlpha = 1;
+      }
       ctx.save();
       ctx.translate(0, VIEW_OFF_Y);      // UI 在设计区居中（4:3 时上下有扩展）
       // 入场时 UI 淡入（前 40% 不显示）
@@ -2925,7 +2969,7 @@ const BIOMES = {
     if (!localStorage.getItem('rap-welcomed-v1')) state.welcome = 1;
   } catch (e) { state.welcome = 1; }
 
-  window.__rap = { state, RAP, levels, startLevel, launch };
+  window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
