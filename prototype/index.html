@@ -320,7 +320,11 @@
       if (name === 'help') return { x: DW - 70, y: 84, w: 46, h: 46 };
       if (name === 'interact') return { x: 0, y: DH - 150, w: 92, h: 92 };
       if (name === 'brake') return { x: DW - 128, y: DH - 150, w: 92, h: 92 };
-      if (name === 'retryRun') return { x: DW - 300, y: DH - 220, w: 84, h: 84 };
+      // 注意：行驶期"重开"只在左上角（绿圆钮 restartRun）。
+      // 这里曾经还有一个 retryRun = {x:DW-300, y:DH-220, 84×84}，
+      // 但按钮早就不画了、判定还留着 —— 玩家在右下那片空白上随手一点
+      // 就会被踢回建造页。ghost 热区由 test_ghost_buttons.js 把守。
+
     }
     return null;
   }
@@ -563,7 +567,9 @@
         const rect = { x: xs + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
         if (hit(rect, p.x, p.y)) { RAP.pressInteract(state.run, i + 1); SFX.pump(); return; }
       }
-      if (hit(btnRect('retryRun'), p.x, p.y)) { state.phase = 'build'; state.run = null; return; }
+      // 行驶期这一层不再有任何"重开"热区：重开是左上的绿圆钮（restartRun），
+      // 在全局按钮分支里已经判过了。以前这里还留着 retryRun 的判定，
+      // 而那个按钮早就删了 —— 幽灵热区，由 test_ghost_buttons.js 把守。
       return;
     }
 
