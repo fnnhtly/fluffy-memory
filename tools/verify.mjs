@@ -76,13 +76,30 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
 }
 
-// 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字）
+// 3b) 像素探针自检
+{
+  const r = run(process.execPath, [path.join('tools', 'selftest_pixel_probe.js')], '像素探针自检');
+  const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
+  const pass = !!(m && m[2] === '0' && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
+}
+
+// 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字 / 出卡）
 if (!fast) {
   const r = run(process.execPath, [path.join('tools', 'test_layout_audit.js')], '排版审计');
   const m = (r.out || '').match(/合计问题: (\d+)/);
   const hasErr = /errors: \(none\)/.test(r.out);
   const pass = !!(r.ok && m && m[1] === '0' && hasErr);
   results.push({ ...r, ok: pass, detail: m ? `问题 ${m[1]} 条${hasErr ? '' : ' + 有异常'}` : '无法解析' });
+}
+
+// 4b) 像素探针（零件一览页 7 个图标真的画出来了）
+if (!fast) {
+  const r = run(process.execPath, [path.join('tools', 'test_parts_page.js')], '零件一览页图标');
+  const m = (r.out || '').match(/图标未绘制: (\d+)/);
+  const hasErr = /errors: \(none\)/.test(r.out);
+  const pass = !!(r.ok && m && m[1] === '0' && hasErr);
+  results.push({ ...r, ok: pass, detail: m ? `未绘制 ${m[1]} 个${hasErr ? '' : ' + 有异常'}` : '无法解析' });
 }
 
 // 5) 交互脚本

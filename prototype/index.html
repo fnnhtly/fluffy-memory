@@ -2456,16 +2456,18 @@ const BIOMES = {
       art: 'car'
     },
     {
-      title: '建造 · 三步就能出发',
-      lines: [
-        '1. 点底部零件槽 → 点网格放零件（必须贴着木框）',
-        '2. 把「小猪」拖进一个木框里（框是空的，猪坐进去）',
-        '3. 点右侧蓝色对勾 → 出发',
-        '',
-        '拖动已放的零件可以搬走；右键 / R 换喷气方向；',
-        '最右边的橡皮按下就能擦掉。'
-      ],
-      art: 'grid'
+      // 用户明确要求：引导不要"建造三步"，要一页说清每种结构是干什么的
+      title: '零件一览 · 每样东西负责什么',
+      art: 'parts',
+      parts: [
+        ['wood_frame', '结构', '中空。车身的骨架，中间能塞下小猪；挨打会裂、会黑、最后散。'],
+        ['wood_wheel', '轮', '抓地强、跑得慢，爬坡最靠得住；到了冰面几乎打滑。'],
+        ['iron_wheel', '轮', '抓地弱、跑得快，唯一能在冰面上走的轮子。'],
+        ['motor', '动力', '装上就一直转，每秒吃 4 点能量，没电就停。'],
+        ['battery', '能量', '装上直接 +100 能量，是马达的饭。'],
+        ['pump', '手动', '有朝向。运行期按住蓄力、松手朝箭头方向喷一下。'],
+        ['pig', '乘客', '只能坐进中空木框里。它到终点才算赢，从车上掉出去就输。']
+      ]
     },
     {
       title: '跑起来之后',
@@ -2482,7 +2484,10 @@ const BIOMES = {
   ];
 
   // 引导卡几何：绘制与点击共用，按钮放到卡片下方（和结算页同一套"对话框 + 底部动作"）
-  function welcomeCard() { return { x: (DW - 760) / 2, y: 132, w: 760, h: 306 }; }
+  function welcomeCard() {
+    const page = WELCOME_PAGES[(state.welcome || 1) - 1] || WELCOME_PAGES[0];
+    return { x: (DW - 760) / 2, y: 132, w: 760, h: page.art === 'parts' ? 380 : 306 };
+  }
   function welcomeBtnRect() {
     const C = welcomeCard();
     return { x: DW / 2 + 120, y: C.y + C.h + 22, w: 180, h: 54 };
@@ -2525,16 +2530,30 @@ const BIOMES = {
       drawPig(cx2, cy2, 46 * 0.3, 0, 'happy');
       drawPartShape('wood_wheel', cx2 - 46, cy2 + 40, 46 * 0.7, 0);
       drawPartShape('wood_wheel', cx2 + 46, cy2 + 40, 46 * 0.7, 0);
-    } else if (page.art === 'grid') {
-      for (let r2 = 0; r2 < 4; r2++) {
-        for (let c2 = 0; c2 < 4; c2++) {
-          const gx = X + 62 + c2 * 34, gy = Y + 140 + r2 * 34;
-          ctx.fillStyle = (r2 === 1 && c2 === 1) ? 'rgba(150,220,120,.7)' : 'rgba(120,150,110,.32)';
-          roundRect(gx, gy, 30, 30, 5); ctx.fill();
+    } else if (page.art === 'parts') {
+      // 零件一览：一行一件 —— 图标 + 名称/类别 + 一句话职责
+      const rowsX = X + 36, rowW = W - 72, rowH = 34;
+      page.parts.forEach((it, i) => {
+        const ry = Y + 100 + i * rowH;
+        const [pid, cat, desc] = it;
+        // 隔行淡底，长列表更好追
+        if (i % 2 === 0) {
+          ctx.fillStyle = 'rgba(255,255,255,.035)';
+          roundRect(rowsX - 6, ry - 4, rowW + 12, rowH - 4, 8); ctx.fill();
         }
-      }
-      drawPartShape('wood_frame', X + 62 + 34 + 15, Y + 140 + 34 + 15, 28, 0, 3);
-      drawPig(X + 62 + 34 + 15, Y + 140 + 34 + 15, 10, 0, 'normal');
+        // 图标
+        if (pid === 'pig') {
+          drawPig(rowsX + 20, ry + 13, 11, 0, 'normal');
+        } else {
+          drawPartShape(pid, rowsX + 20, ry + 13, 26, 0,
+            pid === 'wood_frame' ? 3 : undefined);
+        }
+        // 名称 + 类别
+        text(RAP.PARTS[pid].label, rowsX + 46, ry + 18, 14.5, '#ffe9b0', 'left', true);
+        text(cat, rowsX + 132, ry + 18, 11, 'rgba(150,190,215,.75)', 'left');
+        // 职责
+        text(desc, rowsX + 176, ry + 18, 12.5, '#c9dae8', 'left');
+      });
     } else {
       // 三个按钮图标竖排，互不重叠
       const icx = X + 130;
@@ -2555,10 +2574,12 @@ const BIOMES = {
       text('刹', icx, Y + 305, 20, '#ffe9b0', 'center', true);
     }
 
-    // 右侧文字
-    page.lines.forEach((ln, i) => {
-      text(ln, X + 250, Y + 108 + i * 30, 15, ln ? '#d8e8f4' : '#000', 'left');
-    });
+    // 右侧文字（零件一览页自己横向排好了，不再走这一支）
+    if (Array.isArray(page.lines)) {
+      page.lines.forEach((ln, i) => {
+        text(ln, X + 250, Y + 108 + i * 30, 15, ln ? '#d8e8f4' : '#000', 'left');
+      });
+    }
 
     // 页码点（贴在卡片底边内侧）
     for (let i = 0; i < WELCOME_PAGES.length; i++) {
@@ -3147,7 +3168,7 @@ const BIOMES = {
   } catch (e) { state.welcome = 1; }
 
   window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos,
-                   trayRect, btnRect, TRAY, pauseRowRects, level };
+                   trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect };
   startLevel(0);
   requestAnimationFrame(frame);
 })();

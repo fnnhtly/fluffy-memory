@@ -109,7 +109,7 @@ function overlapRatio(a, b) {
   let totalBad = 0;
   const all = [];
 
-  async function audit(name, marker) {
+  async function audit(name, marker, box) {
     const recs = JSON.parse(await ev(SNAP, true));
     let rs = recs.filter(r => r.t.trim() && r.w > 1.5);
     if (marker) {
@@ -127,6 +127,17 @@ function overlapRatio(a, b) {
         bad.push('越界  「' + r.t + '」 @ ' + [r.x, r.y, r.w, r.h].map(v => Math.round(v)).join(','));
       }
     });
+    // 卡片内溢出：卡内的文字不许横向跑出卡片（卡片下方的动作按钮是有意放在外面的，不检查）
+    if (box) {
+      rs.forEach(r => {
+        const inCardVert = r.y >= box.y - 4 && r.y + r.h <= box.y + box.h + 4;
+        if (!inCardVert) return;
+        if (r.x < box.x - 4 || r.x + r.w > box.x + box.w + 4) {
+          bad.push('出卡  「' + r.t + '」 @ x=' + Math.round(r.x) + '..' + Math.round(r.x + r.w) +
+            ' / 卡 x=' + Math.round(box.x) + '..' + Math.round(box.x + box.w));
+        }
+      });
+    }
     for (let i = 0; i < rs.length; i++) {
       for (let j = i + 1; j < rs.length; j++) {
         const k = overlapRatio(rs[i], rs[j]);
@@ -183,8 +194,9 @@ function overlapRatio(a, b) {
 
   for (let p = 1; p <= 3; p++) {
     await ev(`window.__rap.state.welcome=${p}`); await sleep(350);
-    const mk = ['欢迎来到', '建造 · 三步', '跑起来之后'][p - 1];
-    await audit('welcome' + p, mk);
+    const mk = ['欢迎来到', '零件一览', '跑起来之后'][p - 1];
+    const box = JSON.parse(await ev('JSON.stringify(window.__rap.welcomeCard())'));
+    await audit('welcome' + p, mk, box);
   }
   await ev('window.__rap.state.welcome=0'); await sleep(200);
 
