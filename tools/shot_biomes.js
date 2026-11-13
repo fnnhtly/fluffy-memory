@@ -31,7 +31,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const names=['field','canyon','cave','ice','dusk'];
   for (let i=0;i<5;i++){
     await ev('window.__rap.startLevel(' + i + '); window.__rap.state.welcome = 0; window.__rap.state.levelSelect = false; window.__rap.state.helpOpen = false;');
-    await ev('window.__rap.state.welcome = 0'); await ev('window.__rap.state.levelSelect = false'); await sleep(600);
+    await ev('window.__rap.state.welcome = 0'); await ev('window.__rap.state.levelSelect = false'); await ev('window.__rap.state.introT = 1'); await sleep(700);
     await shot('biome-'+(i+1)+'-'+names[i]);
     const b = await ev('window.__rap.levels[window.__rap.state.levelIndex].biome');
     console.log('level', i+1, '=> biome', b);

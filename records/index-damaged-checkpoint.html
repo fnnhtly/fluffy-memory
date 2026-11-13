@@ -1,0 +1,2918 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>滚蛋吧！猪 · 垂直切片演示（1-1 ~ 1-5）</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #10161c; overflow: hidden;
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+  #wrap { position: fixed; inset: 0; display: block; }
+  canvas { display: block; box-shadow: 0 10px 40px rgba(0,0,0,.6); cursor: pointer;
+    width: 100vw; height: 100vh; }
+  #panel { position: fixed; right: 16px; top: 16px; width: 264px; padding: 12px 14px;
+    background: rgba(12,20,26,.94); border: 1px solid #2b3a45; border-radius: 10px; color: #cfe0ef;
+    font-size: 12px; display: none; z-index: 10; }
+  #panel h3 { margin: 0 0 8px; font-size: 13px; color: #9fd66a; font-weight: 600; }
+  #panel label { display: flex; justify-content: space-between; margin: 7px 0 2px; }
+  #panel input[type=range] { width: 100%; }
+  #panel .val { color: #ffd93d; }
+  #panel .note { color: #7f8c99; line-height: 1.5; margin-top: 10px; }
+  #panel button { margin-top: 10px; width: 100%; padding: 6px; background: #2f6b33; color: #dfffe0;
+    border: 1px solid #4f9a52; border-radius: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv" width="1280" height="720"></canvas></div>
+
+<div id="panel">
+  <h3>数值调参（真机基线就用这套值）</h3>
+  <div id="sliders"></div>
+  <button id="reset">恢复默认</button>
+  <div class="note">地面摩擦调到 2~3 会明显变粘，但靠惯性滑的关卡（1-1/1-2/1-5）会走不远 —— 想两者都要就调 1.0 左右。改完直接发射试。</div>
+</div>
+<script src="levels.js"></script>
+<script src="game.js"></script>
+<script>
+(function () {
+  'use strict';
+  const cv = document.getElementById('cv');
+  let ctx = cv.getContext('2d');   // let：离屏缓存时会临时切换（见 paintOffscreen）
+  // 设计分辨率（所有坐标都基于它）；实际画布按窗口等比缩放
+  const DW = 1280, DH = 720, PPM = 32;
+
+  // 千星的画布预设（用于自测各尺寸下的排版）
+  const CANVAS_PRESETS = [
+    { id: 'pc-16-9', label: 'PC 1600×900', w: 1600, h: 900 },
+    { id: 'pc-21-9', label: 'PC 2100×900', w: 2100, h: 900 },
+    { id: 'mobile-16-9', label: '手机 1280×720', w: 1280, h: 720 },
+    { id: 'mobile-19.5-9', label: '手机 1560×720', w: 1560, h: 720 },
+    { id: 'mobile-4-3', label: '手机 1280×960', w: 1280, h: 960 }
+  ];
+  let curPreset = 0;      // 当前模拟的画布尺寸（只影响自测与显示）
+
+  // 把画布像素对齐到"设计分辨率 × 缩放"，避免非整数缩放导致的模糊
+  // 当前可视尺寸（设计坐标）。默认 = 设计分辨率；宽/高比例变化时扩展对应方向
+  // ---------- 离屏缓存画布（性能：静态层不每帧重画）----------
+  let terrainCache = null, terrainCacheId = '';
+  const stoneLayer = document.createElement('canvas');
+  const stoneCtx = stoneLayer.getContext('2d');
+  let stoneCacheKey = '';
+  const skyLayer = document.createElement('canvas');
+  const skyCtx = skyLayer.getContext('2d');
+  let skyCacheKey = '';
+
+  // 确定性伪随机（石头/碎石纹理用）
+  function texHash(a, b) {
+    let h = (a * 374761393 + b * 668265263) & 0x7fffffff;
+    h = (h ^ (h >> 13)) * 1274126177 & 0x7fffffff;
+    return ((h ^ (h >> 16)) & 0xffff) / 0xffff;
+  }
+
+  let VIEW_W = DW, VIEW_H = DH;
+  let VIEW_OFF_X = 0, VIEW_OFF_Y = 0;   // 扩展后设计坐标的偏移（HUD 居中用）
+
+  function applyCanvasSize() {
+    const r = cv.getBoundingClientRect();
+    const dpr = Math.min(1.5, window.devicePixelRatio || 1);   // 性能：4K 屏别画 2 倍
+    const cssW = Math.max(320, r.width || DW);
+    const cssH = Math.max(180, r.height || DH);
+    const w = Math.round(cssW * dpr);
+    const h = Math.round(cssH * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+
+    // 以 1280×720 为基准等比铺满（cover），超出的方向扩展可视范围
+    const scale = Math.max(DW / cssW, DH / cssH);
+    VIEW_W = Math.round(cssW * scale);
+    VIEW_H = Math.round(cssH * scale);
+    VIEW_OFF_X = (VIEW_W - DW) / 2;
+    VIEW_OFF_Y = (VIEW_H - DH) / 2;
+
+    // 缩放：1 设计像素 = w/VIEW_W 实际像素
+    const sx = w / VIEW_W, sy = h / VIEW_H;
+    ctx.setTransform(sx, 0, 0, sy, VIEW_OFF_X * sx, VIEW_OFF_Y * sy);
+  }
+
+  // ---------- 视觉参数 ----------
+  const COL = {
+    // 原神黄昏调：天空由上到下 深青 → 青 → 暖金地平线
+    skyTop: '#8FC4E0', skyMid: '#CFE6D8', skyLow: '#F2F0C0',
+    hillFar: '#7FA8B8', jungle: '#2F6B5A', jungle2: '#27584A',
+    stone: '#7C8694', stone2: '#6E7E8C', stoneHi: '#94A3AE', stoneLo: '#4A5866',
+    grass: '#7FBF5A', grassRim: '#C9E37A', shadow: '#2C5A38',
+    mud: '#8A7A5A', ice: '#9FE3F2', iceEdge: '#D9F6FF',
+    grid: 'rgba(120,170,130,.45)', gridSel: 'rgba(232,200,122,.85)',
+    wood: '#C08A4A', woodDark: '#8A5F30', wheel: '#3A4048', iron: '#5A6672', ironRim: '#C8D2DC',
+    pig: '#6FC25A', motor: '#E06A4A', battery: '#8FD66A', pump: '#4F8FB0',
+    box: '#D9A94A', flag: '#E2574C', ink: '#16211A',
+    gold: '#E8C87A', goldDim: '#8A7448', panel: 'rgba(18,30,40,.92)'
+  };
+
+
+  const TRAY = RAP.TRAY_ORDER.concat(['eraser']);
+  const state = {
+    levelIndex: 0, phase: 'build', build: RAP.newBuild(),
+    selected: 'wood_frame', run: null, paramsOpen: false,
+    dragPart: null, dragFromTray: false, mouse: { x: 0, y: 0, down: false },
+    helpOpen: false, paused: false, bounce: null, debris: [], slowmo: 0, lastImpact: null,
+    camState: { x: 0, y: 0, zoom: 1.7 }, shake: 0, flash: 0, vignette: 0, levelSelect: false,
+    introT: 0,        // 入场镜头进度 0→1
+    outroT: 0,        // 结算过渡进度 0→1
+    confetti: [], dust: [], starSfxIdx: -1,
+    popped: {},        // 刚落下的格子 → 播放弹性
+    welcome: 0,        // 0=关闭，1..3=第几页
+    cam: { x: 0, y: 0, zoom: 2.1 }, toast: '', toastT: 0, resultT: 0,
+    replayT: 0, replayIdx: 0
+  };
+
+  const levels = window.RAP_LEVELS;
+
+  // ---------- 关卡进度（localStorage，关掉页面也在） ----------
+  const SAVE_KEY = 'rap-progress-v1';
+  let progress = {};
+  try {
+    progress = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
+  } catch (e) { progress = {}; }
+  function saveProgress(levelId, stars, time) {
+    const cur = progress[levelId] || { stars: 0, best: null };
+    if (stars > cur.stars) cur.stars = stars;
+    if (!cur.best || time < cur.best) cur.best = time;
+    progress[levelId] = cur;
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(progress)); } catch (e) {}
+  }
+  const level = () => levels[state.levelIndex];
+
+  // ---------- 音效：WebAudio 现场合成，不依赖任何素材 ----------
+  const SFX = (() => {
+    let ac = null;
+    let ROLL = null;
+    const ensure = () => {
+      try {
+        if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+        if (ac.state === 'suspended') ac.resume();
+      } catch (e) { ac = null; }
+      return ac;
+    };
+    function tone(freq, dur, type, gain, slideTo) {
+      const a = ensure(); if (!a) return;
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = type || 'triangle';
+      o.frequency.setValueAtTime(freq, a.currentTime);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, a.currentTime + dur);
+      g.gain.setValueAtTime(0.0001, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(gain || 0.12, a.currentTime + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+      o.connect(g); g.connect(a.destination);
+      o.start(); o.stop(a.currentTime + dur + 0.02);
+    }
+    function noise(dur, gain) {
+      const a = ensure(); if (!a) return;
+      const n = Math.floor(a.sampleRate * dur);
+      const buf = a.createBuffer(1, n, a.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+      const src = a.createBufferSource(); src.buffer = buf;
+      const g = a.createGain(); g.gain.value = gain || 0.08;
+      src.connect(g); g.connect(a.destination); src.start();
+    }
+    return {
+      place(h) {
+        // 越往上音越高（h 建议传 0..1）
+        const f = 440 + (h || 0) * 260;
+        tone(f, 0.07, 'square', 0.07);
+      },
+      deny() { tone(180, 0.12, 'sawtooth', 0.07, 120); },
+      launch() { noise(0.25, 0.09); tone(220, 0.25, 'sine', 0.09, 520); },
+      box() { tone(880, 0.09, 'sine', 0.1); tone(1320, 0.09, 'sine', 0.06); },
+      win() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.1), i * 110)); },
+      fail() { tone(300, 0.22, 'sawtooth', 0.09, 140); setTimeout(() => tone(220, 0.28, 'sawtooth', 0.08, 110), 140); },
+      pump() { tone(300, 0.1, 'square', 0.06, 700); },
+      hurt() { tone(160, 0.16, 'square', 0.08, 90); },
+      star(n) { tone(660 + (n || 0) * 220, 0.12, 'triangle', 0.1); },   // 星星逐颗弹出
+      cheer() { [784, 988, 1175].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
+      // 轮子滚动环境音：用持续振荡器，速度调制频率与音量
+      rollStart() {
+        const a = ensure(); if (!a || ROLL) return;
+        try {
+          const o = a.createOscillator(), g = a.createGain();
+          o.type = 'sawtooth';
+          o.frequency.value = 60;
+          g.gain.value = 0.0001;
+          o.connect(g); g.connect(a.destination);
+          o.start();
+          ROLL = { o, g };
+        } catch (e) {}
+      },
+      rollSet(speed) {
+        if (!ROLL) return;
+        const a = ensure(); if (!a) return;
+        const v = Math.max(0, Math.min(1, (speed - 1.5) / 10));
+        ROLL.o.frequency.setTargetAtTime(50 + v * 130, a.currentTime, 0.08);
+        ROLL.g.gain.setTargetAtTime(v * 0.022, a.currentTime, 0.08);
+      },
+      thud(lvl) {
+        // 分级触地音：级别越高越低越沉
+        const base = [0, 420, 320, 220, 150][Math.min(4, lvl)] || 300;
+        tone(base, 0.05 + lvl * 0.02, 'sine', 0.03 + lvl * 0.02, base * 0.6);
+        if (lvl >= 3) noise(0.10 + lvl * 0.03, 0.03 + lvl * 0.015);
+      },
+      rollStop() {
+        if (!ROLL) return;
+        const a = ensure(); if (!a) { ROLL = null; return; }
+        ROLL.g.gain.setTargetAtTime(0.0001, a.currentTime, 0.1);
+        const r = ROLL; ROLL = null;
+        setTimeout(() => { try { r.o.stop(); } catch (e) {} }, 400);
+      }
+    };
+  })();
+
+  // 铺满整个可视区（宽屏时覆盖扩展部分，避免黑边）
+  function fillScreen(style) {
+    ctx.fillStyle = style;
+    ctx.fillRect(-VIEW_OFF_X - 4, -VIEW_OFF_Y - 4, VIEW_W + 8, VIEW_H + 8);
+  }
+
+  // ---------- 坐标 ----------
+  const BUILD_PX = 46;   // 建造格显示尺寸
+  const buildOrigin = () => ({ x: DW / 2 - RAP.BUILD_COLS * BUILD_PX / 2 - 40, y: 128 });
+  function worldToScreen(wx, wy, cam) {
+    const s = PPM * cam.zoom;                 // zoom 是"倍率"，实际每米像素 = PPM * zoom
+    return { x: DW / 2 + (wx - cam.x) * s, y: DH / 2 - (wy - cam.y) * s };
+  }
+  function buildCam() {
+    const ter = RAP.makeTerrain(level());
+    const sy = ter.surfaceY(level().start.col + 0.5);
+    return { x: level().start.col + 3.2, y: sy + 1.55, zoom: 2.1 };
+  }
+
+  // ---------- 交互 ----------
+  function canvasPos(ev) {
+    const r = cv.getBoundingClientRect();
+    // 事件坐标 → 可视设计坐标（考虑宽屏扩展）
+    return {
+      x: (ev.clientX - r.left) * VIEW_W / r.width - VIEW_OFF_X,
+      y: (ev.clientY - r.top) * VIEW_H / r.height - VIEW_OFF_Y
+    };
+  }
+  function trayRect(i) {
+    const n = TRAY.length, w = 46, gap = 7;
+    const total = n * w + (n - 1) * gap;
+    const x0 = (DW - total) / 2;
+    return { x: x0 + i * (w + gap), y: DH - 76, w, h: w };
+  }
+  function cellAt(mx, my) {
+    const o = buildOrigin();
+    const c = Math.floor((mx - o.x) / BUILD_PX), r = Math.floor((my - o.y) / BUILD_PX);
+    if (c < 0 || c >= RAP.BUILD_COLS || r < 0 || r >= RAP.BUILD_ROWS) return null;
+    return { r, c };
+  }
+  function tabRect(i) { return { x: 24 + i * 86, y: 18, w: 80, h: 30 }; }
+  function btnRect(name) {
+    if (state.phase === 'build') {
+      if (name === 'launch') return { x: DW / 2 + 150, y: 288, w: 76, h: 76 };
+      if (name === 'clear') return { x: 84, y: 324, w: 56, h: 56 };
+      if (name === 'undo') return { x: 84, y: 392, w: 56, h: 56 };
+      if (name === 'rotate') return { x: 84, y: 460, w: 56, h: 56 };
+      if (name === 'help') return { x: DW / 2 + 150, y: 372, w: 76, h: 44 };
+    }
+    if (state.phase === 'resolved') {
+      const y = state.resultBtnY || 556;
+      if (name === 'retry') return { x: DW / 2 - 300, y, w: 260, h: 72 };
+      if (name === 'next') return { x: DW / 2 + 40, y, w: 260, h: 72 };
+    }
+    if (state.phase === 'run') {
+      if (name === 'pause') return { x: 24, y: 84, w: 46, h: 46 };
+      if (name === 'restartRun') return { x: 24, y: 138, w: 46, h: 46 };
+      if (name === 'help') return { x: DW - 70, y: 84, w: 46, h: 46 };
+      if (name === 'interact') return { x: 0, y: DH - 150, w: 92, h: 92 };
+      if (name === 'brake') return { x: DW - 128, y: DH - 150, w: 92, h: 92 };
+      if (name === 'retryRun') return { x: DW - 300, y: DH - 220, w: 84, h: 84 };
+    }
+    return null;
+  }
+  function hit(rect, mx, my) { return rect && mx >= rect.x && mx <= rect.x + rect.w && my >= rect.y && my <= rect.y + rect.h; }
+
+  function closeWelcome() {
+    state.welcome = 0;
+    try { localStorage.setItem('rap-welcomed-v1', '1'); } catch (e) {}
+  }
+
+  function toast(msg) { state.toast = msg; state.toastT = 2.2; }
+
+  function startLevel(i) {
+    state.levelIndex = i;
+    state.build = RAP.newBuild();
+    state.phase = 'build';
+    state.run = null;
+    state.selected = 'wood_frame';
+    state.cam = buildCam();
+    state.introT = 0;          // 触发入场镜头
+    state.outroT = 0;
+  }
+
+  function selectPart(part) {
+    // 零件箱里没有的零件不给选
+    const left = RAP.budgetLeft(level(), part, state.build);
+    if (part !== 'eraser' && left <= 0) { toast('这个零件已经用完了'); return; }
+    state.selected = part;
+  }
+
+  function tryPlaceAt(r, c) {
+    const part = state.selected;
+    if (part === 'eraser') {
+      if (RAP.removeAt(state.build, r, c)) toast('拆下零件');
+      return;
+    }
+    const res = RAP.tryPlace(level(), state.build, part, r, c);
+    if (res.ok) {
+      SFX.place(1 - r / RAP.BUILD_ROWS);
+      state.popped[r + ',' + c] = performance.now();   // 弹性动画起点
+    } else SFX.deny();
+    if (!res.ok) {
+      const map = { budget: '零件箱空了', connect: '必须贴着木框放', occupied: '这一格已经有零件了',
+                    interact_limit: '交互键最多 3 个（交互件即键位）', outside: '超出建造区' };
+      toast(map[res.reason] || res.reason);
+    }
+  }
+
+  function launch() {
+    const chk = RAP.canLaunch(state.build);
+    if (!chk.ok) {
+      const msg = { empty: '先放零件再发射', frame: '至少要有一块木框', wheel: '至少要有一个轮子',
+                    pig: '车是空的：把小猪拖进木框里' }[chk.reason] || chk.reason;
+      toast(msg);
+      SFX.deny();
+      return;
+    }
+    const car = RAP.buildVehicle(level(), state.build);
+    state.run = RAP.createRun(level(), state.build);
+    state.phase = 'run';
+    state.resultT = 0;
+    SFX.launch();
+    state.replayT = 0; state.replayIdx = 0;
+  }
+
+  // ---------- 输入 ----------
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  cv.addEventListener('mousedown', ev => {
+    const p = canvasPos(ev);
+    state.mouse.x = p.x; state.mouse.y = p.y; state.mouse.down = true;
+
+    // 欢迎引导：必须用按钮翻页（避免误触关闭）
+    if (state.welcome) {
+      const bk = welcomeSkipRect(), bn = welcomeBtnRect();
+      if (hit(bk, p.x, p.y)) { closeWelcome(); return; }
+      if (hit(bn, p.x, p.y)) {
+        if (state.welcome >= WELCOME_PAGES.length) closeWelcome();
+        else state.welcome++;
+        return;
+      }
+      return;   // 其他点击吞掉
+    }
+
+    // 零件说明面板开着时：点任何地方都先关掉它（不会误触到下面的按钮）
+    if (state.helpOpen) { state.helpOpen = false; return; }
+
+    // 选关页：点卡片进入，点空白关闭
+    if (state.levelSelect) {
+      for (let i = 0; i < levels.length; i++) {
+        const r0 = levelCardRect(i);
+        if (hit(r0, p.x, p.y)) { state.levelSelect = false; startLevel(i); return; }
+      }
+      const hbr = { x: DW / 2 - 80, y: DH - 96, w: 160, h: 38 };
+      if (hit(hbr, p.x, p.y)) { state.levelSelect = false; state.welcome = 1; return; }
+      state.levelSelect = false;
+      return;
+    }
+
+    // 顶栏：第一个是「关卡」入口，其余仍是快速切换
+    if (hit(tabRect(0), p.x, p.y)) { state.levelSelect = true; return; }
+    for (let i = 1; i < levels.length; i++) {
+      if (hit(tabRect(i), p.x, p.y)) { startLevel(i); return; }
+    }
+
+    // 全局按钮：帮助 / 暂停 / 重来（先判这三个，避免被别的分支吃掉）
+    {
+      const hb = btnRect('help');
+      if (hb && hit(hb, p.x, p.y)) { state.helpOpen = !state.helpOpen; return; }
+      const pb = btnRect('pause');
+      if (pb && hit(pb, p.x, p.y)) { state.paused = !state.paused; return; }
+      const rb = btnRect('restartRun');
+      if (rb && hit(rb, p.x, p.y)) {
+        state.phase = 'build'; state.run = null; state.paused = false;
+        return;
+      }
+      const bk = btnRect('brake');
+      if (bk && hit(bk, p.x, p.y) && state.run) { RAP.setBrake(state.run, true); return; }
+    }
+
+    if (state.phase === 'build') {
+      const bLaunch = btnRect('launch'), bClear = btnRect('clear'), bUndo = btnRect('undo');
+      if (hit(bLaunch, p.x, p.y)) { launch(); return; }
+      if (hit(bClear, p.x, p.y)) { RAP.clearBuild(state.build); toast('已清空'); return; }
+      if (hit(bUndo, p.x, p.y)) { RAP.undo(state.build); return; }
+      const bRot = btnRect('rotate');
+      if (hit(bRot, p.x, p.y)) {
+        const hc2 = cellAt(p.x, p.y) || cellAt(state.mouse.x, state.mouse.y);
+        if (hc2 && state.build.cells[hc2.r + ',' + hc2.c] &&
+            RAP.isDirectional(state.build.cells[hc2.r + ',' + hc2.c].part)) {
+          RAP.rotateAt(state.build, hc2.r, hc2.c);
+          SFX.place();
+        } else {
+          // 没有悬停格子：转最后放下的方向件
+          const keys = state.build.order.slice().reverse();
+          for (const k of keys) {
+            if (k.indexOf('inner:') === 0) continue;
+            const cell = state.build.cells[k];
+            if (cell && RAP.isDirectional(cell.part)) {
+              RAP.rotateAt(state.build, +k.split(',')[0], +k.split(',')[1]);
+              SFX.place();
+              break;
+            }
+          }
+        }
+        return;
+      }
+      for (let i = 0; i < TRAY.length; i++) {
+        if (hit(trayRect(i), p.x, p.y)) {
+          if (ev.button === 2) return;
+          selectPart(TRAY[i]);
+          state.dragPart = TRAY[i];       // 拿起零件，等松手才落子
+          state.dragFromTray = true;
+          return;
+        }
+      }
+      const cell = cellAt(p.x, p.y);
+      if (cell) {
+        if (ev.button === 2) { RAP.rotateAt(state.build, cell.r, cell.c); return; }
+        // 橡皮：按下即擦，按住拖动可以连续擦
+        if (state.selected === 'eraser') {
+          state.erasePaint = true;
+          if (RAP.removeAt(state.build, cell.r, cell.c)) SFX.place();
+          return;
+        }
+        const key = cell.r + ',' + cell.c;
+        const there = state.build.cells[key];
+        if (there) {
+          // 先只记录：拖动才移动，单击则按选中零件去放置/旋转
+          state.pendingClick = { r: cell.r, c: cell.c, x: p.x, y: p.y, moved: false };
+          return;
+        }
+        state.dragPart = state.selected;   // 空格子：放当前选中的零件
+        state.dragFromTray = false;
+      }
+      return;
+    }
+
+    if (state.phase === 'run' && state.run) {
+      const gs = state.run.car.groups || [];
+      const nm = Math.min(3, gs.length);
+      const xs = DW / 2 - (nm * 104) / 2;
+      for (let i = 0; i < nm; i++) {
+        const rect = { x: xs + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
+        if (hit(rect, p.x, p.y)) { RAP.pressInteract(state.run, i + 1); SFX.pump(); return; }
+      }
+      if (hit(btnRect('retryRun'), p.x, p.y)) { state.phase = 'build'; state.run = null; return; }
+      return;
+    }
+
+    if (state.phase === 'resolved') {
+      if (hit(btnRect('retry'), p.x, p.y)) { state.phase = 'build'; state.run = null; return; }   // 保留拼装
+      if (hit(btnRect('next'), p.x, p.y)) {
+        if (state.levelIndex < levels.length - 1) startLevel(state.levelIndex + 1);
+        return;
+      }
+    }
+  });
+  cv.addEventListener('mousemove', ev => {
+    const p = canvasPos(ev);
+    state.mouse.x = p.x; state.mouse.y = p.y;
+    // 橡皮按住拖动 = 连续擦
+    if (state.phase === 'build' && state.erasePaint && state.mouse.down) {
+      const c0 = cellAt(p.x, p.y);
+      if (c0) {
+        const kk = c0.r + ',' + c0.c;
+        if (state.build.cells[kk]) RAP.removeAt(state.build, c0.r, c0.c);
+      }
+    }
+    // 按住已放零件并移动超过 8px → 才拿起它（单击不算移动）
+    if (state.phase === 'build' && state.pendingClick && !state.dragMove) {
+      const pc = state.pendingClick;
+      if (Math.hypot(p.x - pc.x, p.y - pc.y) > 8) {
+        const key = pc.r + ',' + pc.c;
+        const there = state.build.cells[key];
+        if (there) {
+          state.dragMove = { r: pc.r, c: pc.c, part: there.part, dir: there.dir || 0, inner: there.inner || null };
+          delete state.build.cells[key];
+          let idx = state.build.order.indexOf(key);
+          if (idx >= 0) state.build.order.splice(idx, 1);
+          if (there.inner) {
+            const ii = state.build.order.indexOf('inner:' + key);
+            if (ii >= 0) state.build.order.splice(ii, 1);
+          }
+          state.dragPart = state.dragMove.inner || there.part;
+          state.dragFromTray = false;
+        }
+        state.pendingClick = null;
+      }
+    }
+    // 建造阶段：按住时只跟随光标画幽灵，落子在 mouseup
+  });
+  cv.addEventListener('mouseup', ev => {
+    const p = canvasPos(ev);
+    if (state.run) RAP.setBrake(state.run, false);   // 松手松刹车
+    state.mouse.down = false;
+    state.erasePaint = false;
+    state.lastDragCell = null;
+    if (state.phase === 'build' && state.pendingClick) {
+      const pc = state.pendingClick;
+      state.pendingClick = null;
+      const key = pc.r + ',' + pc.c;
+      const there = state.build.cells[key];
+      if (there) {
+        // 橡皮：单击删除
+        if (state.selected === 'eraser') {
+          RAP.removeAt(state.build, pc.r, pc.c);
+          SFX.place();
+          return;
+        }
+        // 单击已放的格子：优先"把选中的零件放进/放到这里"，其次"旋转方向件"
+        const prevSel = state.selected;
+        const res = RAP.tryPlace(level(), state.build, prevSel, pc.r, pc.c);
+        if (res.ok) {
+          if (res.rotated) SFX.place();
+          else SFX.place();
+        } else if (RAP.isDirectional(there.part) && prevSel === there.part) {
+          RAP.rotateAt(state.build, pc.r, pc.c);
+        }
+      }
+      return;
+    }
+    if (state.phase === 'build' && state.dragMove) {
+      const mv = state.dragMove;
+      const cell = cellAt(p.x, p.y);
+      let placed = false;
+      if (cell) {
+        const key = cell.r + ',' + cell.c;
+        const occupied = !!state.build.cells[key];
+        const samePlace = (cell.r === mv.r && cell.c === mv.c);
+        if (!occupied || samePlace) {
+          state.build.cells[key] = { part: mv.part, dir: mv.dir };
+          if (mv.inner) state.build.cells[key].inner = mv.inner;
+          state.build.order.push(key);
+          if (mv.inner) state.build.order.push('inner:' + key);
+          placed = true;
+        }
+      }
+      if (!placed) {
+        // 放不进去 → 放回原处（并播放弹回动画）
+        state.bounce = { x: p.x, y: p.y, t: 0, part: mv.part };
+        const key = mv.r + ',' + mv.c;
+        state.build.cells[key] = { part: mv.part, dir: mv.dir };
+        if (mv.inner) state.build.cells[key].inner = mv.inner;
+        state.build.order.push(key);
+        if (mv.inner) state.build.order.push('inner:' + key);
+      } else {
+        SFX.place();
+      }
+      state.dragMove = null;
+      state.dragPart = null;
+      return;
+    }
+    if (state.phase === 'build' && state.dragPart) {
+      const cell = cellAt(p.x, p.y);
+      if (cell) {
+        const want = state.dragPart === 'eraser' ? 'eraser' : state.dragPart;
+        const prev = state.selected;
+        state.selected = want;
+        tryPlaceAt(cell.r, cell.c);
+        state.selected = (want === 'eraser') ? prev : want;
+      }
+      state.dragPart = null;
+      state.dragFromTray = false;
+      return;
+    }
+    if (state.phase === 'run' && state.run) {
+      const gs2 = state.run.car.groups || [];
+      const nm2 = Math.min(3, gs2.length);
+      const xs2 = DW / 2 - (nm2 * 104) / 2;
+      for (let i = 0; i < nm2; i++) {
+        const rect = { x: xs2 + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
+        if (hit(rect, p.x, p.y)) { RAP.releaseInteract(state.run, i + 1); return; }
+      }
+    }
+    state.dragPart = null;
+  });
+  window.addEventListener('keydown', ev => {
+    const k = ev.key.toLowerCase();
+    if (k === 'escape' || k === 'l') { state.levelSelect = !state.levelSelect; return; }
+    if (k === 'f1' || k === 'f2' || k === 'f3' || k === 'f4' || k === 'f5') {
+      curPreset = parseInt(k.slice(1), 10) - 1;
+      const pr = CANVAS_PRESETS[curPreset];
+      // 直接用该尺寸模拟：把 canvas 的 CSS 宽高比换掉，看排版是否崩
+      cv.style.aspectRatio = pr.w + ' / ' + pr.h;
+      toast('画布：' + pr.label + '（看排版是否溢出）');
+      return;
+    }
+    if (k === 'h') { state.helpOpen = !state.helpOpen; return; }
+    if (k === 't') { state.paramsOpen = !state.paramsOpen; document.getElementById('panel').style.display = state.paramsOpen ? 'block' : 'none'; return; }
+    if (state.phase === 'build') {
+      if (k === 'z') RAP.undo(state.build);
+      else if (k === 'c') RAP.clearBuild(state.build);
+      else if (k === ' ') { launch(); ev.preventDefault(); }
+      else if (k === 'r') {
+        // 旋转光标下的格子
+        const cell = cellAt(state.mouse.x, state.mouse.y);
+        if (cell) RAP.rotateAt(state.build, cell.r, cell.c);
+      } else if (k >= '1' && k <= '6') {
+        const i = parseInt(k, 10) - 1;
+        if (TRAY[i]) selectPart(TRAY[i]);
+      }
+    } else if (state.phase === 'run' && state.run) {
+      if (k === 'arrowdown' || k === 's') { RAP.setBrake(state.run, true); ev.preventDefault(); }
+      if (k >= '1' && k <= '3') RAP.pressInteract(state.run, parseInt(k, 10));
+      if (k === '1' || k === '2' || k === '3') ev.preventDefault();
+    }
+    if (k === '1' || k === '2' || k === '3') {
+      // 松手时释放（交互键是"按住蓄力"）
+      window.addEventListener('keyup', function up(e2) {
+        if (state.phase === 'run' && state.run) RAP.releaseInteract(state.run, parseInt(k, 10));
+        window.removeEventListener('keyup', up);
+      });
+    }
+  });
+
+  // ---------- 参数面板 ----------
+  const SLIDERS = [
+    ['groundFriction', '地面摩擦（越大越粘）', 0, 8, 0.25],
+    ['chassisGrip', '木框静摩擦系数', 0, 1.5, 0.05],
+    ['groundGrip', '轮子抓地倍率', 0.5, 4, 0.1],
+    ['gravity', '重力 m/s²', 6, 30, 0.5],
+    ['motorAccel', '马达加速度', 2, 14, 0.5],
+    ['motorEnergy', '马达耗能 /s', 1, 10, 0.5],
+    ['pumpImpulse', '打气筒冲量', 2, 12, 0.5],
+    ['wheelGrip', '轮子抓地倍率', 0.3, 2, 0.05],
+    ['rollResist', '滚动阻力', 0, 0.12, 0.005],
+    ['interactCap', '交互键上限', 1, 3, 1]
+  ];
+  function buildPanel() {
+    const box = document.getElementById('sliders');
+    box.innerHTML = '';
+    SLIDERS.forEach(([key, label, min, max, step]) => {
+      const wrap = document.createElement('div');
+      const lab = document.createElement('label');
+      lab.innerHTML = `<span>${label}</span><span class="val">${RAP.Params[key]}</span>`;
+      const inp = document.createElement('input');
+      inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = RAP.Params[key];
+      inp.oninput = () => {
+        RAP.Params[key] = parseFloat(inp.value);
+        lab.querySelector('.val').textContent = inp.value;
+      };
+      wrap.appendChild(lab); wrap.appendChild(inp);
+      box.appendChild(wrap);
+    });
+    document.getElementById('reset').onclick = () => { RAP.resetParams(); buildPanel(); };
+  }
+  buildPanel();
+
+  // ---------- 渲染 ----------
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function text(s, x, y, size, color, align, bold) {
+    ctx.font = `${bold ? '700 ' : ''}${size}px "Microsoft YaHei", sans-serif`;
+    ctx.fillStyle = color; ctx.textAlign = align || 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(s, x, y);
+  }
+
+const BIOMES = {
+  field: { rock: [96, 112, 120], grass: '#79c94f', grass2: '#4f9e3c', grass3: '#a6e070',
+    edge: '#12201a', skyTop: '#8FC4E0', skyMid: '#CFE6D8', skyLow: '#F2F0C0',
+    hill: '#6E93A6', jungle: ['#3f7f5c', '#2f6b4a', '#22503a'], cave: false },
+  canyon: { rock: [186, 122, 78], grass: '#d8a24f', grass2: '#a8763a', grass3: '#f0cc84',
+    edge: '#4a2a16', skyTop: '#E8A96B', skyMid: '#F4D8A8', skyLow: '#FBF0D2',
+    hill: '#B07A5A', jungle: ['#7d5a3a', '#63452c', '#4a3320'], cave: false },
+  cave: { rock: [58, 74, 84], grass: '#4e7a52', grass2: '#33543a', grass3: '#6f9e6a',
+    edge: '#08110f', skyTop: '#0d1a22', skyMid: '#132530', skyLow: '#1b3340',
+    hill: '#0b1822', jungle: ['#15302a', '#102420', '#0b1a17'], cave: true },
+  ice: { rock: [150, 178, 198], grass: '#cfeef8', grass2: '#9ed4e8', grass3: '#f0ffff',
+    edge: '#4a7286', skyTop: '#9FCBE8', skyMid: '#D8EEF8', skyLow: '#F4FCFF',
+    hill: '#8FB6CC', jungle: ['#7FA8BE', '#6B95AC', '#5A8199'], cave: false },
+  dusk: { rock: [96, 86, 108], grass: '#7a6a4a', grass2: '#544832', grass3: '#a89468',
+    edge: '#1a1420', skyTop: '#3B3560', skyMid: '#9A6A72', skyLow: '#E8A870',
+    hill: '#5A4A6A', jungle: ['#2E3A42', '#25303a', '#1C2630'], cave: false }
+};
+
+  function drawWorld(ter, cam) {
+    const s = PPM * cam.zoom;
+    const toX = wx => DW / 2 + (wx - cam.x) * s;
+    const toY = wy => DH / 2 - (wy - cam.y) * s;
+
+    // ---------- 按关卡 biome 选视觉地貌（纯美术，不影响物理）----------
+    const PAL = BIOMES[(level() && level().biome) || 'field'] || BIOMES.field;
+    const CAVE = PAL.cave;
+
+
+    // 天空
+    const g = ctx.createLinearGradient(0, 0, 0, DH * (CAVE ? 0.8 : 0.62));
+    g.addColorStop(0, PAL.skyTop);
+    g.addColorStop(0.45, PAL.skyMid);
+    g.addColorStop(1, PAL.skyLow);
+    fillScreen(g);
+
+    // 云：几团叠加的柔和白云（带一点暖边）
+    function cloud(cx0, cy0, sc, alpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#ffffff';
+      for (const [ox, oy, rr] of [[-30, 4, 22], [0, -6, 30], [30, 2, 24], [56, 8, 18], [-54, 9, 17]]) {
+        ctx.beginPath();
+        ctx.arc(cx0 + ox * sc, cy0 + oy * sc, rr * sc, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(255,246,214,.5)';
+      for (const [ox, oy, rr] of [[-20, 14, 16], [22, 15, 14], [44, 13, 11]]) {
+        ctx.beginPath();
+        ctx.arc(cx0 + ox * sc, cy0 + oy * sc, rr * sc, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (!CAVE) {
+      cloud(DW * 0.16, 120, 1.25, 0.88);
+      cloud(DW * 0.52, 78, 1.55, 0.8);
+      cloud(DW * 0.86, 132, 1.05, 0.82);
+      cloud(DW * 0.36, 190, 0.85, 0.6);
+      if (VIEW_W > DW + 80) {
+        cloud(-VIEW_OFF_X * 0.5 + 60, 150, 1.1, 0.7);
+        cloud(DW + VIEW_OFF_X * 0.5, 108, 1.2, 0.75);
+      }
+    } else {
+      // 洞窟：顶部钟乳石 + 强暗角
+      ctx.fillStyle = '#0a141a';
+      const dripN = Math.max(14, Math.ceil((VIEW_W + VIEW_OFF_X * 2) / 78));
+      for (let ci = 0; ci < dripN; ci++) {
+        const bx = (ci / (dripN - 1)) * (VIEW_W + VIEW_OFF_X * 2) + ((ci * 37) % 40) - 20 - VIEW_OFF_X;
+        const w2 = 26 + ((ci * 53) % 30);
+        const h2 = 60 + ((ci * 71) % 90);
+        ctx.beginPath();
+        ctx.moveTo(bx - w2 / 2, 0); ctx.lineTo(bx + w2 / 2, 0);
+        ctx.lineTo(bx + ((ci % 3) - 1) * 8, h2);
+        ctx.closePath(); ctx.fill();
+      }
+      // 顶部垂藤
+      ctx.strokeStyle = 'rgba(28,52,40,.75)';
+      for (let vi = 0; vi < 18; vi++) {
+        const hx = (vi / 17) * (VIEW_W + VIEW_OFF_X * 2) - VIEW_OFF_X + ((vi * 53) % 30);
+        const vlen = 40 + ((vi * 71) % 110);
+        const bend = ((vi % 3) - 1) * 12;
+        ctx.lineWidth = 1.5 + ((vi * 37) % 3) * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(hx, 0);
+        ctx.quadraticCurveTo(hx + bend, vlen * 0.6, hx + bend * 1.6, vlen);
+        ctx.stroke();
+      }
+
+      const caveV = ctx.createRadialGradient(DW / 2, DH * 0.62, DH * 0.2, DW / 2, DH * 0.62, DW * 0.7);
+      caveV.addColorStop(0, 'rgba(0,0,0,0)');
+      caveV.addColorStop(1, 'rgba(0,0,0,.55)');
+      fillScreen(caveV);
+    }
+
+    // 地平线光晕（暖）
+    const glow = ctx.createRadialGradient(DW * 0.5, DH * 0.5, 80, DW * 0.5, DH * 0.5, DW * 0.62);
+    glow.addColorStop(0, 'rgba(255,248,196,.32)');
+    glow.addColorStop(1, 'rgba(255,248,196,0)');
+    fillScreen(glow);
+    // 远山剪影（原神感的层峦）
+    ctx.fillStyle = PAL.hill;
+    for (let i = 0; i < 5; i++) {
+      const bx = i * 300 - 80, h = 90 - (i % 3) * 18;
+      ctx.beginPath();
+      ctx.moveTo(bx, DH * 0.42);
+      ctx.lineTo(bx + 150, DH * 0.42 - h);
+      ctx.lineTo(bx + 300, DH * 0.42);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // ---------- 丛林：三层剪影 ----------
+    function canopy(baseY2, r0, dy, color, alpha, leafy) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      const n = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / (r0 * 1.5)) + 4;
+      for (let i = 0; i < n; i++) {
+        const bx = (i - 1) * r0 * 1.5 + (i % 2) * r0 * 0.4 - VIEW_OFF_X;
+        const rr = r0 * (0.75 + ((i * 37) % 11) / 22);
+        const by = baseY2 + dy - ((i * 53) % 9) * 1.6;
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(bx, by, rr, Math.PI, 0); ctx.fill();
+        // 叶尖（近景层才画）
+        if (leafy) {
+          for (let k = 0; k < 7; k++) {
+            const a2 = -Math.PI + (k / 6) * Math.PI;
+            const x1 = bx + Math.cos(a2) * rr * 0.96;
+            const y1 = by + Math.sin(a2) * rr * 0.96;
+            ctx.beginPath();
+            ctx.moveTo(x1 - 3 * cam.zoom, y1);
+            ctx.quadraticCurveTo(x1, y1 - 8 * cam.zoom, x1 + 3 * cam.zoom, y1);
+            ctx.closePath(); ctx.fill();
+          }
+        }
+      }
+      ctx.restore();
+    }
+
+    const horizonY = toY(ter.surfaceY(cam.x) + 2.6);
+    // 远景地面：先铺满，避免远山与丛林之间漏出天空
+    // 从远山顶点之上就开始铺（否则三角形之间会漏出天空）
+    const farGround = ctx.createLinearGradient(0, horizonY - 70, 0, horizonY + 120);
+    farGround.addColorStop(0, CAVE ? 'rgba(10,20,26,0)' : 'rgba(196,216,222,0)');
+    farGround.addColorStop(0.28, PAL.hill);
+    farGround.addColorStop(0.5, PAL.hill);
+    farGround.addColorStop(1, PAL.jungle[1]);
+    ctx.fillStyle = farGround;
+    ctx.fillRect(-VIEW_OFF_X - 4, horizonY - 70, VIEW_W + VIEW_OFF_X * 2 + 8, 190);
+    // 远山（最淡，最高）
+    ctx.fillStyle = CAVE ? 'rgba(8,16,22,.85)' : PAL.hill;
+    const hillN2 = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / 220) + 3;
+    for (let i = 0; i < hillN2; i++) {
+      const bx = i * 220 - 120 - VIEW_OFF_X, hh = 120 - (i % 3) * 26;
+      ctx.beginPath();
+      ctx.moveTo(bx, horizonY + 30);
+      ctx.lineTo(bx + 130, horizonY + 30 - hh);
+      ctx.lineTo(bx + 260, horizonY + 30);
+      ctx.closePath(); ctx.fill();
+    }
+    // 远景丛林（淡）
+    canopy(horizonY + 34, 42, 0, PAL.jungle[0], 0.9, false);
+    // 中景丛林（中）
+    canopy(horizonY + 62, 50, 6, PAL.jungle[1], 0.96, false);
+    // 中景与近景之间的雾
+    const fogM = ctx.createLinearGradient(0, horizonY + 40, 0, horizonY + 130);
+    fogM.addColorStop(0, 'rgba(226,240,210,0)');
+    fogM.addColorStop(0.5, 'rgba(226,240,210,.32)');
+    fogM.addColorStop(1, 'rgba(226,240,210,0)');
+    ctx.fillStyle = fogM;
+    ctx.fillRect(-VIEW_OFF_X - 4, horizonY + 40, VIEW_W + VIEW_OFF_X * 2 + 8, 100);
+    // 近景丛林（最实，带叶尖）
+    canopy(horizonY + 96, 58, 10, PAL.jungle[2], 1, true);
+
+    // 棕榈剪影
+    function palm(px, py, scale, alpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = PAL.jungle[2]; ctx.lineWidth = 6 * scale; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.quadraticCurveTo(px + 7 * scale, py - 50 * scale, px + 2 * scale, py - 92 * scale);
+      ctx.stroke();
+      ctx.strokeStyle = PAL.jungle[1]; ctx.lineWidth = 9 * scale;
+      for (let k = 0; k < 7; k++) {
+        const a = -Math.PI / 2 + (k - 3) * 0.46;
+        ctx.beginPath();
+        ctx.moveTo(px + 2 * scale, py - 92 * scale);
+        ctx.quadraticCurveTo(
+          px + Math.cos(a) * 36 * scale, py - 92 * scale + Math.sin(a) * 22 * scale - 14 * scale,
+          px + Math.cos(a) * 60 * scale, py - 92 * scale + Math.sin(a) * 38 * scale + 8 * scale);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    const palmBase = horizonY + 104;
+    palm(DW * 0.10, palmBase, 1.05, 0.92);
+    palm(DW * 0.24, palmBase + 8, 0.82, 0.8);
+    palm(DW * 0.72, palmBase + 4, 0.98, 0.88);
+    palm(DW * 0.87, palmBase + 12, 0.78, 0.78);
+
+    // 远景地面过渡带（近景丛林脚下一层泥地，避免草皮直接接丛林）
+    ctx.fillStyle = '#6b7a52';
+    ctx.fillRect(-VIEW_OFF_X - 4, horizonY + 118, VIEW_W + VIEW_OFF_X * 2 + 8,
+      Math.max(0, toY(ter.surfaceY(cam.x)) - (horizonY + 118)) + 6);
+    const gTrans = ctx.createLinearGradient(0, horizonY + 118, 0, toY(ter.surfaceY(cam.x)) + 6);
+    gTrans.addColorStop(0, 'rgba(40,70,50,.55)');
+    gTrans.addColorStop(1, 'rgba(40,70,50,0)');
+    ctx.fillStyle = gTrans;
+    ctx.fillRect(0, horizonY + 118, DW, Math.max(0, toY(ter.surfaceY(cam.x)) - (horizonY + 118)) + 6);
+    // ---------- 石块层（离屏缓存：只在相机明显移动时重绘）----------
+    {
+      const cw = cv.width, ch = cv.height;
+      if (stoneLayer.width !== cw || stoneLayer.height !== ch) {
+        stoneLayer.width = cw;
+        stoneLayer.height = ch;
+        stoneCacheKey = '';
+      }
+      const key = Math.round(cam.x * 6) + ',' + Math.round(cam.y * 6) + ',' + cam.zoom.toFixed(2);
+      if (key !== stoneCacheKey) {
+        stoneCacheKey = key;
+        const savedCtx = ctx;
+        ctx = stoneCtx;
+        ctx.globalAlpha = 1;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, cw, ch);
+        const sx = cw / VIEW_W, sy = ch / VIEW_H;
+        ctx.setTransform(sx, 0, 0, sy, VIEW_OFF_X * sx, VIEW_OFF_Y * sy);
+    ctx.save();
+    traceTerrain();
+    ctx.clip();
+    // 见模块级 texHash()
+    const stoneW = 108 * cam.zoom, stoneH = 72 * cam.zoom;
+    const baseY = toY(cam.y) + 14;
+    // 用可视宽度而不是设计宽度，否则宽屏时两侧没有石头纹理
+    const colsN = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / stoneW) + 4;
+    const rowsN = Math.ceil((VIEW_H + VIEW_OFF_Y * 2 - baseY) / stoneH) + 4;
+    for (let row = 0; row < rowsN; row++) {
+      for (let col = 0; col < colsN; col++) {
+        const ox = (col - 1) * stoneW + (row % 2) * stoneW * 0.5 - VIEW_OFF_X;
+        const oy = baseY + row * stoneH;
+        const jx = (texHash(col, row) - 0.5) * stoneW * 0.34;
+        const jy = (texHash(col + 99, row + 7) - 0.5) * stoneH * 0.30;
+        const cx2 = ox + jx, cy2 = oy + jy;
+        const rw = stoneW * (0.50 + texHash(col + 3, row + 11) * 0.10);
+        const rh = stoneH * (0.48 + texHash(col + 5, row + 13) * 0.10);
+        const N = 7 + Math.floor(texHash(col + 21, row + 17) * 4);   // 7~10 边，更圆润
+        const poly = [];
+        for (let k = 0; k < N; k++) {
+          const a = (k / N) * Math.PI * 2 + texHash(col + k, row + k) * 0.5;
+          const rr = 1 + (texHash(col * 7 + k, row * 3 + k) - 0.5) * 0.22;  // 扰动减小 → 更圆
+          poly.push([cx2 + Math.cos(a) * rw * rr, cy2 + Math.sin(a) * rh * rr]);
+        }
+        // 主体：深青灰，越往下越暗
+        ctx.beginPath();
+        poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+        ctx.closePath();
+        const depth = Math.min(1, (cy2 - baseY) / (DH - baseY + 1));
+        const l1 = Math.round(PAL.rock[0] - depth * 40),
+              g1 = Math.round(PAL.rock[1] - depth * 38),
+              b1 = Math.round(PAL.rock[2] - depth * 36);
+        // 主体 + 内部径向渐变（中心亮、边缘暗 → 圆润的立体感）
+        const rg = ctx.createRadialGradient(
+          cx2 - rw * 0.22, cy2 - rh * 0.34, rh * 0.12,
+          cx2, cy2, rw * 1.05);
+        rg.addColorStop(0, 'rgb(' + Math.min(255, l1 + 34) + ',' + Math.min(255, g1 + 32) + ',' + Math.min(255, b1 + 30) + ')');
+        rg.addColorStop(0.55, 'rgb(' + l1 + ',' + g1 + ',' + b1 + ')');
+        rg.addColorStop(1, 'rgb(' + Math.max(0, l1 - 34) + ',' + Math.max(0, g1 - 32) + ',' + Math.max(0, b1 - 30) + ')');
+        ctx.beginPath();
+        poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+        ctx.closePath();
+        ctx.fillStyle = rg; ctx.fill();
+
+        // 缝：更宽更深
+        ctx.strokeStyle = 'rgba(6,12,18,.85)';
+        ctx.lineWidth = Math.max(2, 4.2 * cam.zoom);
+        ctx.beginPath();
+        poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+        ctx.closePath(); ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // 地表材质带
+    function band(color, width, offset) {
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        const x = toX(pts[i][0]), y = toY(pts[i][1]) + offset;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.stroke();
+    }
+    // 草皮：暗边 → 亮草 → 高光 → 草叶
+    band(PAL.edge, 16 * cam.zoom, 13 * cam.zoom);               // 草地整体暗边
+    band(PAL.grass2, 15 * cam.zoom, 6 * cam.zoom);              // 暗草
+    band(PAL.grass, 12 * cam.zoom, 1 * cam.zoom);               // 亮草
+    band(PAL.grass3, 5 * cam.zoom, -2 * cam.zoom);              // 顶部高光
+        ctx.globalAlpha = 1;
+        ctx = savedCtx;
+        ctx.globalAlpha = 1;
+      }
+      ctx.drawImage(stoneLayer, -VIEW_OFF_X, -VIEW_OFF_Y, VIEW_W, VIEW_H);
+    }
+
+    // 石头表面的小碎石（跟着地形走，一定在石头内部）
+    {
+      for (let i = 0; i < pts.length; i += 4) {
+        const wx = pts[i][0];
+        const h1 = Math.abs(Math.sin(wx * 12.9898) * 43758.5453) % 1;
+        const h2 = Math.abs(Math.sin(wx * 39.346) * 24634.6345) % 1;
+        if (h1 > 0.30) continue;
+        const px = toX(wx);
+        const surfY = toY(pts[i][1]);
+        const depth = (18 + h2 * 90) * cam.zoom;      // 地表以下 18~108 px
+        const py = surfY + depth;
+        if (py > DH + VIEW_OFF_Y || py < surfY + 8 * cam.zoom) continue;
+        const r2 = (2.5 + h2 * 4) * cam.zoom;
+        ctx.beginPath();
+        ctx.ellipse(px, py, r2 * 1.3, r2 * 0.8, h1 * 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(186,200,210,.22)'; ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(px - r2 * 0.25, py - r2 * 0.24, r2 * 0.55, r2 * 0.34, h1 * 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,.16)'; ctx.fill();
+      }
+    }
+
+    // 零星草叶
+    ctx.save();
+    ctx.strokeStyle = '#5faa42'; ctx.lineWidth = 2.2 * cam.zoom; ctx.lineCap = 'round';
+    for (let i = 0; i < pts.length; i += 3) {
+      const wx = pts[i][0];
+      const hh = texHash(Math.floor(wx * 3), 17);
+      if (hh > 0.55) continue;
+      const x = toX(wx), y = toY(pts[i][1]) - 2 * cam.zoom;
+      const len = (5 + hh * 10) * cam.zoom;
+      const lean = (texHash(Math.floor(wx * 5), 31) - 0.5) * 6 * cam.zoom;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + lean, y - len * 0.6, x + lean * 1.6, y - len);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 冰面
+    ctx.save();
+    for (let i = 0; i < pts.length; i++) {
+      if (ter.material[Math.max(0, Math.min(ter.cols - 1, Math.floor(pts[i][0])))] !== 'ice') continue;
+      const x0 = toX(pts[i][0]);
+      const wpx = stepW * s + 1.5;
+      ctx.fillStyle = 'rgba(176,232,246,.92)';
+      ctx.fillRect(x0 - wpx / 2, toY(pts[i][1]) - 1 * cam.zoom, wpx, 7 * cam.zoom);
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.fillRect(x0 - wpx / 2, toY(pts[i][1]) - 1 * cam.zoom, wpx, 2 * cam.zoom);
+    }
+    ctx.restore();
+
+  }
+
+  function drawGrid() {
+    if (state.phase !== 'build') return;
+    const o = buildOrigin();
+    // 建造台底衬：一块半透明板，让网格从背景里"浮"出来
+    const padX = 10, padY = 34;
+    ctx.fillStyle = 'rgba(10,18,24,.34)';
+    roundRect(o.x - padX, o.y - padY, RAP.BUILD_COLS * BUILD_PX + padX * 2,
+      RAP.BUILD_ROWS * BUILD_PX + padY + 16, 14); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.28)'; ctx.lineWidth = 1.5; ctx.stroke();
+    text('6 × 8', o.x + RAP.BUILD_COLS * BUILD_PX - 8, o.y + RAP.BUILD_ROWS * BUILD_PX + 2,
+      11, 'rgba(255,233,176,.5)', 'right', true);
+    for (let r = 0; r < RAP.BUILD_ROWS; r++) {
+      for (let c = 0; c < RAP.BUILD_COLS; c++) {
+        const x = o.x + c * BUILD_PX, y = o.y + r * BUILD_PX;
+        ctx.fillStyle = ((r + c) % 2 === 0) ? 'rgba(118,148,68,.38)' : 'rgba(98,128,58,.38)';
+        roundRect(x + 2, y + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.fill();
+      }
+    }
+    // 拖拽吸附：按住拖动时，光标能落到的格子亮绿（能放）/ 亮红（放不下）
+    if (state.mouse.down && (state.dragPart || state.selected !== 'eraser')) {
+      const want = state.dragMove ? state.dragMove.part : (state.dragPart || state.selected);
+      const cell = cellAt(state.mouse.x, state.mouse.y);
+      if (cell && want && want !== 'eraser') {
+        let okHere = true;
+        if (state.dragMove) okHere = !state.build.cells[cell.r + ',' + cell.c] ||
+          (cell.r === state.dragMove.r && cell.c === state.dragMove.c);
+        else {
+          // 纯检查，不改数据（用 tryPlace 会每帧推进方向，导致"一直旋转"）
+          okHere = RAP.canPlace(level(), state.build, want, cell.r, cell.c).ok;
+        }
+        const cx0 = o.x + cell.c * BUILD_PX, cy0 = o.y + cell.r * BUILD_PX;
+        ctx.fillStyle = okHere ? 'rgba(99,217,126,.28)' : 'rgba(224,81,60,.28)';
+        roundRect(cx0 + 2, cy0 + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.fill();
+        ctx.strokeStyle = okHere ? 'rgba(150,240,170,.9)' : 'rgba(255,150,130,.9)';
+        ctx.lineWidth = 2.5;
+        roundRect(cx0 + 2, cy0 + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.stroke();
+      }
+    }
+
+    // 悬停高亮 + 幽灵零件
+    const cell = cellAt(state.mouse.x, state.mouse.y);
+    if (cell) {
+      if (state.selected === 'eraser') {
+        ctx.fillStyle = 'rgba(224,81,60,.28)';
+        roundRect(o.x + cell.c * BUILD_PX + 2, o.y + cell.r * BUILD_PX + 2, BUILD_PX - 4, BUILD_PX - 4, 6);
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255,235,140,.95)'; ctx.lineWidth = 3;
+      roundRect(o.x + cell.c * BUILD_PX + 2, o.y + cell.r * BUILD_PX + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.stroke();
+    }
+    // 当前选中零件放不下的格子 → 红叉提示
+    if (cell && !state.build.cells[cell.r + ',' + cell.c] && state.selected !== 'eraser') {
+      // 纯检查，不改数据
+      const probe = RAP.canPlace(level(), state.build, state.selected, cell.r, cell.c);
+      if (!probe.ok) {
+        const cx0 = o.x + cell.c * BUILD_PX + BUILD_PX / 2;
+        const cy0 = o.y + cell.r * BUILD_PX + BUILD_PX / 2;
+        ctx.strokeStyle = 'rgba(224,81,60,.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        const s2 = BUILD_PX * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(cx0 - s2, cy0 - s2); ctx.lineTo(cx0 + s2, cy0 + s2);
+        ctx.moveTo(cx0 + s2, cy0 - s2); ctx.lineTo(cx0 - s2, cy0 + s2);
+        ctx.stroke();
+      }
+    }
+
+    const ghost = state.dragPart || (state.selected !== 'eraser' ? state.selected : null);
+    if (state.mouse.down && (!ghost || ghost === 'eraser')) {
+      // 橡皮的幽灵：一块白色橡皮 + 斜线，提示"点这里删掉"
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = '#e6ecf2';
+      roundRect(state.mouse.x - BUILD_PX * 0.36, state.mouse.y - BUILD_PX * 0.26,
+        BUILD_PX * 0.72, BUILD_PX * 0.52, 6); ctx.fill();
+      ctx.strokeStyle = '#e0513c'; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(state.mouse.x - BUILD_PX * 0.2, state.mouse.y - BUILD_PX * 0.1);
+      ctx.lineTo(state.mouse.x + BUILD_PX * 0.2, state.mouse.y + BUILD_PX * 0.1);
+      ctx.stroke();
+      ctx.restore();
+    } else if (ghost && state.mouse.down) {
+      ctx.globalAlpha = 0.55;
+      drawPartShape(ghost, state.mouse.x, state.mouse.y, BUILD_PX * 0.84, 0);
+      ctx.globalAlpha = 1;
+      // 跟着光标显示零件名 —— 拖的时候也知道手里是什么
+      if (RAP.PARTS[ghost]) {
+        const nm = RAP.PARTS[ghost].label;
+        const w = nm.length * 15 + 22;
+        ctx.fillStyle = 'rgba(10,18,24,.92)';
+        roundRect(state.mouse.x + 18, state.mouse.y - 34, w, 24, 7); ctx.fill();
+        text(nm, state.mouse.x + 18 + w / 2, state.mouse.y - 17, 13, '#ffe9b0', 'center', true);
+      }
+    }
+  }
+
+  // 画"喷气/推进方向"箭头：从格心朝 dir 方向
+  function drawDirArrow(cx, cy, dir, size, color, glow) {
+    const v = RAP.dirVec(dir);
+    const len = size * 1.05;                     // 明显伸出格子外
+    const startD = size * 0.42;                  // 从格子边缘起，不压住零件
+    const sx0 = cx + v[0] * startD, sy0 = cy - v[1] * startD;
+    const tailX = sx0 - v[0] * size * 0.1, tailY = sy0 + v[1] * size * 0.1;
+    const tipX = cx + v[0] * len, tipY = cy - v[1] * len;
+    const head = size * 0.34;
+    const col = color || '#E8C87A';
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // 尾部喷气短线（表示"从这里喷出去"）
+    ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = glow ? 6 : 5;
+    for (const side of [-1, 0, 1]) {
+      const px = v[0] === 0 ? side * size * 0.12 : 0;
+      const py = v[1] === 0 ? side * size * 0.12 : 0;
+      ctx.beginPath();
+      ctx.moveTo(tailX - v[0] * size * 0.02 + px, tailY + v[1] * size * 0.02 + py);
+      ctx.lineTo(tailX - v[0] * size * 0.16 + px, tailY + v[1] * size * 0.16 + py);
+      ctx.stroke();
+    }
+
+    // 箭杆：深色打底 → 白边 → 本体色（三种背景都看得清）
+    ctx.strokeStyle = 'rgba(16,26,20,.9)'; ctx.lineWidth = glow ? 13 : 11;
+    ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(tipX, tipY); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = glow ? 9 : 7;
+    ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(tipX, tipY); ctx.stroke();
+    ctx.strokeStyle = col; ctx.lineWidth = glow ? 6 : 5;
+    ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(tipX, tipY); ctx.stroke();
+
+    // 实心三角箭头
+    const ang = Math.atan2(-(tipY - cy), tipX - cx);
+    const p1 = [tipX + Math.cos(ang) * head, tipY - Math.sin(ang) * head];
+    const p2 = [tipX + Math.cos(ang + 2.5) * head, tipY - Math.sin(ang + 2.5) * head];
+    const p3 = [tipX + Math.cos(ang - 2.5) * head, tipY - Math.sin(ang - 2.5) * head];
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]);
+    ctx.closePath();
+    ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = 'rgba(16,26,20,.85)'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.restore();
+  }
+
+  // mood: 'normal' | 'happy' | 'scared' | 'hurt' | 'dizzy' | 'dead'
+  function drawPig(cx, cy, r, angle, mood, extra) {
+    mood = mood || 'normal';
+    extra = extra || {};
+    const tNow = performance.now() / 1000;
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(angle || 0);
+    // 受击抖动
+    if (extra.shake) {
+      ctx.translate(Math.sin(tNow * 70) * r * 0.08, Math.cos(tNow * 63) * r * 0.06);
+    }
+
+    // 耳朵（随速度摆动）
+    const earSwing = Math.sin(tNow * 3.2) * (extra.earSwing || 0) * r * 0.1;
+    ctx.fillStyle = '#5fae4c';
+    for (const sx of [-1, 1]) {
+      ctx.save();
+      ctx.translate(sx * r * 0.58, -r * 0.8 + earSwing * sx);
+      ctx.rotate(sx * 0.12 + earSwing * 0.4);
+      ctx.beginPath(); ctx.ellipse(0, 0, r * 0.27, r * 0.31, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#a8dd94';
+      ctx.beginPath(); ctx.ellipse(0, r * 0.04, r * 0.14, r * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#5fae4c';
+      ctx.restore();
+    }
+
+    // 头
+    ctx.fillStyle = COL.pig;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    // 头顶高光（体积感）
+    ctx.fillStyle = 'rgba(255,255,255,.16)';
+    ctx.beginPath(); ctx.ellipse(-r * 0.2, -r * 0.45, r * 0.5, r * 0.28, -0.3, 0, Math.PI * 2); ctx.fill();
+    // 腮红
+    ctx.fillStyle = 'rgba(232,120,120,.32)';
+    for (const sx of [-1, 1]) {
+      ctx.beginPath(); ctx.ellipse(sx * r * 0.6, r * 0.2, r * 0.2, r * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ---- 眼睛（表情主体）----
+    const eyeY = -r * 0.14;
+    const EX = [-r * 0.34, r * 0.34];
+    ctx.lineCap = 'round';
+    if (mood === 'dead') {
+      // × 眼 + 小舌头
+      ctx.strokeStyle = '#1d2b1a'; ctx.lineWidth = Math.max(2, r * 0.12);
+      for (const ex of EX) {
+        ctx.beginPath();
+        ctx.moveTo(ex - r * 0.15, eyeY - r * 0.15); ctx.lineTo(ex + r * 0.15, eyeY + r * 0.15);
+        ctx.moveTo(ex + r * 0.15, eyeY - r * 0.15); ctx.lineTo(ex - r * 0.15, eyeY + r * 0.15);
+        ctx.stroke();
+      }
+    } else if (mood === 'hurt' || mood === 'dizzy') {
+      // >< 眼
+      ctx.strokeStyle = '#1d2b1a'; ctx.lineWidth = Math.max(2, r * 0.11);
+      for (const [i, ex] of EX.entries()) {
+        const dir = i === 0 ? 1 : -1;
+        ctx.beginPath();
+        ctx.moveTo(ex - dir * r * 0.15, eyeY - r * 0.14);
+        ctx.lineTo(ex + dir * r * 0.12, eyeY);
+        ctx.lineTo(ex - dir * r * 0.15, eyeY + r * 0.14);
+        ctx.stroke();
+      }
+      // 眩晕星星
+      if (mood === 'dizzy') {
+        for (let k = 0; k < 3; k++) {
+          const a2 = tNow * 3 + k * 2.1;
+          const sx2 = Math.cos(a2) * r * 0.55, sy2 = -r * 1.15 + Math.sin(a2) * r * 0.16;
+          ctx.fillStyle = '#ffd93d';
+          ctx.beginPath();
+          for (let q = 0; q < 10; q++) {
+            const ang = -Math.PI / 2 + q * Math.PI / 5;
+            const rad = (q % 2 === 0) ? r * 0.16 : r * 0.07;
+            const px2 = sx2 + Math.cos(ang) * rad, py2 = sy2 + Math.sin(ang) * rad;
+            q === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+          }
+          ctx.closePath(); ctx.fill();
+        }
+      }
+    } else if (mood === 'scared') {
+      // 大眼 + 小瞳孔 + 眉毛
+      for (const ex of EX) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(ex, eyeY, r * 0.19, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#1d2b1a';
+        ctx.beginPath(); ctx.arc(ex, eyeY - r * 0.02, r * 0.085, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.9)';
+        ctx.beginPath(); ctx.arc(ex + r * 0.03, eyeY - r * 0.07, r * 0.03, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = '#1d2b1a'; ctx.lineWidth = Math.max(1.6, r * 0.07);
+      for (const [i, ex] of EX.entries()) {
+        const dir = i === 0 ? 1 : -1;
+        ctx.beginPath();
+        ctx.moveTo(ex - dir * r * 0.2, eyeY - r * 0.3);
+        ctx.lineTo(ex + dir * r * 0.16, eyeY - r * 0.24);
+        ctx.stroke();
+      }
+    } else if (mood === 'happy') {
+      // ^ ^ 眼 + 张嘴笑
+      ctx.strokeStyle = '#1d2b1a'; ctx.lineWidth = Math.max(2, r * 0.11);
+      for (const ex of EX) {
+        ctx.beginPath();
+        ctx.arc(ex, eyeY + r * 0.06, r * 0.15, Math.PI * 1.15, Math.PI * 1.85);
+        ctx.stroke();
+      }
+    } else {
+      // normal：圆眼 + 眨眼
+      const blink = (tNow % 3.6) > 3.45;
+      ctx.fillStyle = '#1d2b1a';
+      if (blink) {
+        for (const ex of EX) {
+          ctx.fillRect(ex - r * 0.14, eyeY - r * 0.02, r * 0.28, r * 0.07);
+        }
+      } else {
+        for (const ex of EX) {
+          ctx.beginPath(); ctx.arc(ex, eyeY, r * 0.135, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = 'rgba(255,255,255,.9)';
+        for (const ex of EX) {
+          ctx.beginPath(); ctx.arc(ex + r * 0.05, eyeY - r * 0.05, r * 0.045, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
+    // ---- 嘴 / 鼻 ----
+    ctx.fillStyle = '#8fd07a';
+    ctx.beginPath(); ctx.ellipse(0, r * 0.3, r * 0.32, r * 0.23, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#4d7a44';
+    for (const sx of [-1, 1]) {
+      ctx.beginPath(); ctx.arc(sx * r * 0.11, r * 0.3, r * 0.065, 0, Math.PI * 2); ctx.fill();
+    }
+    // 张开的嘴（开心/惊恐）
+    if (mood === 'happy' || mood === 'scared') {
+      ctx.fillStyle = '#7a3b3b';
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.62, r * 0.2, r * 0.14, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawPartShape(part, cx, cy, size, dir, hp, spin) {
+    const def = RAP.PARTS[part];
+    if (!def) {
+      ctx.fillStyle = 'rgba(230,236,242,.9)';
+      roundRect(cx - size / 2, cy - size / 2, size, size, 4); ctx.fill();
+      return;
+    }
+    const h = size / 2;
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate((dir || 0) * Math.PI / 2);
+    // 零件自身投影（厚重感第一步：离地感）
+    if (def.structure || def.wheel || def.motor || def.energy || def.interactive) {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#0a1016';
+      ctx.translate(size * 0.06, size * 0.08);
+      if (def.wheel) {
+        ctx.beginPath(); ctx.arc(0, 0, h * 0.98, 0, Math.PI * 2); ctx.fill();
+      } else {
+        roundRect(-h * 0.94, -h * 0.94, size * 0.94, size * 0.94, Math.max(3, size * 0.08));
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    if (def.structure) {
+      /* ---------- 中空木框：木纹 + 铁角包边 + 内壁阴影 ---------- */
+      const bw = size * 0.22;
+      // 四条边框（木色，带一点渐变感：上浅下深）
+      ctx.fillStyle = '#c99354';
+      ctx.fillRect(-h, -h, size, bw);
+      ctx.fillRect(-h, -h, bw, size);
+      ctx.fillStyle = '#b57f42';
+      ctx.fillRect(-h, h - bw, size, bw);
+      ctx.fillRect(h - bw, -h, bw, size);
+      // 木纹
+      ctx.strokeStyle = 'rgba(110,72,34,.45)'; ctx.lineWidth = Math.max(1, size * 0.032);
+      ctx.beginPath();
+      ctx.moveTo(-h + bw, -h + bw * 0.45); ctx.lineTo(h - bw, -h + bw * 0.45);
+      ctx.moveTo(-h + bw, h - bw * 0.45); ctx.lineTo(h - bw, h - bw * 0.45);
+      ctx.stroke();
+      // 内壁阴影（双重：外圈深、内圈更深 → 厚度感）
+      ctx.strokeStyle = 'rgba(58,38,18,.55)'; ctx.lineWidth = Math.max(2, size * 0.085);
+      ctx.strokeRect(-h + bw, -h + bw, size - bw * 2, size - bw * 2);
+      ctx.strokeStyle = 'rgba(28,16,6,.45)'; ctx.lineWidth = Math.max(1, size * 0.04);
+      ctx.strokeRect(-h + bw * 1.25, -h + bw * 1.25, size - bw * 2.5, size - bw * 2.5);
+      // 铁角包边（四角）
+      const cn = size * 0.1;
+      ctx.fillStyle = '#6f7a86';
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        ctx.beginPath();
+        ctx.moveTo(sx * h, sy * h);
+        ctx.lineTo(sx * (h - cn * 2.2), sy * h);
+        ctx.lineTo(sx * h, sy * (h - cn * 2.2));
+        ctx.closePath(); ctx.fill();
+      }
+      // 外描边
+      ctx.strokeStyle = '#7a4f22'; ctx.lineWidth = Math.max(1.5, size * 0.055);
+      ctx.strokeRect(-h, -h, size, size);
+      // 挂点铆钉
+      for (const [dx, dy] of [[-h + bw * 0.5, -h + bw * 0.5], [h - bw * 0.5, h - bw * 0.5]]) {
+        ctx.fillStyle = '#3c4650';
+        ctx.beginPath(); ctx.arc(dx, dy, size * 0.045, 0, Math.PI * 2); ctx.fill();
+      }
+      // 阶段损坏：裂纹 / 破损
+      const stage = (hp === undefined || hp === null) ? 3 : hp;
+      if (stage <= 2) {
+        ctx.strokeStyle = 'rgba(28,18,10,.8)'; ctx.lineWidth = Math.max(1.2, size * 0.035);
+        ctx.beginPath();
+        ctx.moveTo(-h + bw * 0.5, -h + bw * 0.5);
+        ctx.lineTo(-h * 0.15, h * 0.05);
+        ctx.lineTo(h * 0.2, -h * 0.2);
+        ctx.stroke();
+      }
+      if (stage <= 1) {
+        ctx.fillStyle = 'rgba(28,18,10,.32)';
+        ctx.fillRect(-h, -h, size, size);
+        ctx.strokeStyle = 'rgba(28,18,10,.85)'; ctx.lineWidth = Math.max(1.5, size * 0.04);
+        ctx.beginPath();
+        ctx.moveTo(h - bw, -h + bw); ctx.lineTo(h * 0.2, h * 0.15);
+        ctx.stroke();
+      }
+
+    } else if (def.pig) {
+      // 统一走 drawPig（带表情），这里只是缩小画在框里
+      ctx.restore();
+      drawPig(cx, cy, size * 0.34, (dir || 0) * Math.PI / 2, def.__mood || 'normal',
+        { shake: def.__shake, earSwing: def.__earSwing || 0 });
+      return;
+    } else if (def.wheel) {
+      /* ---------- 轮子：外胎 + 辐条（唯一允许自转的组件）---------- */
+      if (spin) ctx.rotate(spin);
+      const isIron = part === 'iron_wheel';
+      ctx.fillStyle = '#1c2229';
+      ctx.beginPath(); ctx.arc(0, 0, h, 0, Math.PI * 2); ctx.fill();
+      // 轮圈
+      ctx.fillStyle = isIron ? '#6b7683' : '#a8763e';
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.84, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = isIron ? '#8a95a2' : '#c08a4a';
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.72, 0, Math.PI * 2); ctx.fill();
+      // 辐条：5 根（360/5=72°，避免与轮速形成 60° 周期频闪）
+      ctx.strokeStyle = isIron ? '#4e5862' : '#7d5227';
+      ctx.lineWidth = Math.max(1.2, size * 0.055);
+      for (let k = 0; k < 5; k++) {
+        const a = (k / 5) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * h * 0.2, Math.sin(a) * h * 0.2);
+        ctx.lineTo(Math.cos(a) * h * 0.7, Math.sin(a) * h * 0.7);
+        ctx.stroke();
+      }
+      // 偏心配重块：打破旋转对称，高速时也能看出在转
+      ctx.fillStyle = isIron ? '#3f4852' : '#6b451f';
+      ctx.beginPath();
+      ctx.arc(h * 0.42, -h * 0.16, Math.max(1.6, size * 0.075), 0, Math.PI * 2);
+      ctx.fill();
+      // 单侧亮片：进一步强化"转起来"的视觉线索
+      ctx.fillStyle = isIron ? 'rgba(220,232,244,.75)' : 'rgba(255,226,180,.8)';
+      ctx.beginPath();
+      ctx.arc(-h * 0.44, h * 0.3, Math.max(1.2, size * 0.055), 0, Math.PI * 2);
+      ctx.fill();
+      // 轮毂
+      ctx.fillStyle = isIron ? '#c8d2dc' : '#e0b070';
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.26, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = isIron ? '#6b7683' : '#a8763e';
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.12, 0, Math.PI * 2); ctx.fill();
+      // 外缘暗描边（圆柱侧壁感）
+      ctx.strokeStyle = 'rgba(8,14,20,.85)';
+      ctx.lineWidth = Math.max(2, size * 0.075);
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.97, 0, Math.PI * 2); ctx.stroke();
+      // 内侧亮环（受光的圆柱内壁）
+      ctx.strokeStyle = isIron ? 'rgba(255,255,255,.28)' : 'rgba(255,235,200,.30)';
+      ctx.lineWidth = Math.max(1.2, size * 0.035);
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.82, 0, Math.PI * 2); ctx.stroke();
+      // 高光弧
+      ctx.strokeStyle = 'rgba(255,255,255,.32)';
+      ctx.lineWidth = Math.max(1, size * 0.05);
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.6, -2.5, -0.9); ctx.stroke();
+
+    } else if (def.energy) {
+      /* ---------- 电池：电量条 ---------- */
+      const pct = (def.__pct !== undefined) ? def.__pct : 1;
+      ctx.fillStyle = '#4d7a2e';
+      roundRect(-h * 0.56, -h * 0.76, size * 0.56, size * 0.78, 4); ctx.fill();
+      ctx.fillStyle = '#e8f5c8';
+      roundRect(-h * 0.48, -h * 0.68, size * 0.40, size * 0.62, 3); ctx.fill();
+      // 电量
+      const bh = size * 0.62 * Math.max(0, Math.min(1, pct));
+      ctx.fillStyle = pct > 0.5 ? '#63d97e' : (pct > 0.2 ? '#ffd93d' : '#e0513c');
+      ctx.fillRect(-h * 0.48, -h * 0.68 + (size * 0.62 - bh), size * 0.40, bh);
+      // 正极
+      ctx.fillStyle = '#9fb2c2';
+      ctx.fillRect(-h * 0.2, -h * 0.86, size * 0.2, size * 0.1);
+      // 闪电
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.02, -h * 0.5); ctx.lineTo(h * 0.22, -h * 0.1);
+      ctx.lineTo(0, -h * 0.1); ctx.lineTo(h * 0.12, h * 0.3);
+      ctx.lineTo(-h * 0.24, -h * 0.04); ctx.lineTo(-h * 0.02, -h * 0.04);
+      ctx.closePath(); ctx.fill();
+
+    } else if (def.motor) {
+      /* ---------- 马达：机身 + 散热槽 + 出轴 ---------- */
+      ctx.fillStyle = '#e06a4a';
+      roundRect(-h * 0.72, -h * 0.48, size * 0.72, size * 0.52, 4); ctx.fill();
+      ctx.fillStyle = '#b44a30';
+      roundRect(-h * 0.72, h * 0.0, size * 0.72, size * 0.1, 2); ctx.fill();
+      // 散热槽
+      ctx.strokeStyle = 'rgba(60,20,12,.55)'; ctx.lineWidth = Math.max(1, size * 0.035);
+      for (let k = 0; k < 3; k++) {
+        const xx = -h * 0.55 + k * size * 0.16;
+        ctx.beginPath(); ctx.moveTo(xx, -h * 0.36); ctx.lineTo(xx, -h * 0.08); ctx.stroke();
+      }
+      // 出轴
+      ctx.fillStyle = '#5a6672';
+      ctx.fillRect(h * 0.0, -h * 0.16, size * 0.2, size * 0.16);
+      ctx.fillStyle = '#c8d2dc';
+      ctx.beginPath(); ctx.arc(h * 0.22, -h * 0.08, size * 0.09, 0, Math.PI * 2); ctx.fill();
+      // 描边
+      ctx.strokeStyle = '#8d3b28'; ctx.lineWidth = 2;
+      roundRect(-h * 0.72, -h * 0.48, size * 0.72, size * 0.52, 4); ctx.stroke();
+
+    } else if (def.interactive) {
+      /* ---------- 打气筒：筒身 + 活塞 + 压力表 + 出气管 ---------- */
+      ctx.fillStyle = '#2f5e78';
+      roundRect(-h * 0.34, -h * 0.46, size * 0.34, size * 0.6, 5); ctx.fill();
+      // 筒身高光
+      ctx.fillStyle = 'rgba(190,235,255,.5)';
+      roundRect(-h * 0.28, -h * 0.4, size * 0.09, size * 0.48, 3); ctx.fill();
+      // 活塞头
+      ctx.fillStyle = def.color;
+      roundRect(-h * 0.42, -h * 0.7, size * 0.5, size * 0.2, 5); ctx.fill();
+      ctx.strokeStyle = '#1d3a4a'; ctx.lineWidth = Math.max(1.4, size * 0.045);
+      roundRect(-h * 0.42, -h * 0.7, size * 0.5, size * 0.2, 5); ctx.stroke();
+      // 压力表
+      ctx.fillStyle = '#e8f4ff';
+      ctx.beginPath(); ctx.arc(-h * 0.02, h * 0.18, size * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#1d3a4a'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(-h * 0.02, h * 0.18); ctx.lineTo(-h * 0.02 + size * 0.06, h * 0.18 - size * 0.05); ctx.stroke();
+      // 出气管
+      ctx.fillStyle = '#8fb8cc';
+      ctx.fillRect(-h * 0.02, h * 0.02, size * 0.36, size * 0.14);
+      ctx.fillStyle = '#e8f4ff';
+      ctx.beginPath(); ctx.arc(h * 0.36, h * 0.09, size * 0.085, 0, Math.PI * 2); ctx.fill();
+
+    } else {
+      ctx.fillStyle = def.color; roundRect(-h * 0.8, -h * 0.8, size * 0.8, size * 0.8, 3); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawBuildCar() {
+    const o = buildOrigin();
+    const keys = Object.keys(state.build.cells);
+    const at = (k) => ({
+      x: o.x + (+k.split(',')[1]) * BUILD_PX + BUILD_PX / 2,
+      y: o.y + (+k.split(',')[0]) * BUILD_PX + BUILD_PX / 2
+    });
+    // 先画所有零件（框是空的，能看到后面）
+    keys.forEach(k => {
+      const cell = state.build.cells[k];
+      const p = at(k);
+      {
+        // 落下弹性：1.22 → 1.0（180ms）
+        let sc = 1;
+        const t0 = state.popped[k];
+        if (t0) {
+          const age = (performance.now() - t0) / 180;
+          if (age < 1) sc = 1 + 0.22 * Math.sin(Math.PI * age) * (1 - age * 0.4);
+          else delete state.popped[k];
+        }
+        drawPartShape(cell.part, p.x, p.y, BUILD_PX * sc, cell.dir,
+          cell.part === 'wood_frame' ? 3 : undefined);
+      }
+    });
+    // 方向件箭头：只在「选中该款零件」或「鼠标悬停在该格」时显示
+    const hover = cellAt(state.mouse.x, state.mouse.y);
+    keys.forEach(k => {
+      const cell = state.build.cells[k];
+      if (!RAP.isDirectional(cell.part)) return;
+      const rc = k.split(',');
+      const isHover = hover && hover.r === +rc[0] && hover.c === +rc[1];
+      const isSelectedType = (state.selected === cell.part);   // 选了打气筒才显示所有打气筒
+      if (!isHover && !isSelectedType) {
+        // 只留一个很小的朝向点，不画箭头（保持"这里有方向件"的可读性）
+        const p0 = at(k);
+        const v0 = RAP.dirVec(cell.dir || 0);
+        ctx.fillStyle = 'rgba(255,255,255,.5)';
+        ctx.beginPath();
+        ctx.arc(p0.x + v0[0] * BUILD_PX * 0.34, p0.y - v0[1] * BUILD_PX * 0.34, BUILD_PX * 0.07, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      const p = at(k);
+      drawDirArrow(p.x, p.y, cell.dir || 0, BUILD_PX, RAP.PARTS[cell.part].color, isHover);
+      if (isHover) {
+        const vv = RAP.dirVec(cell.dir || 0);
+        const wd = { '1,0': '右', '-1,0': '左', '0,1': '上', '0,-1': '下' }[vv[0] + ',' + vv[1]] || '';
+        text(wd, p.x + vv[0] * BUILD_PX * 0.8, p.y - vv[1] * BUILD_PX * 0.8 + 5, 14, '#ffffff', 'center', true);
+      }
+    });
+
+    // 再画框里的内嵌件（小猪），放在框的内壁之上
+    keys.forEach(k => {
+      const cell = state.build.cells[k];
+      if (!cell.inner) return;
+      const p = at(k);
+      drawPartShape(cell.inner, p.x, p.y, BUILD_PX * 0.62, 0);
+    });
+  }
+
+  function drawTray() {
+    let hoverIdx = -1;
+    TRAY.forEach((part, i) => {
+      if (hit(trayRect(i), state.mouse.x, state.mouse.y)) hoverIdx = i;
+    });
+    TRAY.forEach((part, i) => {
+      const rect = trayRect(i);
+      const left = part === 'eraser' ? 1 : RAP.budgetLeft(level(), part, state.build);
+      const sel = state.selected === part;
+      ctx.fillStyle = sel ? '#4a7aa8' : 'rgba(20,26,32,.82)';
+      roundRect(rect.x, rect.y, rect.w, rect.h, 8); ctx.fill();
+      if (sel) { ctx.strokeStyle = '#ffe08a'; ctx.lineWidth = 3; ctx.stroke(); }
+      const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2 - 4;
+      if (part === 'eraser') {
+        ctx.fillStyle = '#dde6ee'; roundRect(cx - 14, cy - 12, 28, 24, 4); ctx.fill();
+      } else {
+        drawPartShape(part, cx, cy, rect.w * 0.46, 0);
+      }
+      text(part === 'eraser' ? '' : String(left),
+        rect.x + rect.w / 2, rect.y + rect.h + 14, 12,
+        left > 0 || part === 'eraser' ? '#ffffff' : '#ff9c86', 'center');
+      // 悬停 / 选中 → 在槽上方显示零件名（"选了什么"必须一眼看到）
+      if (i === hoverIdx || state.selected === part) {
+        const nm = part === 'eraser' ? '橡皮' : RAP.PARTS[part].label;
+        const w = Math.max(72, nm.length * 15 + 26);
+        ctx.fillStyle = 'rgba(10,18,24,.92)';
+        roundRect(rect.x + rect.w / 2 - w / 2, rect.y - 34, w, 26, 8); ctx.fill();
+        text(nm, rect.x + rect.w / 2, rect.y - 16, 14, '#ffe9b0', 'center', true);
+      }
+    });
+  }
+
+  function drawButtons() {
+    if (state.phase === 'build') {
+      const L = btnRect('launch'), C = btnRect('clear'), U = btnRect('undo');
+      const chk = RAP.canLaunch(state.build);
+      const LC = { x: L.x + L.w / 2, y: L.y + L.h / 2 };
+      const ready = chk.ok;
+      // 出发：对勾圆钮（未就绪变灰；就绪时外圈呼吸）
+      ctx.fillStyle = ready ? '#4a9be0' : 'rgba(90,104,116,.85)';
+      ctx.beginPath(); ctx.arc(LC.x, LC.y, L.w / 2, 0, Math.PI * 2); ctx.fill();
+      if (ready) {
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+        ctx.strokeStyle = 'rgba(255,255,255,' + (0.22 + 0.33 * pulse).toFixed(3) + ')';
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(LC.x, LC.y, L.w / 2 + 6 + pulse * 3, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(LC.x - 14, LC.y + 1); ctx.lineTo(LC.x - 4, LC.y + 11); ctx.lineTo(LC.x + 15, LC.y - 11);
+      ctx.stroke();
+      text('出发', LC.x, L.y + L.h + 20, 14, ready ? '#dff0ff' : '#93a3ae', 'center', true);
+
+      // 左侧三个小圆钮（图标 + 下方文字，互不遮挡）
+      const knob = (rect, drawIcon, label, active) => {
+        const c = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+        // 底板：横向胶囊（圆钮在左、文字在右，永不重叠）
+        const labW = 62;
+        ctx.fillStyle = 'rgba(10,18,24,.62)';
+        roundRect(rect.x - 6, rect.y - 6, rect.w + labW + 16, rect.h + 12, (rect.h + 12) / 2); ctx.fill();
+        ctx.fillStyle = active ? 'rgba(74,123,168,.95)' : 'rgba(24,34,42,.9)';
+        ctx.beginPath(); ctx.arc(c.x, c.y, rect.w / 2, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = active ? 'rgba(255,255,255,.55)' : 'rgba(150,170,185,.4)';
+        ctx.lineWidth = 2; ctx.stroke();
+        drawIcon(c);
+        text(label, rect.x + rect.w + 8, c.y + 5, 12.5, active ? '#f0f8ff' : '#d4e2ee', 'left', true);
+      };
+      knob(C, (c) => {
+        ctx.fillStyle = '#dce6ee';
+        ctx.fillRect(c.x - 8, c.y - 9, 16, 4);
+        ctx.fillRect(c.x - 5, c.y - 12, 10, 4);
+        ctx.fillRect(c.x - 7, c.y - 4, 14, 15);
+      }, '清空 C', false);
+      knob(U, (c) => {
+        ctx.strokeStyle = '#dce6ee'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(c.x, c.y, 9, -0.4, 3.9); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x + 9, c.y - 7); ctx.lineTo(c.x + 3, c.y - 12); ctx.lineTo(c.x + 2, c.y - 3);
+        ctx.closePath(); ctx.fillStyle = '#dce6ee'; ctx.fill();
+      }, '撤销 Z', false);
+      const Rr = btnRect('rotate');
+      const hc = cellAt(state.mouse.x, state.mouse.y);
+      const canRot = !!(hc && state.build.cells[hc.r + ',' + hc.c] &&
+        RAP.isDirectional(state.build.cells[hc.r + ',' + hc.c].part));
+      knob(Rr, (c) => {
+        ctx.strokeStyle = canRot ? '#ffe9b0' : '#dce6ee'; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(c.x, c.y, 9, 0.6, 5.2); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x + 8, c.y - 6); ctx.lineTo(c.x + 12, c.y + 1); ctx.lineTo(c.x + 4, c.y + 1);
+        ctx.closePath(); ctx.fillStyle = canRot ? '#ffe9b0' : '#dce6ee'; ctx.fill();
+      }, '换方向 R', canRot);
+      const HB2 = btnRect('help');
+      ctx.fillStyle = state.helpOpen ? 'rgba(74,123,168,.95)' : 'rgba(24,34,42,.85)';
+      roundRect(HB2.x, HB2.y, HB2.w, HB2.h, 10); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+      text('? 零件说明', HB2.x + HB2.w / 2, HB2.y + 28, 13, '#ffe9b0', 'center', true);
+    }
+
+    if (state.phase === 'run' && state.run) {
+      // 刹车钮（按住即刹）
+      const BK = btnRect('brake');
+      if (BK) {
+        const on = state.run.car.braking;
+        ctx.fillStyle = on ? '#e0513c' : 'rgba(24,34,42,.9)';
+        roundRect(BK.x, BK.y, BK.w, BK.h, 15); ctx.fill();
+        ctx.strokeStyle = on ? '#ffd9d0' : 'rgba(232,200,122,.65)';
+        ctx.lineWidth = 2; ctx.stroke();
+        text('刹', BK.x + BK.w / 2, BK.y + 44, 26, on ? '#fff' : '#ffe9b0', 'center', true);
+        text('按住', BK.x + BK.w / 2, BK.y + 68, 11, on ? '#ffe0d8' : '#9fb2c2', 'center');
+      }
+      const groups = state.run.car.groups || [];
+      const n = Math.min(3, groups.length);
+      const x0 = DW / 2 - (n * 104) / 2;
+      for (let i = 0; i < n; i++) {
+        const g = groups[i];
+        const rect = { x: x0 + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
+        // 按钮底色 = 这组零件的颜色（同色 = 同组，一按全启动）
+        ctx.fillStyle = 'rgba(10,18,24,.55)'; roundRect(rect.x - 4, rect.y - 4, rect.w + 8, rect.h + 8, 18); ctx.fill();
+        ctx.fillStyle = g.color; roundRect(rect.x, rect.y, rect.w, rect.h, 15); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 2; ctx.stroke();
+        text(RAP.PARTS[g.part].label, rect.x + rect.w / 2, rect.y + 40, 14, '#10201a', 'center', true);
+        text('×' + g.list.length, rect.x + rect.w / 2, rect.y + 62, 15, '#10201a', 'center', true);
+        text(String(i + 1), rect.x + 10, rect.y + 18, 12, 'rgba(16,32,26,.75)', 'left');
+      }
+      // 重开在左上（drawHud 里的绿色圆钮），这里不再放重复按钮
+    }
+
+    if (state.phase === 'resolved') {
+      const R = btnRect('retry'), N = btnRect('next');
+      ctx.fillStyle = '#63bf3f'; roundRect(R.x, R.y, R.w, R.h, 14); ctx.fill();
+      text('重试（保留拼装）', R.x + R.w / 2, R.y + R.h / 2 + 6, 18, '#fff', 'center');
+      const hasNext = state.levelIndex < levels.length - 1;
+      ctx.fillStyle = hasNext ? '#63bf3f' : '#5a6450';
+      roundRect(N.x, N.y, N.w, N.h, 14); ctx.fill();
+      text(hasNext ? '下一关' : '已是最后一关', N.x + N.w / 2, N.y + N.h / 2 + 6, 18, '#fff', 'center');
+    }
+  }
+
+  function drawTabs() {
+    levels.forEach((lv, i) => {
+      const t = tabRect(i), active = i === state.levelIndex;
+      ctx.fillStyle = active ? '#4a7aa8' : 'rgba(12,20,26,.88)';
+      roundRect(t.x, t.y, t.w, t.h, 7); ctx.fill();
+      if (i === 0) {
+        text('☰ 关卡', t.x + t.w / 2, t.y + 21, 13, '#ffe9b0', 'center', true);
+      } else {
+        text(lv.levelId, t.x + t.w / 2, t.y + 21, 14, active ? '#fff' : '#9fb2c2', 'center', active);
+      }
+    });
+  }
+
+  function drawHud() {
+    const built = RAP.buildVehicle(level(), state.build);
+    const mass = built ? built.mass : 0;
+    const energy = built ? built.energyMax : 0;
+    let line = `${level().levelId} ${level().name}　总重 ${mass.toFixed(1)} kg　能量 ${Math.round(energy)}　交互键 ${built ? built.interactives.length : 0}/${RAP.Params.interactCap}`;
+    let boxLine = '';
+    if (state.phase === 'run' && state.run) {
+      const car = state.run.car;
+      line = `总重 ${car.mass.toFixed(1)} kg　能量 ${Math.round(car.energy)}　速度 ${Math.hypot(car.vx, car.vy).toFixed(1)} m/s`;
+      boxLine = `木箱 ${state.run.boxesGot}/${state.run.boxes.length}`;
+    }
+
+    // 左上：暂停 / 重来（可点击）；右上：帮助
+    if (state.phase === 'run') {
+      const PB = btnRect('pause'), RB = btnRect('restartRun');
+      const pc = { x: PB.x + PB.w / 2, y: PB.y + PB.h / 2 };
+      ctx.fillStyle = state.paused ? '#63bf3f' : '#e0513c';
+      ctx.beginPath(); ctx.arc(pc.x, pc.y, PB.w / 2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#fff';
+      if (state.paused) {
+        ctx.beginPath();
+        ctx.moveTo(pc.x - 6, pc.y - 10); ctx.lineTo(pc.x + 10, pc.y);
+        ctx.lineTo(pc.x - 6, pc.y + 10); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.fillRect(pc.x - 7, pc.y - 10, 5, 20);
+        ctx.fillRect(pc.x + 2, pc.y - 10, 5, 20);
+      }
+      const rc = { x: RB.x + RB.w / 2, y: RB.y + RB.h / 2 };
+      ctx.fillStyle = '#63bf3f';
+      ctx.beginPath(); ctx.arc(rc.x, rc.y, RB.w / 2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(rc.x, rc.y, 10, -0.6, 3.6); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(rc.x + 10, rc.y - 8); ctx.lineTo(rc.x + 11, rc.y + 2);
+      ctx.lineTo(rc.x + 1, rc.y); ctx.closePath();
+      ctx.fillStyle = '#fff'; ctx.fill();
+      const HB = btnRect('help');
+      const hcx = HB.x + HB.w / 2, hcy = HB.y + HB.h / 2;
+      ctx.fillStyle = 'rgba(24,34,42,.88)';
+      ctx.beginPath(); ctx.arc(hcx, hcy, HB.w / 2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.7)'; ctx.lineWidth = 2; ctx.stroke();
+      text('?', hcx, hcy + 8, 22, '#ffe9b0', 'center', true);
+    }
+    if (state.paused && state.phase === 'run') {
+      fillScreen('rgba(6,12,14,.35)');
+      text('已暂停', DW / 2, DH / 2 - 6, 38, '#eaf4fb', 'center', true);
+      text('点左上绿钮继续　·　绿圈回建造（零件保留）', DW / 2, DH / 2 + 34, 15, '#a8bfd0', 'center');
+    }
+
+    // 顶部信息条
+    ctx.fillStyle = 'rgba(10,18,24,.88)'; roundRect(84, 90, 700, 30, 8); ctx.fill();
+    ctx.strokeStyle = COL.goldDim; ctx.lineWidth = 1; ctx.stroke();
+    text(line, 96, 111, 14, '#eaf4fb');
+    if (state.phase === 'build') {
+      // 三行说明文字底衬（亮天空下必须，否则白字看不见）
+      ctx.fillStyle = 'rgba(10,18,24,.62)';
+      roundRect(84, 128, 640, 58, 8); ctx.fill();
+
+      // ---- 右侧整车统计卡 ----
+      {
+        const CX = DW - 232, CY = 148, CW = 200, CH = 188;
+        ctx.fillStyle = 'rgba(12,20,26,.78)';
+        roundRect(CX, CY, CW, CH, 12); ctx.fill();
+        ctx.strokeStyle = 'rgba(232,200,122,.32)'; ctx.lineWidth = 1; ctx.stroke();
+        text('整车', CX + 14, CY + 24, 13, '#9fd66a', 'left', true);
+        let cgOff = 0, hasCar = built && built.parts.length > 0;
+        if (hasCar) {
+          let mx2 = 0, mm2 = 0;
+          built.parts.forEach(pp => { mx2 += pp.lx * pp.def.mass; mm2 += pp.def.mass; });
+          cgOff = mx2 / mm2 - built.center.x;
+        }
+        const rows2 = [
+          ['质量', mass.toFixed(1) + ' kg', false],
+          ['能量', String(Math.round(energy)), false],
+          ['交互键', (built ? built.interactives.length : 0) + ' / ' + RAP.Params.interactCap, false],
+          ['零件数', String(built ? built.parts.length : 0), false],
+          ['重心偏移', hasCar ? ((cgOff >= 0 ? '+' : '−') + Math.abs(cgOff).toFixed(2) + ' m') : '—', Math.abs(cgOff) > 0.7]
+        ];
+        rows2.forEach((r, i) => {
+          const yy = CY + 54 + i * 27;
+          text(r[0], CX + 14, yy, 12, '#8fb6c9', 'left');
+          text(r[1], CX + CW - 14, yy, 14, r[2] ? '#ffb4a2' : '#e8f2fa', 'right', true);
+        });
+      }
+
+      // 重心偏移：让玩家知道"车头偏重 / 整体太高"
+      if (built && built.parts.length) {
+        let mx = 0, my = 0, mm = 0;
+        built.parts.forEach(pp => { mx += pp.lx * pp.def.mass; my += pp.ly * pp.def.mass; mm += pp.def.mass; });
+        const cgx = mx / mm - built.center.x;
+        const wheelY = built.wheels.length ? built.wheels.reduce((a, w) => a + w.ly, 0) / built.wheels.length : built.hull.minY;
+        const tall = (my / mm) - wheelY;
+        const cgText = `重心 前后${cgx >= 0 ? '+' : '−'}${Math.abs(cgx).toFixed(2)}　轮上高度 ${tall.toFixed(2)} m`;
+        text(cgText, 96, 168, 12, Math.abs(cgx) > 0.7 ? '#ffb4a2' : '#9fc3d8');
+      }
+      // 操作提示（画布内，放最底部一行，不与零件槽重叠）
+      // 操作提示：加深色底衬，保证在任何地貌上都看得清
+      {
+        const tipTxt = '左键放件 · 拖动可移动 · 右键/R 换方向 · Z 撤销 · C 清空 · 空格出发 · T 调参 · H 零件说明 · L 选关';
+        ctx.font = '10.5px "Microsoft YaHei", sans-serif';
+        const tw = ctx.measureText(tipTxt).width;
+        ctx.fillStyle = 'rgba(10,18,24,.66)';
+        roundRect(DW / 2 - tw / 2 - 12, DH - 142, tw + 24, 20, 10); ctx.fill();
+        text(tipTxt, DW / 2, DH - 128, 10.5, 'rgba(214,230,242,.88)', 'center');
+      }
+      const boxParts = Object.keys(level().partsBox || {})
+        .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + '×' + level().partsBox[k]).join('　');
+      text('零件箱：' + (boxParts || '无') + '　　分数：★★ 拿木箱　★★★ ' +
+        ({ none: '本关没有', pumpPress: '不按打气筒', energyLeft: '能量剩≥30', noFlip: '不翻车', motorUse: '不用马达' }
+          [(level().challenge || {}).type] || (level().challenge || {}).type || '—'),
+        96, 148, 12, '#b9cbd8');
+    }
+
+    if (state.phase === 'run' && state.run) {
+      ctx.fillStyle = 'rgba(10,18,24,.88)'; roundRect(DW - 224, 90, 192, 30, 8); ctx.fill();
+      ctx.strokeStyle = COL.goldDim; ctx.lineWidth = 1; ctx.stroke();
+      text(state.run.time.toFixed(2) + ' s', DW - 50, 111, 16, '#ffd93d', 'right');
+      if (boxLine) {
+        ctx.fillStyle = 'rgba(10,18,24,.88)'; roundRect(DW - 224, 126, 192, 26, 8); ctx.fill();
+        text(boxLine, DW - 44, 145, 13, '#cfe0ef', 'right');
+      }
+    }
+  }
+
+  function ordered_parts_for_arrows(car) {
+    return car.parts.filter(p => RAP.isDirectional(p.part) && !p.inner);
+  }
+
+  function drawRun(elapsed) {
+    const st = state.run;
+    if (!st) return;
+    const car = st.car;
+    // ---- 镜头：弹簧跟随 + 速度拉远 + 撞击震屏 ----
+    {
+      const spdNow = Math.hypot(car.vx, car.vy);
+      const surfY = Math.max(car.y, st.terrain.surfaceY(car.x));
+      const targetX = car.x + 2.0 + Math.min(1.6, spdNow * 0.14);   // 越快看得越远
+      const targetY = surfY + 1.5;
+      const targetZoom = 1.85 - Math.min(0.45, spdNow * 0.035);     // 越快视野越大
+      const cs = state.camState;
+      const k = 1 - Math.pow(0.001, Math.min(0.1, elapsed));         // 平滑系数（与帧率无关）
+      cs.x += (targetX - cs.x) * k;
+      cs.y += (targetY - cs.y) * k;
+      cs.zoom += (targetZoom - cs.zoom) * k * 0.6;
+      // 震屏衰减
+      if (state.shake > 0) state.shake = Math.max(0, state.shake - elapsed * 3.2);
+      const shk = state.shake;
+      var cam = {
+        x: cs.x + (Math.random() - 0.5) * shk * 0.55,
+        y: cs.y + (Math.random() - 0.5) * shk * 0.55,
+        zoom: cs.zoom
+      };
+    }
+    drawWorld(st.terrain, cam);
+    // 木箱
+    st.boxes.forEach(b => {
+      if (b.got) return;
+      const p = worldToScreen(b.col + 0.5, st.terrain.surfaceY(b.col + 0.5) + 0.5, cam);
+      const s = PPM * cam.zoom * 0.8;
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = '#16211a';
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + s * 0.55, s * 0.6, s * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = COL.box; roundRect(p.x - s / 2, p.y - s / 2, s, s, 4); ctx.fill();
+      ctx.strokeStyle = '#8a6a2a'; ctx.lineWidth = 2; ctx.stroke();
+    });
+    // 掉出来的东西（框碎了之后真的会掉下来）
+    (st.loose || []).forEach(L => {
+      const sp = worldToScreen(L.x, L.y, cam);
+      const rr = PPM * cam.zoom * L.r;
+      ctx.save();
+      ctx.globalAlpha = 0.22; ctx.fillStyle = '#16211a';
+      const gy = worldToScreen(L.x, st.terrain.surfaceY(L.x), cam);
+      ctx.beginPath(); ctx.ellipse(sp.x, gy.y, rr * 0.9, rr * 0.25, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      const isPig = RAP.PARTS[L.part] && RAP.PARTS[L.part].pig;
+      // 拖尾：按速度反推 3 个残影（看得出"被甩飞"）
+      if (Math.hypot(L.vx, L.vy) > 1.2) {
+        for (let k = 1; k <= 3; k++) {
+          const tp = worldToScreen(L.x - L.vx * 0.045 * k, L.y - L.vy * 0.045 * k, cam);
+          ctx.save();
+          ctx.globalAlpha = 0.24 - k * 0.06;
+          if (isPig) drawPig(tp.x, tp.y, rr * (1 - k * 0.1), -L.a, 'dizzy');
+          else drawPartShape(L.part, tp.x, tp.y, rr * 2 * (1 - k * 0.1), 0);
+          ctx.restore();
+        }
+      }
+      if (isPig) drawPig(sp.x, sp.y, rr, -L.a, 'dead');
+      else drawPartShape(L.part, sp.x, sp.y, rr * 2, 0);
+    });
+
+    drawDebris(cam);
+    drawDust(cam);
+    drawConfetti(cam);
+
+    // ---- 速度线（高速时在屏幕边缘流动）----
+    {
+      const spd2 = Math.hypot(car.vx, car.vy);
+      if (spd2 > 4.5) {
+        const a0 = Math.min(0.34, (spd2 - 4.5) / 14);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,' + a0.toFixed(3) + ')';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        for (let i = 0; i < 5; i++) {
+          const yy = 200 + i * 92 + Math.sin(performance.now() / 240 + i) * 8;
+          const len = 60 + Math.sin(performance.now() / 180 + i * 2) * 34;
+          const off = (performance.now() / 8 + i * 137) % (DW + 200) - 100;
+          ctx.beginPath();
+          ctx.moveTo(off, yy);
+          ctx.lineTo(off + len, yy);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // 终点旗
+    const gp = worldToScreen(level().goal.col + 0.5, st.terrain.surfaceY(level().goal.col + 0.5), cam);
+    ctx.fillStyle = '#e8f0e0'; ctx.fillRect(gp.x - 2, gp.y - 70 * cam.zoom / 2, 4, 70 * cam.zoom / 2);
+    ctx.fillStyle = COL.flag;
+    ctx.beginPath();
+    ctx.moveTo(gp.x + 2, gp.y - 70 * cam.zoom / 2);
+    ctx.lineTo(gp.x + 34, gp.y - 58 * cam.zoom / 2);
+    ctx.lineTo(gp.x + 2, gp.y - 46 * cam.zoom / 2);
+    ctx.closePath(); ctx.fill();
+
+    const ca = Math.cos(car.a), sa = Math.sin(car.a);   // 后面多处要用（箭头/车体/阴影）
+
+    // 推进方向箭头：行驶时不再显示（避免干扰画面，方向在建造期已确认）
+
+    // ---- 闪帧 + 暗角（撞击反馈）----
+    if (state.flash > 0) {
+      state.flash = Math.max(0, state.flash - elapsed * 7);
+      ctx.fillStyle = 'rgba(255,255,255,' + (state.flash * 0.5).toFixed(3) + ')';
+      ctx.fillRect(0, 0, DW, DH);
+    }
+    if (state.vignette > 0) {
+      state.vignette = Math.max(0, state.vignette - elapsed * 1.6);
+      const vg = ctx.createRadialGradient(DW / 2, DH / 2, DH * 0.34, DW / 2, DH / 2, DH * 0.92);
+      vg.addColorStop(0, 'rgba(180,40,30,0)');
+      vg.addColorStop(1, 'rgba(180,40,30,' + (state.vignette * 0.30).toFixed(3) + ')');
+      fillScreen(vg);
+    }
+
+    // ---- 小猪表情判定 ----
+    {
+      const car2 = state.run.car;
+      const sp2 = Math.hypot(car2.vx, car2.vy);
+      const ca2 = Math.cos(car2.a), sa2 = Math.sin(car2.a);
+      // 车体最低点离地高度（不是车心）
+      const lowY = car2.y + (car2.hull ? car2.hull.minY : -0.6) * ca2;
+      const gap = Math.max(0, lowY - st.terrain.surfaceY(car2.x));
+      const now2 = state.run.time;
+      let mood = 'normal';
+      if (!car2.hasPig) mood = 'dead';
+      else if ((state.run.lastImpactAt || -9) > now2 - 0.7) mood = 'dizzy';
+      else if (state.run.pigHP < 3) mood = 'hurt';
+      else if (gap > 1.2 || sp2 > 9) mood = 'scared';
+      else if ((state.run.lastBoxAt || -9) > now2 - 1.0) mood = 'happy';
+      else if (state.run.result === 'win') mood = 'happy';
+      state.pigMood = mood;
+      state.pigShake = mood === 'dizzy' || mood === 'hurt';
+      state.pigEarSwing = Math.min(1, sp2 / 6);
+    }
+
+    // 接触阴影（立体感第二步：物体与地面的关系）
+    const shY = st.terrain.surfaceY(car.x);
+    const shP = worldToScreen(car.x, shY + 0.02, cam);
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = '#16211a';
+    ctx.beginPath();
+    ctx.ellipse(shP.x, shP.y, PPM * cam.zoom * 1.5, PPM * cam.zoom * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 车
+    // 先画非 inner 件，再画 inner（框里的猪要在框内壁之上）
+    const ordered = car.parts.slice().sort((a, b) => (a.inner ? 1 : 0) - (b.inner ? 1 : 0));
+    // 把表情状态挂到猪零件的 def 上（def 是共享对象，画完就还原）
+    car.parts.forEach(p => {
+      if (p.def.pig) {
+        p.def.__mood = state.pigMood || 'normal';
+        p.def.__shake = state.pigShake;
+        p.def.__earSwing = state.pigEarSwing || 0;
+      }
+    });
+    ordered.forEach(p => {
+      const wx = car.x + p.lx * ca - p.ly * sa;
+      const wy = car.y + p.lx * sa + p.ly * ca;
+      const s = worldToScreen(wx, wy, cam);
+      const size = PPM * cam.zoom * (p.inner ? 0.62 : 1.0);
+      // 只有轮子允许自转：按行驶距离累积角度
+      let spin = 0;
+      if (p.def.wheel) {
+        const r = p.def.radius || 0.5;
+        spin = (car.odo || 0) / r;            // 里程 / 半径 = 弧度
+      }
+      const baseRot = p.def.wheel ? 0 : ((p.dir || 0) + (car.a * 180 / Math.PI) / 90);
+      drawPartShape(p.part, s.x, s.y, size, baseRot, p.hp, spin);
+    });
+    // 车体里没有猪的话（零件箱没放），提示一下
+    if (!car.hasPig) {
+      const tip = worldToScreen(car.x, car.y + 1.4, cam);
+      text('车是空的：把小猪拖进木框里', tip.x, tip.y, 13, '#ffb4a2', 'center');
+    }
+    // ---------- 失败回放：整段轨迹 + 镜头跟随 + 定格 ----------
+    if (st.phase === 'resolved' && st.result === 'fail' && st.replay && st.replay.length) {
+      state.replayT += elapsed;
+      const frames = st.replay;
+      const speed = 0.45;                        // 回放速度
+      const raw = state.replayT * speed * 20;    // 20 fps 采样
+      const idx = Math.min(frames.length - 1, Math.floor(raw));
+      const f = frames[idx];
+      const isLast = idx >= frames.length - 1;
+
+      // 暗化背景
+      fillScreen('rgba(8,14,18,.62)');
+
+      // 回放专用镜头（跟着回放点 + 稍微拉近）
+      const rcam = { x: f.x + 1.0, y: f.y + 1.2, zoom: 1.9 };
+
+      // 轨迹线
+      ctx.save();
+      ctx.strokeStyle = 'rgba(160,220,255,.28)';
+      ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      for (let i = 0; i <= idx; i++) {
+        const p2 = worldToScreen(frames[i].x, frames[i].y, rcam);
+        i === 0 ? ctx.moveTo(p2.x, p2.y) : ctx.lineTo(p2.x, p2.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // 回放中的车（画出轮廓）
+      const rp = worldToScreen(f.x, f.y, rcam);
+      ctx.save();
+      ctx.translate(rp.x, rp.y); ctx.rotate(f.a || 0);
+      ctx.globalAlpha = 0.9;
+      // 车体三格
+      for (let k = -1; k <= 1; k++) {
+        const bx = k * PPM * rcam.zoom * 0.85;
+        ctx.fillStyle = '#c99354';
+        roundRect(bx - PPM * rcam.zoom * 0.4, -PPM * rcam.zoom * 0.4,
+          PPM * rcam.zoom * 0.8, PPM * rcam.zoom * 0.8, 4); ctx.fill();
+        ctx.strokeStyle = '#7a4f22'; ctx.lineWidth = 2; ctx.stroke();
+      }
+      // 车轮
+      ctx.fillStyle = '#20262c';
+      for (const k of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(k * PPM * rcam.zoom * 0.85, PPM * rcam.zoom * 0.5, PPM * rcam.zoom * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // 定格：出事那一刻的冲击波
+      if (isLast) {
+        const age = Math.min(1, (raw - (frames.length - 1)) / 12);
+        if (age < 1) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,120,90,' + (1 - age).toFixed(2) + ')';
+          ctx.lineWidth = 6 * (1 - age) + 1;
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, 20 + age * 120, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 进度条
+      const barW = 420, barX = DW / 2 - barW / 2, barY = DH - 92;
+      ctx.fillStyle = 'rgba(10,18,24,.85)';
+      roundRect(barX, barY, barW, 10, 5); ctx.fill();
+      const prog = idx / Math.max(1, frames.length - 1);
+      ctx.fillStyle = '#e8816a';
+      roundRect(barX, barY, Math.max(6, barW * prog), 10, 5); ctx.fill();
+
+      // 标题
+      text('回放 · ' + failText(st.failReason), DW / 2, 120, 22, '#ffb4a2', 'center', true);
+      text(isLast ? '出事的那一刻' : (speed.toFixed(2) + '× 慢放'), DW / 2, 148, 13,
+        isLast ? '#ffd93d' : 'rgba(200,218,232,.7)', 'center');
+    }
+  }
+
+  function failText(reason) {
+    return ({ pig_dead: '猪受伤过重', pig_lost: '小猪掉队了', out_of_bounds: '掉出地图',
+              stuck: '卡住了：动力或重心不对', timeout: '超时', empty: '没放零件' })[reason] || reason;
+  }
+
+  function badge(cx, cy, r, ring, fill) {
+    ctx.fillStyle = ring; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function drawResult(elapsed) {
+    const st = state.run;
+    fillScreen('rgba(8,14,10,.58)');
+    const win = st.result === 'win';
+
+    // 卡片从顶部滑入
+    state.resultT = Math.min(1, (state.resultT || 0) + elapsed);
+    const ease = 1 - Math.pow(1 - state.resultT, 3);
+    const cardY = 150 - (1 - ease) * 420;
+
+    const W = 760, H = 372, X = DW / 2 - W / 2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 22; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = win ? '#20623a' : '#5c2c2c';
+    roundRect(X, cardY, W, H, 18); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = win ? '#63d97e' : '#e8816a';
+    roundRect(X, cardY + 6, W, 8, 4); ctx.fill();
+
+    text(win ? '到达终点！' : '这一趟失败了', X + 42, cardY + 86, 36, win ? '#b6ff9e' : '#ffb4a2', 'left', true);
+
+    // 三枚圆形徽章：猪 / 星 / 秒表
+    const by = cardY + 172;
+    const bx = [X + 168, X + W / 2, X + W - 168];
+    badge(bx[0], by, 46, '#3f8a4e', '#6fc25a');
+    drawPig(bx[0], by, 26, 0);
+    badge(bx[1], by, 46, '#3f8a4e', win ? '#ffe066' : '#4a5a4a');
+    // 星形
+    ctx.fillStyle = win ? '#ffd93d' : '#7c8a7c';
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const ang = -Math.PI / 2 + k * Math.PI / 5;
+      const rad = (k % 2 === 0) ? 24 : 10;
+      ctx[k === 0 ? 'moveTo' : 'lineTo'](bx[1] + Math.cos(ang) * rad, by + Math.sin(ang) * rad);
+    }
+    ctx.closePath(); ctx.fill();
+    badge(bx[2], by, 46, '#3f8a4e', '#f0c040');
+    // 秒表指针：分针从圆心向上，指针从圆心斜向
+    ctx.strokeStyle = '#6a5410'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(bx[2], by); ctx.lineTo(bx[2], by - 20); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx[2], by); ctx.lineTo(bx[2] + 13, by + 7); ctx.stroke();
+    ctx.fillStyle = '#6a5410';
+    ctx.beginPath(); ctx.arc(bx[2], by, 3.5, 0, Math.PI * 2); ctx.fill();
+
+    // 星级音效（每弹出一颗响一次）
+    {
+      const shown = Math.min(3, Math.floor(Math.max(0, ((state.resultT || 0) - 0.25) * 4 / 1.2)));
+      if (shown > (state.starSfxIdx || 0) && win) {
+        state.starSfxIdx = shown;
+        SFX.star(shown - 1);
+      }
+    }
+
+    // 星级（三颗小星，间隔 0.3s 依次弹出）
+    const stars = win ? st.stars : 0;
+    for (let i = 0; i < 3; i++) {
+      const pop = Math.max(0, Math.min(1, (state.resultT - 0.25 - i * 0.12) * 4));
+      if (pop <= 0) continue;
+      const cx = X + W / 2 - 84 + i * 84, cy = cardY + 268;
+      ctx.save();
+      ctx.translate(cx, cy); ctx.scale(pop, pop);
+      ctx.fillStyle = i < stars ? '#ffd93d' : 'rgba(255,255,255,.16)';
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) {
+        const ang = -Math.PI / 2 + k * Math.PI / 5;
+        const rad = (k % 2 === 0) ? 26 : 11;
+        ctx[k === 0 ? 'moveTo' : 'lineTo'](Math.cos(ang) * rad, Math.sin(ang) * rad);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 322, 16, '#dff0d8', 'left');
+    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 322, 16, '#dff0d8', 'center');
+    text(`能量剩 ${Math.round(st.car.energy)}`, X + W - 42, cardY + 322, 16, '#dff0d8', 'right');
+
+    if (!win) text('原因：' + failText(st.failReason), X + 42, cardY + 352, 15, '#ffc9bb', 'left');
+    else {
+      const ch = level().challenge || {};
+      const names = { none: '本关没有 ★★★', pumpPress: '不按打气筒通关', energyLeft: '能量剩 ≥ 30',
+                      noFlip: '全程不翻车', motorUse: '不用马达通关' };
+      text('★★★ 条件：' + (names[ch.type] || ch.type), X + 42, cardY + 352, 15,
+        stars === 3 ? '#b6ff9e' : '#9fb2c2', 'left');
+    }
+
+    // 新纪录徽章（滑入后 0.7s 登场，带轻微弹跳）
+    if (win && state.newBest) {
+      const bt = Math.max(0, Math.min(1, ((state.resultT || 0) - 0.7) * 4));
+      if (bt > 0) {
+        const scale = 1 + 0.25 * Math.sin(Math.PI * Math.min(1, bt * 1.6)) * (1 - bt * 0.5);
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, bt * 2);
+        ctx.translate(X + 400, cardY + 62);
+        ctx.scale(scale, scale);
+        const bw2 = 168, bh2 = 40;
+        ctx.fillStyle = '#ffd93d';
+        roundRect(-bw2 / 2, -bh2 / 2, bw2, bh2, 10); ctx.fill();
+        ctx.strokeStyle = '#8a6a10'; ctx.lineWidth = 2; ctx.stroke();
+        text('★ 新纪录！', 0, 7, 18, '#5a4300', 'center', true);
+        ctx.restore();
+        // 旧纪录对比
+        if (state.oldBest) {
+          ctx.save();
+          ctx.globalAlpha = Math.min(1, bt * 1.6);
+          text('旧纪录 ' + state.oldBest.toFixed(2) + ' s', X + 400, cardY + 100, 12, '#b6ff9e', 'center');
+          ctx.restore();
+        }
+      }
+    }
+    // 星级提升提示
+    if (win && state.newStarRecord && !state.newBest) {
+      const bt2 = Math.max(0, Math.min(1, ((state.resultT || 0) - 0.7) * 4));
+      if (bt2 > 0) {
+        ctx.save();
+        ctx.globalAlpha = bt2;
+        ctx.fillStyle = 'rgba(255,217,61,.9)';
+        roundRect(X + W - 234, cardY + 54, 168, 34, 9); ctx.fill();
+        text('星级提升！', X + W - 150, cardY + 77, 16, '#5a4300', 'center', true);
+        ctx.restore();
+      }
+    }
+
+    // 金币 + 评级（滑入后 0.55s 登场）
+    const coinT = Math.max(0, Math.min(1, ((state.resultT || 0) - 0.55) * 4));
+    if (coinT > 0) {
+      ctx.save();
+      ctx.globalAlpha = coinT;
+      const cy2 = cardY + 74;       // 与标题同一行右侧（新纪录徽章下方不会挡）
+      // 金币：★ 数 + 木箱数 → 金币
+      const coins = (win ? stars * 50 : 0) + (win ? st.boxesGot * 30 : 0);
+      const badgeX = X + W - 190;
+      ctx.fillStyle = '#f0c040';
+      ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8a6a10';
+      ctx.beginPath(); ctx.arc(badgeX, cy2, 9, 0, Math.PI * 2); ctx.fill();
+      text('×' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
+      // 评级
+      const grade = !win ? 'F' : (stars >= 3 ? 'S' : (stars === 2 ? 'A' : 'B'));
+      const gx = X + W - 44;
+      ctx.fillStyle = win ? (grade === 'S' ? '#ffd93d' : (grade === 'A' ? '#8fd66a' : '#7fb0d0')) : '#e8816a';
+      ctx.beginPath(); ctx.arc(gx, cy2, 19, 0, Math.PI * 2); ctx.fill();
+      text(grade, gx, cy2 + 8, 22, '#12222c', 'center', true);
+
+      ctx.restore();
+    }
+
+    // 底部两个按钮（跟随卡片滑入）
+    const btnY = cardY + H + 34;
+    ctx.fillStyle = '#63bf3f'; roundRect(DW / 2 - 300, btnY, 260, 72, 14); ctx.fill();
+    text('重试（保留拼装）', DW / 2 - 170, btnY + 44, 18, '#fff', 'center');
+    const hasNext = state.levelIndex < levels.length - 1;
+    ctx.fillStyle = hasNext ? '#63bf3f' : '#5a6450';
+    roundRect(DW / 2 + 40, btnY, 260, 72, 14); ctx.fill();
+    text(hasNext ? '下一关' : '已是最后一关', DW / 2 + 170, btnY + 44, 18, '#fff', 'center');
+    state.resultBtnY = btnY;
+  }
+
+  const WELCOME_PAGES = [
+    {
+      title: '欢迎来到「滚蛋吧！猪」',
+      lines: [
+        '你是一个猪车工程师。',
+        '用木框搭车、装轮子、把小猪塞进木框里，',
+        '让车带着小猪跑到终点旗子。',
+        '',
+        '物理是真的：重心偏了会翻、装太重会跑不动。'
+      ],
+      art: 'car'
+    },
+    {
+      title: '建造 · 三步就能出发',
+      lines: [
+        '1. 点底部零件槽 → 点网格放零件（必须贴着木框）',
+        '2. 把「小猪」拖进一个木框里（框是空的，猪坐进去）',
+        '3. 点右侧蓝色对勾 → 出发',
+        '',
+        '拖动已放的零件可以搬走；右键 / R 换喷气方向；',
+        '最右边的橡皮按下就能擦掉。'
+      ],
+      art: 'grid'
+    },
+    {
+      title: '跑起来之后',
+      lines: [
+        '左上红钮 = 暂停，绿钮 = 回建造（零件保留）',
+        '右下「刹」= 按住刹车，随时能停',
+        '底部彩色按钮 = 同色同类零件一起启动（打气筒等）',
+        '',
+        '★ 通关　★★ 拿到木箱　★★★ 每关的特殊条件',
+        '按 L 打开选关，进度会保存。'
+      ],
+      art: 'run'
+    }
+  ];
+
+  function welcomeBtnRect() {
+    return { x: DW / 2 + 120, y: 508, w: 180, h: 56 };
+  }
+  function welcomeSkipRect() {
+    return { x: DW / 2 - 300, y: 508, w: 180, h: 56 };
+  }
+
+  function drawWelcome() {
+    if (!state.welcome) return;
+    const page = WELCOME_PAGES[state.welcome - 1];
+    if (!page) { state.welcome = 0; return; }
+    fillScreen('rgba(6,12,16,.86)');
+
+    const W = 760, H = 430, X = (DW - W) / 2, Y = 130;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
+    ctx.fillStyle = '#14262f'; roundRect(X, Y, W, H, 18); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(232,200,122,.5)'; ctx.lineWidth = 2; ctx.stroke();
+
+    text(page.title, X + 40, Y + 58, 26, '#ffe9b0', 'left', true);
+
+    // 左侧插图
+    if (page.art === 'car') {
+      const cx2 = X + 130, cy2 = Y + 190;
+      for (let k = -1; k <= 1; k++) {
+        drawPartShape('wood_frame', cx2 + k * 46, cy2, 46 * 0.84, 0, 3);
+      }
+      drawPig(cx2, cy2, 46 * 0.3, 0, 'happy');
+      drawPartShape('wood_wheel', cx2 - 46, cy2 + 40, 46 * 0.7, 0);
+      drawPartShape('wood_wheel', cx2 + 46, cy2 + 40, 46 * 0.7, 0);
+    } else if (page.art === 'grid') {
+      for (let r2 = 0; r2 < 4; r2++) {
+        for (let c2 = 0; c2 < 4; c2++) {
+          const gx = X + 62 + c2 * 34, gy = Y + 140 + r2 * 34;
+          ctx.fillStyle = (r2 === 1 && c2 === 1) ? 'rgba(150,220,120,.7)' : 'rgba(120,150,110,.32)';
+          roundRect(gx, gy, 30, 30, 5); ctx.fill();
+        }
+      }
+      drawPartShape('wood_frame', X + 62 + 34 + 15, Y + 140 + 34 + 15, 28, 0, 3);
+      drawPig(X + 62 + 34 + 15, Y + 140 + 34 + 15, 10, 0, 'normal');
+    } else {
+      // 三个按钮图标竖排，互不重叠
+      const icx = X + 130;
+      // 暂停（红）
+      ctx.fillStyle = '#e0513c';
+      ctx.beginPath(); ctx.arc(icx, Y + 168, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(icx - 7, Y + 158, 5, 20); ctx.fillRect(icx + 2, Y + 158, 5, 20);
+      // 重来（绿）
+      ctx.fillStyle = '#63bf3f';
+      ctx.beginPath(); ctx.arc(icx, Y + 232, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(icx, Y + 232, 10, -0.6, 3.6); ctx.stroke();
+      // 刹车（深色 + 刹）
+      ctx.fillStyle = '#243038';
+      roundRect(icx - 24, Y + 276, 48, 40, 8); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.7)'; ctx.lineWidth = 1.5; ctx.stroke();
+      text('刹', icx, Y + 305, 20, '#ffe9b0', 'center', true);
+    }
+
+    // 右侧文字
+    page.lines.forEach((ln, i) => {
+      text(ln, X + 250, Y + 108 + i * 30, 15, ln ? '#d8e8f4' : '#000', 'left');
+    });
+
+    // 页码点
+    for (let i = 0; i < WELCOME_PAGES.length; i++) {
+      ctx.fillStyle = i === state.welcome - 1 ? '#ffe9b0' : 'rgba(255,255,255,.22)';
+      ctx.beginPath();
+      ctx.arc(X + W / 2 - 24 + i * 24, Y + H - 30, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 按钮
+    const bk = welcomeSkipRect(), bn = welcomeBtnRect();
+    ctx.fillStyle = 'rgba(24,34,42,.9)';
+    roundRect(bk.x, bk.y, bk.w, bk.h, 12); ctx.fill();
+    ctx.strokeStyle = 'rgba(200,218,232,.4)'; ctx.lineWidth = 1.5; ctx.stroke();
+    text('跳过', bk.x + bk.w / 2, bk.y + 36, 17, '#c3d4e2', 'center');
+    ctx.fillStyle = '#4a9be0';
+    roundRect(bn.x, bn.y, bn.w, bn.h, 12); ctx.fill();
+    const last = state.welcome >= WELCOME_PAGES.length;
+    text(last ? '开始搭车！' : '下一步 →', bn.x + bn.w / 2, bn.y + 36, 17, '#ffffff', 'center', true);
+  }
+
+  // 关卡地形缩略图：把 mapRows 压成一条剖面
+  function drawLevelThumb(lv, x, y, w, h) {
+    const rows = lv.mapRows || [];
+    const cols = (lv.grid && lv.grid.cols) || (rows[0] || '').length;
+    if (!cols || !rows.length) return;
+    const top = [];
+    for (let c = 0; c < cols; c++) {
+      let rr = rows.length;
+      for (let r = 0; r < rows.length; r++) {
+        const ch = rows[r][c];
+        if (ch === '#' || ch === '=' || ch === 'v' || ch === 'n' || ch === '/') { rr = r; break; }
+      }
+      top.push(rr);
+    }
+    const maxRow = rows.length;
+    const bh = BIOMES[lv.biome] || BIOMES.field;
+
+    ctx.fillStyle = 'rgba(8,14,20,.55)';
+    roundRect(x, y, w, h, 5); ctx.fill();
+
+    // 地形剖面
+    ctx.beginPath();
+    ctx.moveTo(x, y + h);
+    for (let c = 0; c < cols; c++) {
+      const px = x + (c / Math.max(1, cols - 1)) * w;
+      const py = y + h - ((maxRow - top[c]) / maxRow) * h;
+      ctx.lineTo(px, py);
+    }
+    ctx.lineTo(x + w, y + h);
+    ctx.closePath();
+    ctx.fillStyle = 'rgb(' + bh.rock.join(',') + ')';
+    ctx.fill();
+
+    // 地表线
+    ctx.beginPath();
+    for (let c = 0; c < cols; c++) {
+      const px = x + (c / Math.max(1, cols - 1)) * w;
+      const py = y + h - ((maxRow - top[c]) / maxRow) * h;
+      c === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = bh.grass; ctx.lineWidth = 1.6; ctx.stroke();
+
+    // 起点 / 终点
+    const sc = Math.max(0, Math.min(cols - 1, (lv.start && lv.start.col) || 0));
+    const gc = Math.max(0, Math.min(cols - 1, (lv.goal && lv.goal.col) || cols - 1));
+    const sx2 = x + (sc / Math.max(1, cols - 1)) * w;
+    const gx2 = x + (gc / Math.max(1, cols - 1)) * w;
+    const sy2 = y + h - ((maxRow - top[sc]) / maxRow) * h;
+    const gy2 = y + h - ((maxRow - top[gc]) / maxRow) * h;
+    ctx.fillStyle = '#63d97e';
+    ctx.beginPath(); ctx.arc(sx2, Math.max(y + 3, sy2 - 3), 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e2574c';
+    ctx.beginPath();
+    ctx.moveTo(gx2, Math.max(y + 3, gy2 - 3));
+    ctx.lineTo(gx2, Math.max(y + 3, gy2 - 13));
+    ctx.lineTo(gx2 + 8, Math.max(y + 3, gy2 - 9));
+    ctx.closePath(); ctx.fill();
+
+    ctx.strokeStyle = 'rgba(232,200,122,.25)'; ctx.lineWidth = 1;
+    roundRect(x, y, w, h, 5); ctx.stroke();
+  }
+
+  function drawLevelSelect() {
+    if (!state.levelSelect) return;
+    fillScreen('rgba(6,12,16,.82)');
+    text('选择关卡', DW / 2, 92, 30, '#ffe9b0', 'center', true);
+    text('★★ 拿木箱　★★★ 每关的特殊条件', DW / 2, 124, 13, '#9fb2c2', 'center');
+
+    const CW = 216, CH = 250, GAP = 18;
+    const totalW = levels.length * CW + (levels.length - 1) * GAP;
+    levels.forEach((lv, i) => {
+      const x = (DW - totalW) / 2 + i * (CW + GAP);
+      const y = 150;
+      // 每次都从 localStorage 重新读，避免只在启动时读一次
+      let pr = progress[lv.levelId];
+      try { const rawAll = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
+            if (rawAll[lv.levelId]) pr = rawAll[lv.levelId]; } catch (e) {}
+      pr = pr || { stars: 0, best: null };
+      const isCur = i === state.levelIndex;
+      // 卡面
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 6;
+      ctx.fillStyle = isCur ? '#1c4a34' : '#152a33';
+      roundRect(x, y, CW, CH, 14); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = isCur ? 'rgba(160,255,180,.75)' : 'rgba(232,200,122,.32)';
+      ctx.lineWidth = isCur ? 2.5 : 1.5; ctx.stroke();
+      // 关卡号
+      text(lv.levelId, x + CW / 2, y + 42, 26, isCur ? '#b6ff9e' : '#e8f2fa', 'center', true);
+      text(lv.name, x + CW / 2, y + 70, 15, '#cfe0ee', 'center');
+      // 星级
+      for (let k = 0; k < 3; k++) {
+        const cx2 = x + CW / 2 - 44 + k * 44, cy2 = y + 104;
+        ctx.fillStyle = k < pr.stars ? '#ffd93d' : 'rgba(255,255,255,.14)';
+        ctx.beginPath();
+        for (let q = 0; q < 10; q++) {
+          const ang = -Math.PI / 2 + q * Math.PI / 5;
+          const rad = (q % 2 === 0) ? 15 : 6.5;
+          const px2 = cx2 + Math.cos(ang) * rad, py2 = cy2 + Math.sin(ang) * rad;
+          q === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+        }
+        ctx.closePath(); ctx.fill();
+      }
+      // 最佳时间
+      text(pr.best ? '最佳 ' + pr.best.toFixed(2) + ' s' : '未通关',
+        x + CW / 2, y + 140, 12, pr.best ? '#9fe0a8' : '#7f97a6', 'center');
+      // ★★★ 条件
+      const chNames = { none: '无 ★★★', pumpPress: '不按打气筒', energyLeft: '能量剩 ≥ 30',
+                        noFlip: '不翻车', motorUse: '不用马达' };
+      text('★★★：' + (chNames[(lv.challenge || {}).type] || '—'),
+        x + CW / 2, y + 166, 11, '#8fb6c9', 'center');
+      // 零件箱
+      // 地形缩略图
+      drawLevelThumb(lv, x + 12, y + 176, CW - 24, 44);
+      const boxTxt = Object.keys(lv.partsBox || {})
+        .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + lv.partsBox[k]).join(' ');
+      text(boxTxt, x + CW / 2, y + 236, 10, 'rgba(200,218,232,.55)', 'center');
+    });
+    // 「玩法说明」按钮：重新打开欢迎引导
+    const hb2 = { x: DW / 2 - 80, y: DH - 96, w: 160, h: 38 };
+    ctx.fillStyle = 'rgba(74,123,168,.9)';
+    roundRect(hb2.x, hb2.y, hb2.w, hb2.h, 10); ctx.fill();
+    text('? 玩法说明', hb2.x + hb2.w / 2, hb2.y + 25, 14, '#ffffff', 'center', true);
+    text('点卡片进入关卡　·　按 ESC 或点空白关闭', DW / 2, DH - 18, 12, '#7f97a6', 'center');
+  }
+
+  function levelCardRect(i) {
+    const CW = 216, CH = 250, GAP = 18;
+    const totalW = levels.length * CW + (levels.length - 1) * GAP;
+    return { x: (DW - totalW) / 2 + i * (CW + GAP), y: 150, w: CW, h: CH };
+  }
+
+  function drawHelp() {
+    if (!state.helpOpen) return;
+    const W = 920, H = 540, X = (DW - W) / 2, Y = 84;
+    fillScreen('rgba(6,12,14,.78)');
+    ctx.fillStyle = '#132430'; roundRect(X, Y, W, H, 16); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 2; ctx.stroke();
+    text('零件说明 —— 搭之前先知道每个东西干什么', X + 26, Y + 40, 19, '#ffe9b0', 'left', true);
+
+    const order = RAP.TRAY_ORDER;
+    order.forEach((part, i) => {
+      const def = RAP.PARTS[part];
+      const yy = Y + 84 + i * 62;
+      drawPartShape(part, X + 58, yy + 6, 36, 0);
+      text(def.label, X + 92, yy, 15, '#e6f0f8', 'left', true);
+      const tags = [def.mass + ' kg'];
+      if (def.structure) tags.push('结构');
+      if (def.wheel) tags.push('轮子');
+      if (def.motor) tags.push('动力');
+      if (def.energy) tags.push('能量 +' + def.energy);
+      if (def.interactive) tags.push('交互件');
+      if (def.inner) tags.push('只能放框里');
+      if (def.dir) tags.push('有方向');
+      text(tags.join(' · '), X + 92, yy + 18, 11, '#8fb6c9', 'left');
+      // 说明文字自动换行
+      const chars = (def.desc || '').split('');
+      let line = '', ly = yy + 2, lx = X + 236;
+      for (let k = 0; k < chars.length; k++) {
+        const test = line + chars[k];
+        if (ctx.measureText(test).width > X + W - 30 - lx) {
+          text(line, lx, ly, 13, '#cfe0ee', 'left');
+          line = chars[k]; ly += 19;
+        } else line = test;
+      }
+      if (line) text(line, lx, ly, 13, '#cfe0ee', 'left');
+    });
+    // 右上角关闭按钮
+    const cb = { x: X + W - 56, y: Y + 16, w: 34, h: 34 };
+    ctx.fillStyle = 'rgba(224,81,60,.9)';
+    ctx.beginPath(); ctx.arc(cb.x + cb.w / 2, cb.y + cb.h / 2, 17, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    const ccx = cb.x + cb.w / 2, ccy = cb.y + cb.h / 2;
+    ctx.beginPath();
+    ctx.moveTo(ccx - 7, ccy - 7); ctx.lineTo(ccx + 7, ccy + 7);
+    ctx.moveTo(ccx + 7, ccy - 7); ctx.lineTo(ccx - 7, ccy + 7);
+    ctx.stroke();
+    text('点任意处关闭 / 按 H', X + W - 26, Y + H - 18, 12, '#7f97a6', 'right');
+  }
+
+  function spawnDebris(wx, wy) {
+    for (let i = 0; i < 10; i++) {
+      state.debris.push({
+        x: wx, y: wy,
+        vx: (Math.random() - 0.5) * 6,
+        vy: 1 + Math.random() * 4,
+        a: Math.random() * 6.28,
+        w: (Math.random() - 0.5) * 14,
+        size: 3 + Math.random() * 5,
+        life: 0.5 + Math.random() * 0.4,
+        maxLife: 0.9,
+        color: Math.random() > 0.5 ? '#c08a4a' : '#8a5f30'
+      });
+    }
+  }
+
+  function drawConfetti(cam) {
+    if (!state.confetti.length) return;
+    state.confetti.forEach(c2 => {
+      const p = worldToScreen(c2.x, c2.y, cam);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, c2.life / 0.8));
+      ctx.translate(p.x, p.y); ctx.rotate(c2.a);
+      ctx.fillStyle = c2.color;
+      ctx.fillRect(-c2.size / 2, -c2.size / 2, c2.size, c2.size * 0.6);
+      ctx.restore();
+    });
+  }
+
+  function spawnDust(wx, wy, n) {
+    for (let i = 0; i < n; i++) {
+      state.dust = state.dust || [];
+      state.dust.push({
+        x: wx + (Math.random() - 0.5) * 0.5,
+        y: wy + Math.random() * 0.15,
+        vx: (Math.random() - 0.5) * 2.2,
+        vy: 0.6 + Math.random() * 1.4,
+        r: 2 + Math.random() * 3.5,
+        life: 0.35 + Math.random() * 0.3,
+        maxLife: 0.65
+      });
+    }
+  }
+
+  function drawDust(cam) {
+    if (!state.dust || !state.dust.length) return;
+    state.dust.forEach(d => {
+      const p = worldToScreen(d.x, d.y, cam);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(0.5, d.life / d.maxLife * 0.5));
+      ctx.fillStyle = '#d8cfb0';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, d.r * (1.6 - d.life / d.maxLife), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function drawDebris(cam) {
+    if (!state.debris.length) return;
+    state.debris.forEach(d => {
+      const p = worldToScreen(d.x, d.y, cam);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, d.life / 0.5));
+      ctx.translate(p.x, p.y); ctx.rotate(d.a);
+      ctx.fillStyle = d.color;
+      ctx.fillRect(-d.size / 2, -d.size / 2, d.size, d.size);
+      ctx.restore();
+    });
+  }
+
+  function drawToast() {
+    if (state.toastT <= 0) return;
+    ctx.fillStyle = 'rgba(16,22,28,.85)';
+    const w = Math.max(220, state.toast.length * 16 + 40);
+    roundRect(DW / 2 - w / 2, DH - 190, w, 44, 10); ctx.fill();
+    text(state.toast, DW / 2, DH - 160, 17, '#ffe08a', 'center');
+  }
+
+  // ---------- 主循环 ----------
+  let last = performance.now();
+  let frameErr = null;
+  function frame(now) {
+    try { frameBody(now); } catch (e) {
+      frameErr = (e && e.message) || String(e);
+      console.error('frame error:', e);
+      try {
+        ctx.fillStyle = 'rgba(200,60,40,.9)';
+        ctx.fillRect(8, 8, 560, 26);
+        text('渲染异常（游戏继续）：' + frameErr, 16, 26, 13, '#fff');
+      } catch (e2) {}
+    }
+    requestAnimationFrame(frame);
+  }
+  function frameBody(now) {
+    applyCanvasSize();
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (state.toastT > 0) state.toastT -= dt;
+
+    ctx.clearRect(-VIEW_OFF_X - 2, -VIEW_OFF_Y - 2, VIEW_W + 4, VIEW_H + 4);
+    if (state.phase === 'build') {
+      // 地形缓存：同一关不重复重建（每帧重建要跑 3 遍高斯平滑，很贵）
+      if (terrainCacheId !== level().levelId || !terrainCache) {
+        terrainCache = RAP.makeTerrain(level());
+        terrainCacheId = level().levelId;
+      }
+      const ter = terrainCache;
+      const cam = buildCam();
+      // 入场镜头：从关卡全景推到建造区
+      if (state.introT < 1) {
+        state.introT = Math.min(1, state.introT + dt / 1.2);
+        const k = 1 - Math.pow(1 - state.introT, 3);      // ease-out cubic
+        const wide = { x: cam.x + 9, y: cam.y + 3.2, zoom: 0.72 };
+        cam.x = wide.x + (cam.x - wide.x) * k;
+        cam.y = wide.y + (cam.y - wide.y) * k;
+        cam.zoom = wide.zoom + (cam.zoom - wide.zoom) * k;
+      }
+      drawWorld(ter, cam);
+      ctx.save();
+      ctx.translate(0, VIEW_OFF_Y);      // UI 在设计区居中（4:3 时上下有扩展）
+      // 入场时 UI 淡入（前 40% 不显示）
+      ctx.globalAlpha = 1;   // 强制复位（缓存切换可能残留 alpha）
+      const uiAlpha = state.introT < 0.35 ? 0 : Math.min(1, (state.introT - 0.35) / 0.35);
+      if (uiAlpha < 1) ctx.globalAlpha = uiAlpha;
+      drawGrid();
+      drawBuildCar();
+      if (state.bounce) {
+        state.bounce.t += dt;
+        const k = Math.min(1, state.bounce.t / 0.25);
+        if (k >= 1) { state.bounce = null; }
+        else {
+          const idx = TRAY.indexOf(state.bounce.part);
+          const target = idx >= 0 ? trayRect(idx) : { x: DW / 2, y: DH - 60, w: 0, h: 0 };
+          const tx = target.x + target.w / 2, ty = target.y + target.h / 2;
+          const bx = state.bounce.x + (tx - state.bounce.x) * k;
+          const by = state.bounce.y + (ty - state.bounce.y) * k;
+          ctx.save();
+          ctx.globalAlpha = 1 - k * 0.7;
+          drawPartShape(state.bounce.part, bx, by, BUILD_PX * 0.84 * (1 - k * 0.3), 0);
+          ctx.restore();
+        }
+      }
+      drawTray();
+      drawButtons();
+      drawTabs();
+      drawHud();
+      if (uiAlpha < 1) ctx.globalAlpha = 1;
+      ctx.restore();
+    } else if (state.phase === 'run' || state.phase === 'resolved') {
+      // 慢动作衰减（撞击后 0.25 倍，0.35 秒内恢复）
+      if (state.slowmo > 0) state.slowmo = Math.max(0, state.slowmo - dt);
+      // 尘土：上浮 + 扩散 + 淡出
+      if (state.dust && state.dust.length) {
+        state.dust.forEach(d => {
+          d.vy -= 2.2 * dt;
+          d.x += d.vx * dt;
+          d.y += d.vy * dt;
+          d.vx *= (1 - 2.2 * dt);
+          d.life -= dt;
+        });
+        state.dust = state.dust.filter(d => d.life > 0);
+      }
+      // 纸花：抛物线 + 摇曳 + 淡出
+      if (state.confetti.length) {
+        state.confetti.forEach(c2 => {
+          c2.vy -= 9 * dt;
+          c2.x += c2.vx * dt + Math.sin(performance.now() / 260 + c2.a) * 0.02;
+          c2.y += c2.vy * dt;
+          c2.a += c2.w * dt;
+          c2.life -= dt;
+        });
+        state.confetti = state.confetti.filter(c2 => c2.life > 0);
+      }
+      // 碎片：抛物线 + 旋转 + 淡出
+      if (state.debris.length) {
+        state.debris.forEach(d => {
+          d.vy -= 16 * dt;
+          d.x += d.vx * dt; d.y += d.vy * dt;
+          d.a += d.w * dt; d.life -= dt;
+        });
+        state.debris = state.debris.filter(d => d.life > 0);
+      }
+      if (state.run && state.run.phase === 'run' && !state.paused) {
+        // 固定 60Hz 累加
+        const timeScale = state.slowmo > 0 ? 0.3 : 1;
+        state.run.acc = (state.run.acc || 0) + dt * timeScale;
+        let guard = 0;
+        while (state.run.acc >= 1 / 60 && guard++ < 5) {
+          state.run.acc -= 1 / 60;
+          RAP.step(state.run, 1 / 60);
+          // 撞击检测（用事件流，避免改物理）
+          const evs = state.run.events || [];
+          if (evs.length !== (state.lastEventLen || 0)) {
+            for (let i = state.lastEventLen || 0; i < evs.length; i++) {
+              if (evs[i].indexOf('impact') === 0) {
+                state.slowmo = 0.35;
+                state.shake = Math.min(1.4, state.shake + 0.85);
+                state.flash = 1;
+                state.vignette = 1;
+                spawnDebris(state.run.car.x, state.run.car.y + 0.4);
+              } else if (evs[i].indexOf('touch lvl=') === 0) {
+                // 分级接触反馈
+                const lv = parseInt(evs[i].split('lvl=')[1], 10) || 1;
+                const mx = evs[i].match(/x=([\d.]+)/);
+                const px = mx ? parseFloat(mx[1]) : state.run.car.x;
+                const strengths = [0, 0.10, 0.22, 0.42, 0.85];
+                state.shake = Math.min(1.2, state.shake + strengths[lv]);
+                if (lv >= 3) { state.flash = Math.max(state.flash, 0.35); }
+                if (lv >= 2) { state.vignette = Math.max(state.vignette, lv >= 3 ? 0.7 : 0.25); }
+                // 尘土：级别 1~2 个小，3~4 用碎片
+                const n = [0, 3, 5, 8, 10][lv] || 3;
+                if (lv >= 3) spawnDebris(px, state.run.car.y + 0.2);
+                spawnDust(px, state.run.car.y - 0.3, n);
+                SFX.thud(lv);
+              }
+            }
+            state.lastEventLen = evs.length;
+          }
+        }
+      }
+      if (state.run && state.run.phase === 'resolved' && state.phase === 'run') {
+        state.phase = 'resolved';
+        state.resultT = 0;
+        state.outroT = 0;                              // 推镜过渡计时
+        state.slowmo = Math.max(state.slowmo, 0.75);   // 过关瞬间放慢（比撞击更久）
+        if (state.run.result === 'win') {
+          // 纸花：从车上方上抛
+          for (let k = 0; k < 26; k++) {
+            state.confetti.push({
+              x: state.run.car.x + (Math.random() - 0.5) * 3,
+              y: state.run.car.y + 2.2 + Math.random() * 1.2,
+              vx: (Math.random() - 0.5) * 5,
+              vy: 3 + Math.random() * 4.5,
+              a: Math.random() * 6.28,
+              w: (Math.random() - 0.5) * 12,
+              size: 3 + Math.random() * 4,
+              life: 1.6 + Math.random() * 0.8,
+              color: ['#ffd93d', '#63d97e', '#4a9be0', '#e8816a', '#ffffff'][k % 5]
+            });
+          }
+          SFX.cheer();
+        }
+        if (state.run.result === 'win') {
+          // 先读旧记录，判断是否破纪录，再写
+          let oldBest = null, oldStars = 0;
+          try {
+            const all = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') || {};
+            const rec = all[level().levelId];
+            if (rec) { oldBest = rec.best; oldStars = rec.stars; }
+          } catch (e) {}
+          state.newBest = (oldBest === null || state.run.time < oldBest);
+          state.oldBest = oldBest;
+          state.newStarRecord = state.run.stars > oldStars;
+          saveProgress(level().levelId, state.run.stars, state.run.time);
+        } else {
+          state.newBest = false;
+          state.newStarRecord = false;
+        }
+        if (state.run.result === 'win') SFX.win(); else SFX.fail();
+      }
+      // 轮子滚动环境音（按速度调制）
+      if (state.run && state.run.phase === 'run' && !state.paused) {
+        const sp3 = Math.hypot(state.run.car.vx, state.run.car.vy);
+        SFX.rollStart();
+        SFX.rollSet(sp3);
+      } else {
+        SFX.rollStop();
+      }
+      const prevBox = state.run ? state.run.boxesGot : 0;
+      const prevHp = state.run ? state.run.pigHP : 3;
+      drawRun(dt);
+      if (state.run) {
+        if (state.run.boxesGot > prevBox) SFX.box();
+        if (state.run.pigHP < prevHp) SFX.hurt();
+      }
+      drawTabs();
+      drawHud();
+      // 结算推镜：0.2 秒内把镜头推近 12%（再盖卡片，避免硬切）
+      if (state.phase === 'resolved' && state.outroT < 1) {
+        state.outroT = Math.min(1, state.outroT + dt / 0.2);
+        const kz = 1 + 0.12 * (1 - Math.pow(1 - state.outroT, 2));
+        state.camState.zoom *= 1 + (kz - 1) * 0.35;
+      }
+      if (state.slowmo > 0 && state.phase === 'run') {
+        fillScreen('rgba(232,200,122,.08)');
+      }
+      if (state.phase === 'resolved') drawResult(dt);
+      drawButtons();
+    }
+    drawWelcome();
+    drawLevelSelect();
+    drawHelp();
+    drawToast();
+  }
+  // 首次进入自动显示欢迎引导
+  try {
+    if (!localStorage.getItem('rap-welcomed-v1')) state.welcome = 1;
+  } catch (e) { state.welcome = 1; }
+
+  window.__rap = { state, RAP, levels, startLevel, launch };
+  startLevel(0);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

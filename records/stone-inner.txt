@@ -1,0 +1,69 @@
+    ctx.save();
+    traceTerrain();
+    ctx.clip();
+    // 见模块级 texHash()
+    const stoneW = 108 * cam.zoom, stoneH = 72 * cam.zoom;
+    const baseY = toY(cam.y) + 14;
+    // 用可视宽度而不是设计宽度，否则宽屏时两侧没有石头纹理
+    const colsN = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / stoneW) + 4;
+    const rowsN = Math.ceil((VIEW_H + VIEW_OFF_Y * 2 - baseY) / stoneH) + 4;
+    for (let row = 0; row < rowsN; row++) {
+      for (let col = 0; col < colsN; col++) {
+    const ox = (col - 1) * stoneW + (row % 2) * stoneW * 0.5 - VIEW_OFF_X;
+    const oy = baseY + row * stoneH;
+    const jx = (texHash(col, row) - 0.5) * stoneW * 0.34;
+    const jy = (texHash(col + 99, row + 7) - 0.5) * stoneH * 0.30;
+    const cx2 = ox + jx, cy2 = oy + jy;
+    const rw = stoneW * (0.50 + texHash(col + 3, row + 11) * 0.10);
+    const rh = stoneH * (0.48 + texHash(col + 5, row + 13) * 0.10);
+    const N = 7 + Math.floor(texHash(col + 21, row + 17) * 4);   // 7~10 边，更圆润
+    const poly = [];
+    for (let k = 0; k < N; k++) {
+      const a = (k / N) * Math.PI * 2 + texHash(col + k, row + k) * 0.5;
+      const rr = 1 + (texHash(col * 7 + k, row * 3 + k) - 0.5) * 0.22;  // 扰动减小 → 更圆
+      poly.push([cx2 + Math.cos(a) * rw * rr, cy2 + Math.sin(a) * rh * rr]);
+    }
+    // 主体：深青灰，越往下越暗
+    ctx.beginPath();
+    poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+    ctx.closePath();
+    const depth = Math.min(1, (cy2 - baseY) / (DH - baseY + 1));
+    const l1 = Math.round(PAL.rock[0] - depth * 40),
+          g1 = Math.round(PAL.rock[1] - depth * 38),
+          b1 = Math.round(PAL.rock[2] - depth * 36);
+    // 主体 + 内部径向渐变（中心亮、边缘暗 → 圆润的立体感）
+    const rg = ctx.createRadialGradient(
+      cx2 - rw * 0.22, cy2 - rh * 0.34, rh * 0.12,
+      cx2, cy2, rw * 1.05);
+    rg.addColorStop(0, 'rgb(' + Math.min(255, l1 + 34) + ',' + Math.min(255, g1 + 32) + ',' + Math.min(255, b1 + 30) + ')');
+    rg.addColorStop(0.55, 'rgb(' + l1 + ',' + g1 + ',' + b1 + ')');
+    rg.addColorStop(1, 'rgb(' + Math.max(0, l1 - 34) + ',' + Math.max(0, g1 - 32) + ',' + Math.max(0, b1 - 30) + ')');
+    ctx.beginPath();
+    poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+    ctx.closePath();
+    ctx.fillStyle = rg; ctx.fill();
+
+    // 缝：更宽更深
+    ctx.strokeStyle = 'rgba(6,12,18,.85)';
+    ctx.lineWidth = Math.max(2, 4.2 * cam.zoom);
+    ctx.beginPath();
+    poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+    ctx.closePath(); ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // 地表材质带
+    function band(color, width, offset) {
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+    const x = toX(pts[i][0]), y = toY(pts[i][1]) + offset;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.stroke();
+    }
+    // 草皮：暗边 → 亮草 → 高光 → 草叶
+    band(PAL.edge, 16 * cam.zoom, 13 * cam.zoom);               // 草地整体暗边
+    band(PAL.grass2, 15 * cam.zoom, 6 * cam.zoom);              // 暗草
+    band(PAL.grass, 12 * cam.zoom, 1 * cam.zoom);               // 亮草
+    band(PAL.grass3, 5 * cam.zoom, -2 * cam.zoom);              // 顶部高光
