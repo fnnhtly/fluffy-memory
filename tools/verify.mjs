@@ -120,6 +120,14 @@ if (!fast) {
   results.push({ ...r, ok: pass, detail: m ? `低对比 ${m[1]}/${m[2]} 条${hasErr ? '' : ' + 有异常'}` : '无法解析' });
 }
 
+// 4d) 选关缩略图（五关必须一眼看得出不同）
+if (!fast) {
+  const r = run(process.execPath, [path.join('tools', 'test_level_thumbs.js')], '选关缩略图');
+  const hasErr = /errors: \(none\)/.test(r.out);
+  const pass = !!(r.ok && hasErr);
+  results.push({ ...r, ok: pass, detail: hasErr ? '可辨' : '有异常' });
+}
+
 // 5) 交互脚本
 if (!fast) {
   for (const s of SCRIPTS) {

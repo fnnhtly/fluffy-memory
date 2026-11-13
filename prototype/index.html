@@ -2650,66 +2650,96 @@ const BIOMES = {
     text('Enter 继续　·　Esc 跳过', DW / 2, bn.y + bn.h + 26, 12, 'rgba(196,216,232,.82)', 'center');
   }
 
-  // 关卡地形缩略图：把 mapRows 压成一条剖面
+  // 关卡地形缩略图：把 mapRows 压成一条剖面。
+  // 早期版本只有 44px 高、单色填充，看不出"这关有冰面 / 有坑 / 箱子在哪"。
+  // 现在：草皮层 + 岩体两层、冰面单独配色、木箱与起终点都标出来。
   function drawLevelThumb(lv, x, y, w, h) {
     const rows = lv.mapRows || [];
     const cols = (lv.grid && lv.grid.cols) || (rows[0] || '').length;
     if (!cols || !rows.length) return;
+    const SOLID = c => c === '#' || c === '=' || c === 'v' || c === 'n' || c === '/';
     const top = [];
+    const isIce = [];
     for (let c = 0; c < cols; c++) {
-      let rr = rows.length;
+      let rr = rows.length, ice = false;
       for (let r = 0; r < rows.length; r++) {
         const ch = rows[r][c];
-        if (ch === '#' || ch === '=' || ch === 'v' || ch === 'n' || ch === '/') { rr = r; break; }
+        if (SOLID(ch)) { rr = r; ice = (ch === '='); break; }
       }
-      top.push(rr);
+      top.push(rr); isIce.push(ice);
     }
     const maxRow = rows.length;
     const bh = BIOMES[lv.biome] || BIOMES.field;
+    const sy = i => y + h - ((maxRow - top[i]) / maxRow) * h;   // 第 i 列地表 y
+    const sx = i => x + (i / Math.max(1, cols - 1)) * w;
 
-    ctx.fillStyle = 'rgba(8,14,20,.55)';
-    roundRect(x, y, w, h, 5); ctx.fill();
+    // 底：一条淡的"天"，让洞穴/黄昏关的色差先说话
+    const hex2rgb = hx => {
+      const s2 = String(hx || '#000000').replace('#', '');
+      return [parseInt(s2.substr(0, 2), 16) || 0, parseInt(s2.substr(2, 2), 16) || 0,
+              parseInt(s2.substr(4, 2), 16) || 0];
+    };
+    const sky = ctx.createLinearGradient(0, y, 0, y + h);
+    sky.addColorStop(0, 'rgba(' + hex2rgb(bh.skyTop).join(',') + ',.5)');
+    sky.addColorStop(1, 'rgba(8,14,20,.55)');
+    ctx.fillStyle = sky;
+    roundRect(x, y, w, h, 6); ctx.fill();
 
-    // 地形剖面
+    // 岩体：比草皮暗一档，形成"土层厚度"的感觉
     ctx.beginPath();
     ctx.moveTo(x, y + h);
-    for (let c = 0; c < cols; c++) {
-      const px = x + (c / Math.max(1, cols - 1)) * w;
-      const py = y + h - ((maxRow - top[c]) / maxRow) * h;
-      ctx.lineTo(px, py);
-    }
+    for (let c = 0; c < cols; c++) ctx.lineTo(sx(c), sy(c));
     ctx.lineTo(x + w, y + h);
     ctx.closePath();
     ctx.fillStyle = 'rgb(' + bh.rock.join(',') + ')';
     ctx.fill();
 
-    // 地表线
-    ctx.beginPath();
-    for (let c = 0; c < cols; c++) {
-      const px = x + (c / Math.max(1, cols - 1)) * w;
-      const py = y + h - ((maxRow - top[c]) / maxRow) * h;
-      c === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    // 草皮：沿地表线两侧各画一条，冰面段单独配色
+    for (let c = 0; c + 1 < cols; c++) {
+      ctx.beginPath();
+      ctx.moveTo(sx(c), sy(c)); ctx.lineTo(sx(c + 1), sy(c + 1));
+      ctx.strokeStyle = isIce[c] ? '#bfe9ff' : bh.grass;
+      ctx.lineWidth = isIce[c] ? 3.2 : 2.2;
+      ctx.lineCap = 'round';
+      ctx.stroke();
     }
-    ctx.strokeStyle = bh.grass; ctx.lineWidth = 1.6; ctx.stroke();
+    // 冰面：加几道短斜线，和草皮区分开（不靠颜色也能认）
+    for (let c = 0; c + 1 < cols; c++) {
+      if (!isIce[c]) continue;
+      ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1;
+      const mx = (sx(c) + sx(c + 1)) / 2, my = (sy(c) + sy(c + 1)) / 2;
+      ctx.beginPath();
+      ctx.moveTo(mx - 2, my + 3); ctx.lineTo(mx + 2, my - 1); ctx.stroke();
+    }
 
-    // 起点 / 终点
+    // 木箱
+    (lv.boxes || []).forEach(b => {
+      const c = Math.max(0, Math.min(cols - 1, b.col));
+      const bx2 = sx(c), by2 = sy(c) - 4;
+      ctx.fillStyle = '#d9a441';
+      roundRect(bx2 - 3, by2 - 5, 6, 6, 1.5); ctx.fill();
+      ctx.strokeStyle = 'rgba(120,80,20,.9)'; ctx.lineWidth = 1;
+      roundRect(bx2 - 3, by2 - 5, 6, 6, 1.5); ctx.stroke();
+    });
+
+    // 起点 / 终点：起终点用小圆点 + 旗，跟场上一致
     const sc = Math.max(0, Math.min(cols - 1, (lv.start && lv.start.col) || 0));
     const gc = Math.max(0, Math.min(cols - 1, (lv.goal && lv.goal.col) || cols - 1));
-    const sx2 = x + (sc / Math.max(1, cols - 1)) * w;
-    const gx2 = x + (gc / Math.max(1, cols - 1)) * w;
-    const sy2 = y + h - ((maxRow - top[sc]) / maxRow) * h;
-    const gy2 = y + h - ((maxRow - top[gc]) / maxRow) * h;
     ctx.fillStyle = '#63d97e';
-    ctx.beginPath(); ctx.arc(sx2, Math.max(y + 3, sy2 - 3), 3, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#e2574c';
+    ctx.beginPath(); ctx.arc(sx(sc), Math.max(y + 4, sy(sc) - 4), 3.2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#e8f0e0'; ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(gx2, Math.max(y + 3, gy2 - 3));
-    ctx.lineTo(gx2, Math.max(y + 3, gy2 - 13));
-    ctx.lineTo(gx2 + 8, Math.max(y + 3, gy2 - 9));
+    ctx.moveTo(sx(gc), Math.max(y + 4, sy(gc) - 2));
+    ctx.lineTo(sx(gc), Math.max(y + 4, sy(gc) - 15)); ctx.stroke();
+    ctx.fillStyle = COL.flag;
+    ctx.beginPath();
+    ctx.moveTo(sx(gc), Math.max(y + 4, sy(gc) - 15));
+    ctx.lineTo(sx(gc) + 8, Math.max(y + 4, sy(gc) - 12));
+    ctx.lineTo(sx(gc), Math.max(y + 4, sy(gc) - 9));
     ctx.closePath(); ctx.fill();
 
     ctx.strokeStyle = 'rgba(232,200,122,.25)'; ctx.lineWidth = 1;
-    roundRect(x, y, w, h, 5); ctx.stroke();
+    roundRect(x, y, w, h, 6); ctx.stroke();
   }
 
   function drawLevelSelect() {
@@ -2785,11 +2815,11 @@ const BIOMES = {
       text('★★★：' + (chNames[(lv.challenge || {}).type] || '—'),
         x + CW / 2, y + 166, 11, '#8fb6c9', 'center');
       // 零件箱
-      // 地形缩略图
-      drawLevelThumb(lv, x + 12, y + 176, CW - 24, 44);
+      // 地形缩略图：从 44px 加高到 56px，能看出坡度和坑的深浅
+      drawLevelThumb(lv, x + 12, y + 172, CW - 24, 56);
       const boxTxt = Object.keys(lv.partsBox || {})
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + lv.partsBox[k]).join(' ');
-      text(boxTxt, x + CW / 2, y + 236, 10, 'rgba(212,228,240,.82)', 'center');
+      text(boxTxt, x + CW / 2, y + 240, 10, 'rgba(212,228,240,.82)', 'center');
     });
     // 底部进度条带：填掉卡片下方的大片空白，同时给一个"总进度"的目标感
     {
