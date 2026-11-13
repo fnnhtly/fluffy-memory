@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const A = require('./lib/asserts');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9463;
 const ROOT = path.join(__dirname, '..');
@@ -67,10 +68,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     return s / n;
   })()`);
 
-  const out = [];
-  const ok = (l, c, x) => out.push((c ? '✓ ' : '✗ ') + l + (x ? '  ' + x : ''));
-  let bad = 0;
-  const chk = (l, c, x) => { ok(l, c, x); if (!c) bad++; };
+  const chk = (l, c, x) => A.chk(l, c, x);
 
   await ev('window.__rap.state.introT=1'); await sleep(200);
 
@@ -129,9 +127,5 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await click(pb.x, pb.y);
   chk('横幅期间点暂停仍有效', (await ev('window.__rap.state.paused')) === true);
 
-  console.log(out.join('\n'));
-  console.log(bad ? ('FAIL ' + bad) : 'ALL PASS');
-  console.log('errors:', errs.length ? errs.join(' | ') : '(none)');
-  ws.close(); child.kill();
-  process.exit(bad === 0 && errs.length === 0 ? 0 : 1);
+  A.finish(ws, child, errs);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

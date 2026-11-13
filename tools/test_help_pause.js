@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const A = require('./lib/asserts');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9341;
 const ROOT = path.join(__dirname, '..');
@@ -55,7 +56,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const center = async expr => JSON.parse(await ev(`(()=>{const r=${expr};return JSON.stringify({x:r.x+r.w/2,y:r.y+r.h/2});})()`));
 
   const out = [];
-  const ok = (label, cond, extra) => out.push((cond ? '✓ ' : '✗ ') + label + (extra ? '  ' + extra : ''));
+  const ok = (label, cond, extra) => { A.chk(label, cond, extra); };
 
   // 初始状态：intro 结束
   await ev('window.__rap.state.introT=1');
@@ -132,9 +133,5 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await click(640, 360);
   ok('暂停逻辑没影响说明面板', await ev('window.__rap.state.helpOpen') === false);
 
-  console.log(out.join('\n'));
-  const bad = out.filter(s => s.startsWith('✗'));
-  console.log(bad.length ? ('FAIL ' + bad.length) : 'ALL PASS');
-  console.log('errors:', errs.length ? errs.join(' | ') : '(none)');
-  ws.close(); child.kill(); process.exit(bad.length ? 1 : 0);
+  A.finish(ws, child, errs);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

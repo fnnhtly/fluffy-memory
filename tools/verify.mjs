@@ -14,6 +14,9 @@
 import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+const require2 = createRequire(import.meta.url);
+const { verdict } = require2('./lib/verdict.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -34,6 +37,7 @@ const SCRIPTS = [
   'test_run_banner.js',
   'test_fullplay.js',
   'test_drive_sequence.js',
+  'test_replay.js',
   'test_wheel_spin.js',
   'test_touch_fx.js',
   'test_touch_all.js'
@@ -93,6 +97,22 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
 }
 
+// 3e) 公共断言器自检（整套回归的地基）
+{
+  const r = run(process.execPath, [path.join('tools', 'selftest_asserts.js')], '断言器自检');
+  const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
+  const pass = !!(m && m[2] === '0' && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
+}
+
+// 3f) 通过判定规则自检（证明 verify 自己抓得住"假绿"）
+{
+  const r = run(process.execPath, [path.join('tools', 'selftest_verdict.js')], '通过判定自检');
+  const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
+  const pass = !!(m && m[2] === '0' && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
+}
+
 // 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字 / 出卡）
 if (!fast) {
   const r = run(process.execPath, [path.join('tools', 'test_layout_audit.js')], '排版审计');
@@ -129,12 +149,14 @@ if (!fast) {
 }
 
 // 5) 交互脚本
+//    判定规则抽到 tools/lib/verdict.js（它自己有 selftest_verdict.js 证明能失败）：
+//      a. 退出码 0；b. 0 控制台异常；c. 必须打出 `ASSERTS n / n` 且 n>0。
+//    没有 ASSERTS 行 = 退回了"只打印不判定"，直接算失败。
 if (!fast) {
   for (const s of SCRIPTS) {
     const r = run(process.execPath, [path.join('tools', s)], s.replace('.js', ''));
-    const hasErr = /errors: \(none\)/.test(r.out);
-    const passLine = /PASS[：:]/.test(r.out);
-    results.push({ ...r, ok: r.ok && hasErr, detail: hasErr ? (passLine ? 'PASS + 0 异常' : '0 异常') : '有异常/超时' });
+    const v = verdict(r.out, r.ok);
+    results.push({ ...r, ok: v.ok, detail: v.reason });
   }
 }
 

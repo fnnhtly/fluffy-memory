@@ -90,6 +90,9 @@
     // 缩放：1 设计像素 = w/VIEW_W 实际像素
     const sx = w / VIEW_W, sy = h / VIEW_H;
     ctx.setTransform(sx, 0, 0, sy, VIEW_OFF_X * sx, VIEW_OFF_Y * sy);
+    // 供测试核对"设计区是否完整可见"（宽高比变化时靠扩展可视范围来 cover）
+    window.__view = { W: VIEW_W, H: VIEW_H, offX: VIEW_OFF_X, offY: VIEW_OFF_Y,
+                      cssW: cssW, cssH: cssH, pxW: w, pxH: h, dpr: dpr, scale: scale };
   }
 
   // ---------- 视觉参数 ----------
@@ -1666,6 +1669,7 @@ const BIOMES = {
       }
       const p = at(k);
       drawDirArrow(p.x, p.y, cell.dir || 0, BUILD_PX, RAP.PARTS[cell.part].color, isHover);
+      state.arrowDrawN = (state.arrowDrawN || 0) + 1;   // 供测试统计"这一帧画了几个箭头"
       if (isHover) {
         const vv = RAP.dirVec(cell.dir || 0);
         const wd = { '1,0': '右', '-1,0': '左', '0,1': '上', '0,-1': '下' }[vv[0] + ',' + vv[1]] || '';
@@ -3023,10 +3027,12 @@ const BIOMES = {
   }
   function frameBody(now) {
     applyCanvasSize();
+    state.frameCount = (state.frameCount || 0) + 1;   // 只用于"rAF 还活着吗"这类测试
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (state.toastT > 0) state.toastT -= dt;
     if (state.runBanner > 0) state.runBanner = Math.max(0, state.runBanner - dt);
+    state.arrowDrawN = 0;      // 每帧重置：方向箭头只在建造期画，测试靠它确认
 
     ctx.clearRect(-VIEW_OFF_X - 2, -VIEW_OFF_Y - 2, VIEW_W + 4, VIEW_H + 4);
     if (state.phase === 'build') {
@@ -3046,6 +3052,9 @@ const BIOMES = {
         cam.y = wide.y + (cam.y - wide.y) * k;
         cam.zoom = wide.zoom + (cam.zoom - wide.zoom) * k;
       }
+      // 记录"这一帧真正用的镜头"，供测试核对推镜幅度（buildCam() 每帧新建对象，
+      // 光看 state.cam 永远是终值，测不出推镜有没有跑）
+      state.camLive = { x: cam.x, y: cam.y, zoom: cam.zoom };
       drawWorld(ter, cam);
       // 建造阶段的场景压暗：让拼装区成为视觉主体（原样太亮，网格糊在风景里）
       if (state.introT > 0.2) {
@@ -3237,7 +3246,8 @@ const BIOMES = {
   } catch (e) { state.welcome = 1; }
 
   window.__rap = { state, RAP, levels, startLevel, launch, buildOrigin, BUILD_PX, cellAt, canvasPos,
-                   trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect };
+                   trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,
+                   welcomeSkipRect, levelCardRect };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
