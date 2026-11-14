@@ -2307,6 +2307,23 @@ const BIOMES = {
     });
   }
 
+  /* 打气筒的蓄力进度（0~1，按 0.8 秒到顶）。
+   *
+   * 抽成函数而不是散在绘制里，是为了让测试能**读同一个数**去断言"镀环画对了"——
+   * 上一轮的木框耐久条就是靠这个办法才让像素测试和渲染同源的。
+   * 返回 -1 表示"这一帧根本没有被按住的打气筒"（没装、没按、或不是打气筒）。
+   */
+  function pumpChargeOf(run) {
+    if (!run || !run.car) return -1;
+    var gs = run.car.groups || [];
+    for (var i = 0; i < gs.length; i++) {
+      if (gs[i].part === 'pump' && gs[i].on) {
+        return Math.max(0, Math.min(1, (run.car.pumpCharge || 0) / 0.8));
+      }
+    }
+    return -1;
+  }
+
   function drawButtons() {
     if (state.phase === 'build') {
       const L = btnRect('launch'), C = btnRect('clear'), U = btnRect('undo');
@@ -2392,6 +2409,15 @@ const BIOMES = {
       const groups = state.run.car.groups || [];
       const n = Math.min(3, groups.length);
       const x0 = DW / 2 - (n * 104) / 2;
+      /* 打气筒的蓄力进度。探针实测（tools/probe_pump_charge_feedback.js）：
+       * 按住蓄力到满、松手放气，交互钮那块 92×92 的画面变化量是 143 像素，
+       * 而以**同样的等待时长**取的两次静置之间就有 104 像素的噪声
+       * —— 两者同一量级，也就是说"按住"这件事在画面上什么都没发生。
+       *
+       * 可这一关的玩法就是"按多久决定推多大"（0.35 倍 vs 1.0 倍，接近 3 倍差）。
+       * 玩家完全没有依据判断"该松手了"，只能数秒。
+       * 现在按钮外圈加一道镀环：越满越接近闭合，还差最后一段时会闪。 */
+      const pc = pumpChargeOf(state.run);
       for (let i = 0; i < n; i++) {
         const g = groups[i];
         const rect = { x: x0 + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
@@ -2399,6 +2425,27 @@ const BIOMES = {
         ctx.fillStyle = 'rgba(10,18,24,.55)'; roundRect(rect.x - 4, rect.y - 4, rect.w + 8, rect.h + 8, 18); ctx.fill();
         ctx.fillStyle = g.color; roundRect(rect.x, rect.y, rect.w, rect.h, 15); ctx.fill();
         ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 2; ctx.stroke();
+        if (pc >= 0 && g.part === 'pump') {
+          /* 蓄力环：贴着按钮外沿画一段圆弧，从正上方顺时针填充。
+           * 底色先压一圈暗的，让"还差多少"有个刻度感；
+           * 满了之后转成金色并加一层呼吸光晕 —— 那正是"可以松手了"的信号。 */
+          const cx2 = rect.x + rect.w / 2, cy2 = rect.y + rect.h / 2;
+          const rr = rect.w / 2 + 7;
+          ctx.strokeStyle = 'rgba(8,18,26,.72)'; ctx.lineWidth = 7;
+          ctx.beginPath(); ctx.arc(cx2, cy2, rr, 0, Math.PI * 2); ctx.stroke();
+          const full = pc >= 0.98;
+          ctx.strokeStyle = full ? '#ffe9b0' : '#7fd4ff';
+          ctx.lineWidth = 6; ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.arc(cx2, cy2, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pc);
+          ctx.stroke();
+          if (full) {
+            const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 110);
+            ctx.strokeStyle = 'rgba(255,233,176,' + (0.18 + 0.32 * pulse).toFixed(3) + ')';
+            ctx.lineWidth = 11;
+            ctx.beginPath(); ctx.arc(cx2, cy2, rr, 0, Math.PI * 2); ctx.stroke();
+          }
+        }
         text(RAP.PARTS[g.part].label, rect.x + rect.w / 2, rect.y + 40, 14, '#10201a', 'center', true);
         text('×' + g.list.length, rect.x + rect.w / 2, rect.y + 62, 15, '#10201a', 'center', true);
         text(String(i + 1), rect.x + 10, rect.y + 18, 12, 'rgba(16,32,26,.75)', 'left');
@@ -4414,6 +4461,7 @@ const BIOMES = {
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
                    progressWarning, failText, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
+                   pumpChargeOf,
                    /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，
                     * 靠它才能断言"碎框走的是 structBreak 这一支"而不是靠人耳。 */
                    fxLog: () => fxLog.slice(), clearFxLog: () => { fxLog.length = 0; } };

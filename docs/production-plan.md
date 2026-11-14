@@ -44,13 +44,14 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（`tools/build_levels_js.js`） | ✅ 自洽校验通过 |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**57 项自检全绿**（44 个脚本 + 静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**58 项自检全绿**（45 个脚本 + 静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 39/39 |
 | 木框耐久可见性 | `tools/test_frame_damage.js` + `tools/probe_damage_tiers.js` | ✅ 15/15（三档像素读数：绿/金/红；掉耐久有音效与轻抖；碎后整块隐去） |
 | 撞击演出去重 | `tools/test_impact_dedupe.js` + `tools/probe_impact_spam.js` | ✅ 8/8（旧版一次硬着陆写 34 条 `impact` → 慢放/白闪反复重置；现在 22 个接触收敛成 1 条） |
 | 「裂」与「碎」反馈分离 | `tools/test_break_sfx.js` | ✅ 8/8（裂纹走 `crack`、碎框走 `structBreak`，一次撞击只响一声；碎框此前与"撞了一下"听起来一模一样） |
 | 按住蓄力可用性 | `tools/test_hold_key.js` + `tools/test_button_release.js` | ✅ 6/6 + 7/7（auto-repeat 曾把 `pumpPress` 顶到 17 → 1-2 三星永远拿不到；滑出按钮松手曾让 `pumpHeld` 永远卡住） |
 | 刹车键松开 | `tools/test_brake_release.js` | ✅ 8/8（按住 S 松手后仍一直刹着，整局开不动；auto-repeat 也曾把 `brake on` 写成 13 条） |
+| 打气筒蓄力可见 | `tools/test_pump_charge_ring.js` + `tools/probe_pump_charge_feedback.js` | ✅ 12/12（蓄力时按钮外沿蓝弧→满时金环；此前按住 0.8 秒画面变化量与噪声底同量级） |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
 | 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |
 | 失败回放可见性 | `tools/test_replay_parts.js` | ✅ 9/9（像素对照：有气球 vs 没气球差 5900 点） |
