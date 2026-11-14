@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>滚蛋吧！猪 · 垂直切片演示（1-1 ~ 1-5）</title>
+<title>滚蛋吧！猪 · 垂直切片演示（1-1 ~ 1-6）</title>
 <style>
   html, body { margin: 0; padding: 0; background: #10161c; overflow: hidden;
     font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
@@ -281,6 +281,9 @@
         const f = 440 + (h || 0) * 260;
         tone(f, 0.07, 'square', 0.07);
       },
+      /* 卸下（拖出网格松手）：和"放下"反着来 —— 音高往下走、更轻。
+       * 玩家要能听出"这次不是放，是拿走"。 */
+      remove() { tone(380, 0.08, 'triangle', 0.07, 210); },
       deny() { tone(180, 0.12, 'sawtooth', 0.07, 120); },
       launch() { noise(0.25, 0.09); tone(220, 0.25, 'sine', 0.09, 520); },
       box() { tone(880, 0.09, 'sine', 0.1); tone(1320, 0.09, 'sine', 0.06); },
@@ -803,7 +806,13 @@
         const key = pc.r + ',' + pc.c;
         const there = state.build.cells[key];
         if (there) {
-          state.dragMove = { r: pc.r, c: pc.c, part: there.part, dir: there.dir || 0, inner: there.inner || null };
+          /* `n` 必须跟着一起搬走。
+           * 原来这里是 `{ r, c, part, dir, inner }` —— 没有 n，落子时写回的也是
+           * `{ part, dir }`。于是"把 3 个气球拖到另一个格子"会变成 1 个，
+           * 另外 2 个静悄悄回到待使用：一次拖动**既改位置又改数量**，还没提示。
+           * 叠放是这个游戏唯一的数量载体，丢了它就是丢了玩家的意图。 */
+          state.dragMove = { r: pc.r, c: pc.c, part: there.part, dir: there.dir || 0,
+                             n: there.n, inner: there.inner || null };
           delete state.build.cells[key];
           let idx = state.build.order.indexOf(key);
           if (idx >= 0) state.build.order.splice(idx, 1);
@@ -858,7 +867,9 @@
         const occupied = !!state.build.cells[key];
         const samePlace = (cell.r === mv.r && cell.c === mv.c);
         if (!occupied || samePlace) {
-          state.build.cells[key] = { part: mv.part, dir: mv.dir };
+          /* n 必须原样带走（see mousemove 里那段注释）：叠放是数量的唯一载体，
+           * 挪个位置把 3 个气球变成 1 个，等于悄悄扣了玩家两个零件。 */
+          state.build.cells[key] = { part: mv.part, dir: mv.dir, n: mv.n };
           if (mv.inner) state.build.cells[key].inner = mv.inner;
           state.build.order.push(key);
           if (mv.inner) state.build.order.push('inner:' + key);
@@ -866,13 +877,32 @@
         }
       }
       if (!placed) {
-        // 放不进去 → 放回原处（并播放弹回动画）
-        state.bounce = { x: p.x, y: p.y, t: 0, part: mv.part };
-        const key = mv.r + ',' + mv.c;
-        state.build.cells[key] = { part: mv.part, dir: mv.dir };
-        if (mv.inner) state.build.cells[key].inner = mv.inner;
-        state.build.order.push(key);
-        if (mv.inner) state.build.order.push('inner:' + key);
+        /* 拖到网格**外面** = 卸下，回到待使用。
+         *
+         * 原来这里一律"弹回原处"：玩家把一个气球从车上拖到画面外松手，
+         * 它会自己飞回去继续挂在车上 —— 而格子外面明明是"不要它了"的意思。
+         * 现在的语义分成两种，因为它们真的是两件事：
+         *   · 松手落在网格外（含托盘上）→ **卸下**，零件回到待使用；
+         *   · 松手落在网格内但那一格占着  → 放不进去，弹回原处（移动失败，不是卸载）。
+         * 卸下不需要额外记账：待使用数量是从 cells 推导出来的（budgetLeft），
+         * 只要不把格子写回去，数量自然就回来了。 */
+        if (!cell) {
+          state.bounce = { x: p.x, y: p.y, t: 0, part: mv.part, n: mv.n };
+          SFX.remove();
+          const nm = RAP.PARTS[mv.part] ? RAP.PARTS[mv.part].label : mv.part;
+          toast('已卸下 ' + nm + (mv.n > 1 ? ' ×' + mv.n : ''));
+        } else {
+          /* 网格内但这一格占着 → 放不进去，弹回原处。
+           * 这里**不放飞回托盘的动画**：零件其实上一帧就写回原格了，
+           * 动画飞到托盘再消失，看起来像"被卸载了" —— 而它明明还在车上。 */
+          SFX.deny();
+          const key = mv.r + ',' + mv.c;
+          state.build.cells[key] = { part: mv.part, dir: mv.dir, n: mv.n };
+          if (mv.inner) state.build.cells[key].inner = mv.inner;
+          state.build.order.push(key);
+          if (mv.inner) state.build.order.push('inner:' + key);
+          toast('那一格占着：' + (RAP.PARTS[mv.part] ? RAP.PARTS[mv.part].label : mv.part) + ' 放回原处');
+        }
       } else {
         SFX.place();
       }
@@ -1463,6 +1493,23 @@ const BIOMES = {
         ctx.strokeStyle = okHere ? 'rgba(150,240,170,.9)' : 'rgba(255,150,130,.9)';
         ctx.lineWidth = 2.5;
         roundRect(cx0 + 2, cy0 + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.stroke();
+      } else if (state.dragMove) {
+        /* 拖动中但光标已经出了网格 → 提前说"松手就卸下"。
+         *
+         * 不加这一句的话，玩家把零件拖到网格边上时看到的是一片没有任何反馈的
+         * 空地，而松手的后果（零件从车上卸下来）是**不可撤销**的（只能再放回去）。
+         * 提示紧贴光标，因为这时候玩家的视线就在光标上。 */
+        const nm = RAP.PARTS[state.dragMove.part] ? RAP.PARTS[state.dragMove.part].label : '';
+        const txt = '松手卸下' + (nm ? ' ' + nm : '') +
+          (state.dragMove.n > 1 ? ' ×' + state.dragMove.n : '');
+        const tw = txt.length * 13 + 26;
+        const bx2 = Math.max(6, Math.min(DW - tw - 6, state.mouse.x + 18));
+        const by2 = Math.max(6, state.mouse.y - 40);
+        ctx.fillStyle = 'rgba(16,30,40,.95)';
+        roundRect(bx2, by2, tw, 26, 8); ctx.fill();
+        ctx.strokeStyle = 'rgba(232,200,122,.6)'; ctx.lineWidth = 1.5;
+        roundRect(bx2, by2, tw, 26, 8); ctx.stroke();
+        text(txt, bx2 + tw / 2, by2 + 17, 12.5, '#ffe9b0', 'center', true);
       }
     }
 
@@ -2431,7 +2478,11 @@ const BIOMES = {
       // 操作提示（画布内，放最底部一行，不与零件槽重叠）
       // 操作提示：加深色底衬，保证在任何地貌上都看得清
       {
-        const tipTxt = '左键放件 · 拖动可移动 · 右键/R 换方向 · Z 撤销 · C 清空 · 空格出发 · T 调参 · H 零件说明 · L 选关';
+        /* 拖出网格 = 卸下，这条是**新语义**（第 43 轮才有的），必须写在这里：
+         * 它不是"顺手提醒"，而是一个玩家猜不到的手势。
+         * 原来这里只写"拖动可移动"—— 那会让人以为拖出去也能"移"，
+         * 松手才发现零件没了。 */
+        const tipTxt = '左键放件 · 拖动可移动 · 拖出网格=卸下 · 右键/R 换方向 · Z 撤销 · C 清空 · 空格出发 · T 调参 · H 零件说明 · L 选关';
         ctx.font = '10.5px "Microsoft YaHei", sans-serif';
         const tw = ctx.measureText(tipTxt).width;
         ctx.fillStyle = 'rgba(10,18,24,.66)';
@@ -2822,7 +2873,7 @@ const BIOMES = {
       ctx.fillStyle = '#e8816a';
       roundRect(barX, barY, Math.max(6, barW * prog), 10, 5); ctx.fill();
 
-      // 标题
+      // 标题（回放这一屏不追"还剩几个沙袋"，标题会变长压到进度条；归因写在结算卡上）
       text('回放 · ' + failText(st.failReason), DW / 2, 120, 22, '#ffb4a2', 'center', true);
       /* 副标题原来写 `speed + '× 慢放'`，改成"压进固定时长"之后 speed 就不是
        * 那个意思了（60 帧 / 2.8 秒 ≈ 实速），继续写"0.45× 慢放"是骗人的。
@@ -2840,6 +2891,31 @@ const BIOMES = {
         ctx.globalAlpha = 1;
       }
     }
+  }
+
+  /* 失败原因的**具体化**：把"卡住了：动力或重心不对"翻译成
+   * "你还剩 3 个沙袋没扔"。
+   *
+   * 这是量出来的：`probe_1_6_inaction.js` 跑了 1-6 的三种玩家 ——
+   *   一个沙袋都不扔      → fail stuck @14.27s
+   *   扔了但没扎气球      → fail flew_away @11.87s
+   *   扔了也扎了（标准解）→ win  @12.53s
+   * 也就是说 1-6 里"啥也不干"的失败文案是「卡住了：动力或重心不对」。
+   * 车上明明挂着 3 个沙袋、6 个气球，一个都没动 —— 这句诊断是**错的**，
+   * 玩家会去改轮子、加马达（这一关根本没有马达）。
+   *
+   * 判据只看"车上还剩什么"，不需要任何新状态：车停下时如果还有沙袋，
+   * 那就是最可能的原因；还有气球没扎，也一样。两句话必须能同时出现，
+   * 因为它们说的是两件不同的事（减重 / 减浮力）。 */
+  function failCulprit(st) {
+    if (!st || !st.car) return '';
+    const bags = st.car.sandbagCount || 0;
+    const bal = (st.car.parts || []).filter(p => p.def && p.def.liftMass)
+      .reduce((a, p) => a + (p.n || 0), 0);
+    const tips = [];
+    if (bags > 0) tips.push('还剩 ' + bags + ' 个沙袋没扔（点车身）');
+    if (bal > 0) tips.push('还剩 ' + bal + ' 个气球没扎（点车身）');
+    return tips.join('，');
   }
 
   function failText(reason) {
@@ -3007,8 +3083,17 @@ const BIOMES = {
     text('本关 ★ ' + starsOf(tgoals) + ' / 3　总计 ★ ' + totalStars() + ' / ' + (levels.length * 3),
       X + W / 2, cardY + 428, 13, 'rgba(200,222,238,.85)', 'center');
 
-    if (!win) text('原因：' + failText(st.failReason), X + 42, cardY + 352, 15, '#ffc9bb', 'left');
-    else {
+    if (!win) {
+      /* 失败原因分两行：第一行是引擎判的**类**（卡住 / 没进展 / 飘走），
+       * 第二行是这一局**具体还剩什么没做**。合成一行会到 40 多个字，
+       * 760px 的卡面装不下（probe_hud_text 量到的"文字墙"阈值是 700px）。 */
+      text('原因：' + failText(st.failReason), X + 42, cardY + 344, 15, '#ffc9bb', 'left');
+      const tip = failCulprit(st);
+      if (tip && (st.failReason === 'stuck' || st.failReason === 'no_progress' ||
+                  st.failReason === 'timeout')) {
+        text('还能试：' + tip, X + 42, cardY + 366, 13, '#ffe9b0', 'left');
+      }
+    } else {
       // 列出这一局**没**点亮的那几颗，并直接说清怎么拿
       const missing = GOALS.filter(k => !tgoals[k]);
       if (!missing.length) {
@@ -3099,12 +3184,18 @@ const BIOMES = {
        * 现在 0 就明说「已拿满」，不再假装在攒钱。 */
       const coins = state.coinGain || 0;
       const badgeX = X + W - 190;
-      ctx.fillStyle = coins > 0 ? '#f0c040' : 'rgba(150,168,182,.55)';
-      ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = coins > 0 ? '#8a6a10' : 'rgba(90,104,116,.7)';
-      ctx.beginPath(); ctx.arc(badgeX, cy2, 9, 0, Math.PI * 2); ctx.fill();
-      if (coins > 0) text('+' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
-      else text('已拿满', badgeX + 24, cy2 + 6, 14, 'rgba(190,208,222,.8)', 'left', true);
+      /* 失败局**什么都不写**：既不许写 +N（钱没进），也不许写「已拿满」——
+       * 后者是"这一关你已经全拿到了"的意思，放在失败卡上读起来像在嘲讽。
+       * 这条是 tools/probe_fail_card.js 抓出来的：第一版把 else 分支写成了
+       * 无条件「已拿满」，于是失败卡上同时出现「这一趟失败了」和「已拿满」。 */
+      if (win) {
+        ctx.fillStyle = coins > 0 ? '#f0c040' : 'rgba(150,168,182,.55)';
+        ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = coins > 0 ? '#8a6a10' : 'rgba(90,104,116,.7)';
+        ctx.beginPath(); ctx.arc(badgeX, cy2, 9, 0, Math.PI * 2); ctx.fill();
+        if (coins > 0) text('+' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
+        else text('已拿满', badgeX + 24, cy2 + 6, 14, 'rgba(190,208,222,.8)', 'left', true);
+      }
       // 评级：看**累计**星数（累计 3 星 = S），而不是这一局
       const accStars = starsOf(tgoals);
       const grade = !win ? 'F' : (accStars >= 3 ? 'S' : (accStars === 2 ? 'A' : 'B'));
@@ -3179,7 +3270,7 @@ const BIOMES = {
         '左上红钮 = 暂停，绿钮 = 回建造（零件保留）',
         '右下「刹」= 按住刹车，随时能停',
         '底部彩色按钮 = 同色同类零件一起启动（打气筒等）',
-        '',
+        '已装的零件拖出网格松手 = 卸下，回到待使用',
         '★ 通关　★★ 拿到木箱　★★★ 每关的特殊条件',
         '按 L 打开选关，进度会保存。'
       ],
