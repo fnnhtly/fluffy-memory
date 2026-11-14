@@ -181,6 +181,25 @@ console.log('\n=== 气球碰地自动破 ===');
   /* 一帧最多炸一个：否则一次落地就把 3 个气球全泄了，玩家看不到过程。 */
   R.step(st, 1 / 60);
   ok(st.balloonPopsBurst <= 2, '一帧最多炸一个（不会一次全泄）', `两帧后 burst=${st.balloonPopsBurst}`);
+  /* 计数器要**累计**。
+   * 这里抓过一个真 bug：碰地破那段写成了 `state.car.balloonPopsBurst`（读车）
+   * 却写 `state.balloonPopsBurst`（写状态）—— 读那边永远 undefined → before 恒为 0
+   * → 连炸 6 个也只记成 1。HUD 的「已扎 N 个」读的就是这个字段。
+   * 一条断言就够：炸两个之后，计数必须是 2，不是 1。 */
+  {
+    const b2 = R.newBuild();
+    const lv2 = flatLevel();
+    for (const c of [1, 2, 3]) R.tryPlace(lv2, b2, 'wood_frame', 4, c);
+    R.tryPlace(lv2, b2, 'wood_wheel', 5, 1);
+    R.tryPlace(lv2, b2, 'wood_wheel', 5, 3);
+    R.tryPlace(lv2, b2, 'pig', 4, 2);
+    stack(lv2, b2, 'balloon', 3, 2, 3);
+    const st2 = R.createRun(lv2, b2);
+    st2.car.y = st2.terrain.surfaceY(st2.car.x) - 1.2;
+    for (let i = 0; i < 3; i++) R.step(st2, 1 / 60);
+    ok(st2.balloonPopsBurst === 3,
+      '碰地连炸 3 帧 → 计数器累计到 3（不是恒为 1）', `burst=${st2.balloonPopsBurst}`);
+  }
 }
 
 console.log('\n=== 天花板 flew_away ===');

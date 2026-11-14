@@ -1032,10 +1032,15 @@
     for (var bi2 = 0; bi2 < balloons.length; bi2++) {
       var bp = worldOf(car, balloons[bi2].lx, balloons[bi2].ly);
       if (bp.y - 0.3 <= ter.surfaceY(bp.x)) {
-        var before = state.car.balloonPopsBurst || 0;
+        /* 这里原来写的是 `state.car.balloonPopsBurst`（读车）却写 `state.balloonPopsBurst`
+         * （写状态）—— 读的那一边永远是 undefined → `before` 恒为 0 → 碰地破 6 个
+         * 也只记成 1 个。HUD 的「已扎 N 个」就是读这个字段，于是一路显示 1。
+         * 计数器和它自己被读的地方必须同一个对象。 */
+        var before = state.balloonPopsBurst || 0;
+        /* spawnBurst 由 popBalloon 自己发（主动扎和碰地扎共用一条事件），
+         * 这里再发一次就会在同一帧写两条 burst，渲染层炸两遍。 */
         if (popBalloon(state, balloons[bi2])) {
           state.balloonPopsBurst = before + 1;
-          spawnBurst(state, bp.x, bp.y);
         }
         break;                 // 一帧最多破一个，免得一次全破光（那是"失败"不是"反馈"）
       }
@@ -1080,6 +1085,10 @@
       if (goalAlt <= Params.goalMaxAlt) { resolve(state, 'win'); return; }
       if (!state.overGoalLogged) {
         state.overGoalLogged = true;
+        /* 记下"第一次发现飞过终点"的时刻，HUD 要拿它弹一条提示。
+         * 没有这条提示，玩家看到的是：明明从旗子上空飞过去了，却没赢，
+         * 而且连一句解释都没有 —— 会以为是自己没到。 */
+        state.overGoalAt = state.time;
         log(state, 'over_goal alt=' + goalAlt.toFixed(1));
       }
     }

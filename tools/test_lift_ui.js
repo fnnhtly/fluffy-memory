@@ -249,6 +249,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       !/^(—|)$/.test(three.card) && !/allSandbags/.test(three.card), three.card);
   }
 
+  // ---------- 「飞过终点但没落地」必须有实时提示 ----------
+  /* 这条需求是量出来的，不是想出来的：probe_over_goal.js 显示标准解
+   * 在 t=9.47 就越过终点线、但车还在 15 米高空，到 12.53 才落回地面判赢。
+   * 中间 3 秒玩家看到的是"我已经飞过旗子了，怎么没赢？"——
+   * 必须给一个读数，而且它要**随高度消失**（不能是一次性 toast，
+   * 否则每一局正常通关都会先弹一条警告）。 */
+  {
+    const rows = JSON.parse(await ev(`(()=>{const R=window.__rap, st=window.__rap.state.run, lv=window.__rap.levels[5];
+      const out=[];
+      const base={car:{x:lv.goal.col+1,y:0},terrain:st.terrain};
+      const surf=st.terrain.surfaceY(lv.goal.col+1);
+      out.push(['远高于终点', R.overGoalNotice({car:{x:lv.goal.col+1,y:surf+8},terrain:st.terrain})]);
+      out.push(['贴着地面',   R.overGoalNotice({car:{x:lv.goal.col+1,y:surf+1.5},terrain:st.terrain})]);
+      out.push(['还没到终点', R.overGoalNotice({car:{x:lv.goal.col-3,y:surf+8},terrain:st.terrain})]);
+      return JSON.stringify({rows:out, surf});})()`));
+    A.chk('飞在终点上空 8 米 → 提示"落回地面才算到"',
+      !!rows.rows[0][1] && /落回地面/.test(rows.rows[0][1].text), JSON.stringify(rows.rows[0][1]));
+    A.chk('落回终点地面（1.5 米）→ 提示消失（赢的那一局不该有警告）',
+      rows.rows[1][1] === null, String(rows.rows[1][1]));
+    A.chk('还没到终点 → 不提这条', rows.rows[2][1] === null, String(rows.rows[2][1]));
+  }
+
   // ---------- 失败文案：flew_away 必须有中文，不能落到 key 上 ----------
   await ev(`(()=>{const s=window.__rap.state; s.phase='run';
     s.run.result='fail'; s.run.failReason='flew_away'; s.run.phase='resolved';

@@ -2139,6 +2139,21 @@ const BIOMES = {
     });
   }
 
+  /* 「飞过终点但没落地」提示条的文案。抽成纯函数是为了让测试能直接断言
+   * "什么时候该显、什么时候不该显"，而不是去数像素。
+   * probe_over_goal.js 量过：标准解在 t=9.47 越过终点线时还在 15 米高空，
+   * 到 12.53 才落回地面判赢 —— 所以这条提示在**赢的那一局**里也会出现 3 秒，
+   * 它必须是"随高度实时消失的读数"，不能做成一次性 toast。 */
+  function overGoalNotice(run) {
+    if (!run || !run.car || !run.terrain) return null;
+    const lv = level();
+    if (!lv || !lv.goal) return null;
+    if (run.car.x < lv.goal.col) return null;
+    const alt = Math.abs(run.car.y - run.terrain.surfaceY(run.car.x));
+    if (alt <= RAP.Params.goalMaxAlt) return null;
+    return { alt, text: '⚠ 还在 ' + alt.toFixed(1) + ' 米高空 —— 落回地面才算到' };
+  }
+
   function drawHud() {
     const built = RAP.buildVehicle(level(), state.build);
     const mass = built ? built.mass : 0;
@@ -2371,6 +2386,22 @@ const BIOMES = {
         ctx.strokeStyle = 'rgba(232,200,122,.35)'; ctx.lineWidth = 1; ctx.stroke();
         const rising = state.run.car.netMass < 0;
         text(liftLine, LX + LW / 2, LY + 17, 12, rising ? '#9fe08a' : '#cfe0ef', 'center');
+      }
+      /* 「飞过终点但没落地」必须做成**实时读数**而不是一次性 toast。
+       * 用 probe_over_goal.js 量过：标准解在 t=9.47 就已经越过终点线、
+       * 但车还在 15 米高空，到 12.53 才落回地面判赢 —— 也就是说
+       * "飞太高"这个状态在**赢的那一局里也要持续 3 秒**。
+       * 一次性的 toast 会在每一局正常通关时弹一条警告，纯粹是噪音。
+       * 所以这里只在"此刻真的不算到"的时候显示，落地就自动消失。 */
+      {
+        const og = overGoalNotice(state.run);
+        if (og) {
+          const w2 = 300, x2 = DW / 2 - w2 / 2, y2 = runTimeRects().box.y + 24 + 34;
+          ctx.fillStyle = 'rgba(38,16,14,.90)';
+          roundRect(x2, y2, w2, 24, 8); ctx.fill();
+          ctx.strokeStyle = 'rgba(224,129,106,.55)'; ctx.lineWidth = 1; ctx.stroke();
+          text(og.text, x2 + w2 / 2, y2 + 17, 12, '#ffb4a2', 'center');
+        }
       }
     }
 
@@ -3855,7 +3886,7 @@ const BIOMES = {
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
-                   challengeNameOf, goalNames, challengeStatus };
+                   challengeNameOf, goalNames, challengeStatus, overGoalNotice };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
