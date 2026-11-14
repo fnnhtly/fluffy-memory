@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：52 项（39 个脚本 + 静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：54 项（41 个脚本 + 静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -63,6 +63,8 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_resolve_sync.js` | 结算后物理必须停住（否则看门狗会把 `win` 改写成 `fail`） |
 | `test_lift_ui.js` | 点车身扎气球/扔沙袋真的生效、浮力徽标像素对照 |
 | `test_frame_damage.js` | 木框耐久三档（绿/金/红）的**像素**读数、掉耐久有音效与轻抖、碎后耐久条整块隐去 |
+| `test_impact_dedupe.js` | 一次硬着陆只写个位数条 `impact`（旧版会被写成 34 条 → 慢放/白闪反复重置） |
+| `test_break_sfx.js` | 木框「裂」和「碎」是两种不同的音（crack vs structBreak），且一次撞击只响一声 |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 

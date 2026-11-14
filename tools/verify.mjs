@@ -63,6 +63,8 @@ const SCRIPTS = [
   'test_touch_fx.js',
   'test_touch_all.js',
   'test_frame_damage.js',
+  'test_impact_dedupe.js',
+  'test_break_sfx.js',
   'test_perf_stable.js'
 ];
 

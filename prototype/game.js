@@ -700,10 +700,10 @@
   }
 
   function damageCar(state, vn) {
-    if (state.time < (state.spawnGrace || 0)) return;      // 出生落地不算摔
-    if (vn < Params.damageMin) return;
+    if (state.time < (state.spawnGrace || 0)) return false;   // 出生落地不算摔
+    if (vn < Params.damageMin) return false;
     // 同一段路连续磕碰只算一次（0.35 秒冷却），否则木框会被接触帧打穿
-    if (state.time - (state.lastStructHurt || -9) < 0.35) return;
+    if (state.time - (state.lastStructHurt || -9) < 0.35) return false;
     state.lastStructHurt = state.time;
     /* 伤害分档必须和"物理上真的到得了的速度"对齐。
      * 旧代码写的是 `vn > 14 ? 2 : 1`，但 Params.maxSpeed = 12 给整车速度设了硬上限，
@@ -725,28 +725,26 @@
      * 门槛本身有 2.5 倍余量：六关标准解的 max|vn| 只有 1.27 ~ 1.91。 */
     var dmg = vn >= 11 ? 9 : (vn >= 8 ? 2 : 1);
     var broken = [];
+    var frames = state.car.parts.filter(function (p) { return p.def.structure; });
+    /* 已经没有木框了（全碎了）就什么都不用做 —— 并且**必须返回 false**：
+     * 返回值的意思是"这一下真的扣了耐久"，渲染层拿它决定要不要播撞击演出。
+     * 返回 true 会让一辆已经把框撞光的车，每 0.35 秒继续播一次全屏白闪 + 慢动作
+     * （4 米自由落体实测到了第 2 条 impact，框早就没了）。 */
+    if (!frames.length) return false;
     state.car.parts.forEach(function (p) {
       if (!p.def.structure) return;
       p.hp -= dmg;
       if (p.hp <= 0) broken.push(p);
     });
-    /* 掉耐久但还没碎，也是一件"玩家必须看见"的事：木框裂了一道缝。
-     * 渲染层原来只能靠 part_broken（碎了）才知道结构受损 —— 也就是说
-     * 从 3 掉到 2、从 2 掉到 1 这两次，画面上**一声不响**，玩家要到结算页
-     * 发现「不散架」这颗星没了才回头怀疑"什么时候撞的"。
-     * 现在每次掉血都写一条事件，渲染层照样用事件流，不碰物理。 */
-    if (broken.length < state.car.parts.filter(function (p) { return p.def.structure; }).length) {
-      var alive = state.car.parts.filter(function (p) { return p.def.structure && p.hp > 0; });
-      var minHp = alive.length ? Math.min.apply(null, alive.map(function (p) { return p.hp; })) : 0;
-      log(state, 'struct_hurt v=' + vn.toFixed(1) + ' hp=' + minHp);
-    }
     if (broken.length) {
+      /* 碎了：木框从车上消失，框里的东西真的掉出来（自由体：会落地、会滚）。
+       * 这一支**不写 struct_hurt** —— 碎本身就是最重的一次"打到肉"，
+       * 再补一条会让渲染层同一瞬间叠两种开裂音效 + 两次震屏。 */
       state.hullBroken = true;      // 「不散架」星：哪怕只碎一格，这颗星就没了
       broken.forEach(function (p) {
         log(state, 'part_broken part=' + p.part + ' at=' + p.r + ',' + p.c);
       });
       var brokenKeys = broken.map(function (p) { return p.r + ',' + p.c; });
-      // 框碎了 → 框里的东西真的掉出来（自由体：会落地、会滚）
       state.car.parts.forEach(function (p) {
         if (!p.inner) return;
         if (brokenKeys.indexOf(p.host) < 0) return;
@@ -767,6 +765,15 @@
         return broken.indexOf(p) < 0 && !(p.inner && brokenKeys.indexOf(p.host) >= 0);
       });
       syncCarMass(state.car);
+    } else {
+      /* 掉耐久但还没碎，也是一件"玩家必须看见"的事：木框裂了一道缝。
+       * 渲染层原来只能靠 part_broken（碎了）才知道结构受损 —— 也就是说
+       * 从 3 掉到 2、从 2 掉到 1 这两次，画面上**一声不响**，玩家要到结算页
+       * 发现「不散架」这颗星没了才回头怀疑"什么时候撞的"。
+       * 现在每次掉血都写一条事件，渲染层照样用事件流，不碰物理。 */
+      var alive = state.car.parts.filter(function (p) { return p.def.structure && p.hp > 0; });
+      var minHp = alive.length ? Math.min.apply(null, alive.map(function (p) { return p.hp; })) : 0;
+      log(state, 'struct_hurt v=' + vn.toFixed(1) + ' hp=' + minHp);
     }
     var now = state.time;
     if (vn > 10 && now - (state.lastPigHurt || -9) > 0.6) {
@@ -775,6 +782,7 @@
       log(state, 'pig_hurt hp=' + state.pigHP);
       if (state.pigHP <= 0) resolve(state, 'pig_dead');
     }
+    return true;   // 这一下真的扣了耐久（impact 事件挂在这个返回值上）
   }
 
   // 自由体（掉出来的小猪/电池）：重力 + 落地弹跳 + 滚动
@@ -1018,8 +1026,21 @@
           }
           if (vn < -0.8) {
             if (Math.abs(vn) > Params.damageMin) {
-              log(state, 'impact v=' + Math.abs(vn).toFixed(1) + ' at=' + w.r + ',' + w.c);
-              damageCar(state, Math.abs(vn));
+              /* 只在**真的扣了耐久**时才写 impact。
+               *
+               * 渲染层对每一条 impact 做的是一整套大演出：
+               *   slowmo = 0.35、shake += 0.85、flash = 1、vignette = 1、撒碎屑
+               * 而 impact 原来**没有任何去重**：物理每帧 4 个子步 × 每个轮子都可能满足
+               * 条件，一次硬着陆实测能连写 **34 条**（tools/probe_impact_spam.js）。
+               * 后果是慢动作被反复重置、震屏叠到上限、碎屑撒 34 次（340 颗）——
+               * 同一时刻玩家看到的不是"撞了一下"，是一段糊掉的白屏。
+               *
+               * 而 damageCar 自己本来就有 0.35 秒冷却，所以"真的扣了耐久"
+               * 天然就是去重过的。把 impact 挂在这个返回值上，
+               * 一次撞击 = 一条事件，语义也对（impact 的意思就是"这一下打到肉了"）。 */
+              if (damageCar(state, Math.abs(vn))) {
+                log(state, 'impact v=' + Math.abs(vn).toFixed(1) + ' at=' + w.r + ',' + w.c);
+              }
             }
           }
         }
@@ -1069,7 +1090,12 @@
           fy += ny2 * N2 + tY * Ft2;
           tq += rx2 * (ny2 * N2 + tY * Ft2) - ry2 * (nx2 * N2 + tX * Ft2);
           if (Params.collectContacts) Params.collectContacts.push(+Math.abs(vn2).toFixed(2));
-          if (vn2 < -Params.damageMin) { log(state, 'impact v=' + Math.abs(vn2).toFixed(1) + ' at=chassis'); damageCar(state, Math.abs(vn2)); }
+          if (vn2 < -Params.damageMin) {
+            // 同轮子那条一样：一条 impact = 一次真的扣耐久（damageCar 自带 0.35 秒冷却）
+            if (damageCar(state, Math.abs(vn2))) {
+              log(state, 'impact v=' + Math.abs(vn2).toFixed(1) + ' at=chassis');
+            }
+          }
         }
       }
 

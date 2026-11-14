@@ -243,6 +243,18 @@
   const level = () => levels[state.levelIndex];
 
   // ---------- 音效：WebAudio 现场合成，不依赖任何素材 ----------
+  /* 音效调用记录（给测试读的，最多留 24 条）。
+   *
+   * 为什么需要它：SFX 走的是 WebAudio，测试**读不到声音**。
+   * 于是"碎框有一声专属音"这种改动，在自动化里本来是没法验的 ——
+   * 只能靠人听。有了这个环形记录，测试可以断言"碎框那一下触发的是
+   * structBreak 而不是 crack/impact 的那一支"，也就是**分支被走对了**。
+   * 它只存名字，不参与任何逻辑。 */
+  const fxLog = [];
+  function logFx(name) {
+    fxLog.push(name);
+    if (fxLog.length > 24) fxLog.shift();
+  }
   const SFX = (() => {
     let ac = null;
     let ROLL = null;
@@ -300,7 +312,17 @@
       /* 木框掉耐久（还没碎）：木头裂开的"咔"。
        * 和 SFX.hurt 分开 —— hurt 是猪被撞疼（红），crack 是结构受损（棕）。
        * 两者在同一个时间点可能都发生，用同一个音就分不清"谁受伤了"。 */
-      crack() { noise(0.07, 0.10); tone(240, 0.13, 'square', 0.07, 110); },
+      crack() { logFx('crack'); noise(0.07, 0.10); tone(240, 0.13, 'square', 0.07, 110); },
+      /* 木框碎了（不是裂，是散）：三段不同音高的木头断裂 + 一声重噪声。
+       * 和 crack() 必须明显不同 —— 裂是"提醒你还行"，碎是"这局没了"。
+       * 原来碎框**没有任何专属音效**，只有一个通用的撞击音；
+       * 玩家听到的和"撞了一下"完全一样，但结果差了一个星。 */
+      structBreak() {
+        logFx('structBreak');
+        noise(0.16, 0.20);
+        tone(190, 0.20, 'square', 0.10, 70);
+        setTimeout(() => { noise(0.10, 0.14); tone(120, 0.18, 'sine', 0.09, 55); }, 90);
+      },
       star(n) { tone(660 + (n || 0) * 220, 0.12, 'triangle', 0.1); },   // 星星逐颗弹出
       cheer() { [784, 988, 1175].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
       // 轮子滚动环境音：用持续振荡器，速度调制频率与音量
@@ -4168,6 +4190,21 @@ const BIOMES = {
                 SFX.pop();
               } else if (evs[i].indexOf('sandbag_drop') === 0) {
                 SFX.bagDrop();
+              } else if (evs[i].indexOf('part_broken') === 0) {
+                /* 木框碎了：这局的「不散架」已经没了，必须有一声和"裂缝"完全不同的音。
+                 * 原来这里什么都不做 —— 碎框唯一的表现是通用撞击音 + 木框耐久条消失，
+                 * 玩家听到的和"撞了一下"一模一样，但代价差一颗星。
+                 *
+                 * 一次撞击会同时碎掉**每一块**结构件（2~3 格），也就是连发 2~3 条
+                 * part_broken 事件。三条音效在同一毫秒叠起来不是"更响"，
+                 * 而是一团糊掉的噪声（实测 8 米落体响了 3 声）。
+                 * 所以这里按 0.25 秒去重：一次撞击 = 一声断裂。 */
+                if (!state.lastBreakSfx || state.run.time - state.lastBreakSfx > 0.25) {
+                  state.lastBreakSfx = state.run.time;
+                  SFX.structBreak();
+                  state.shake = Math.min(1.3, state.shake + 0.55);
+                  state.flash = Math.max(state.flash, 0.45);
+                }
               } else if (evs[i].indexOf('struct_hurt') === 0) {
                 /* 木框掉耐久（还没碎）。在它之前，这件事在画面上是**完全静默**的：
                  * 只有木头上多一道相对淡的缝，没有音、没有抖、没有闪。
@@ -4300,7 +4337,10 @@ const BIOMES = {
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
-                   progressWarning, failText, chapterDone, resultNextBtn, frameHpOf, frameSegRects };
+                   progressWarning, failText, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
+                   /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，
+                    * 靠它才能断言"碎框走的是 structBreak 这一支"而不是靠人耳。 */
+                   fxLog: () => fxLog.slice(), clearFxLog: () => { fxLog.length = 0; } };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
