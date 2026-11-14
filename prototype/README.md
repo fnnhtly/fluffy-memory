@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：59 项（46 个脚本 + 静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：60 项（47 个脚本 + 静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -70,6 +70,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_brake_release.js` | 按住 S 刹车松手必须真的松开（曾整局一直刹着）；auto-repeat 也不许把 `brake on` 事件刷满 |
 | `test_pump_charge_ring.js` | 打气筒的蓄力环：没按不长环、半蓄力是蓝弧且未闭合、满蓄力转金；读数与渲染同源 |
 | `test_battery_icon.js` | 1-3 车上的电池电量条随电量变短（曾因读一个从没被写过的 `def.__pct` 而永远满格） |
+| `test_motor_out.js` | 电池用光时 HUD 弹提示、能量栏改写「用光」、失败归因点名电池；一次断电只写一条 `motor_out` |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 

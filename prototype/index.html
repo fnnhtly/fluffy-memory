@@ -357,6 +357,13 @@
         tone(base, 0.05 + lvl * 0.02, 'sine', 0.03 + lvl * 0.02, base * 0.6);
         if (lvl >= 3) noise(0.10 + lvl * 0.03, 0.03 + lvl * 0.015);
       },
+      /* 马达断电：一次低频闷响 + 一个下行的"停机"音。
+       * 量级比 thud(3) 小 —— 不是撞了什么，是**东西停了**。 */
+      motorOut() {
+        logFx('motorOut');
+        tone(140, 0.30, 'sawtooth', 0.06, 70);
+        setTimeout(() => { tone(90, 0.26, 'sine', 0.05, 55); }, 140);
+      },
       rollStop() {
         if (!ROLL) return;
         const a = ensure(); if (!a) { ROLL = null; return; }
@@ -2541,7 +2548,15 @@ const BIOMES = {
     }    let boxLine = '';
     if (state.phase === 'run' && state.run) {
       const car = state.run.car;
-      line = `总重 ${car.mass.toFixed(1)} kg　能量 ${Math.round(car.energy)}　速度 ${Math.hypot(car.vx, car.vy).toFixed(1)} m/s`;
+      /* 能量那一栏在断电后必须**自己说话**。
+       * 玩家能看到的只有一个数字 `能量 0`，后面跟着速度还在往下掉；
+       * 车为什么不动了全靠猜。1-3 的三星条件就是「能量剩 ≥ 30」，
+       * 也就是说这一关的注意力全在这个数上 —— 它归零却不吭声，
+       * 玩家只会以为物理坏了或者车太沉。 */
+      const dead = car.motor && (car.energy || 0) <= 0;
+      line = `总重 ${car.mass.toFixed(1)} kg　能量 ` +
+        (dead ? '用光（马达停）' : String(Math.round(car.energy))) +
+        `　速度 ${Math.hypot(car.vx, car.vy).toFixed(1)} m/s`;
       boxLine = `木箱 ${state.run.boxesGot}/${state.run.boxes.length}`;
       if (car.liftMass > 0 || car.sandbagCount > 0) {
         const leftBags = car.sandbagCount || 0;
@@ -3190,6 +3205,14 @@ const BIOMES = {
     const bal = (st.car.parts || []).filter(p => p.def && p.def.liftMass)
       .reduce((a, p) => a + (p.n || 0), 0);
     const tips = [];
+    /* 电池用光：这一条排在最前面，因为它和另外两条是**互斥方向**的。
+     * 装了马达、电量归零时，车停下 / 没进展的真实原因就是没电了；
+     * 这时候还让玩家"去想想动力或重心"，等于把人往错误方向推 ——
+     * 玩家会去加轮子、改配重，全都白费（1-3 只有一辆车、没有第二个马达位）。
+     * 判据只看两件事实：装了马达 + 电量 ≤ 0，不需要任何新状态。 */
+    if (st.car.motor && (st.car.energy || 0) <= 0) {
+      tips.push('电池用光了（马达已停）');
+    }
     if (bags > 0) tips.push('还剩 ' + bags + ' 个沙袋没扔（点车身）');
     if (bal > 0) tips.push('还剩 ' + bal + ' 个气球没扎（点车身）');
     return tips.join('，');
@@ -4360,6 +4383,15 @@ const BIOMES = {
                  * 掉耐久不是灾难片，是提醒。 */
                 SFX.crack();
                 state.shake = Math.min(1.1, state.shake + 0.30);
+              } else if (evs[i].indexOf('motor_out') === 0) {
+                /* 马达断电。引擎一直在写这条事件（game.js），渲染层原来是**零消费者**：
+                 * 车不再被推动，玩家只看到它慢慢停住，然后 8 秒没进展判负，
+                 * 失败卡写"一直在原地打转：8 秒没能更靠近终点"。
+                 * 真实原因是电池用光。1-3 的整关设计就是围着电量转的，
+                 * 归零却没有任何提示，等于把最关键的一次状态变化藏起来。
+                 * 这里给一次明确提示 + 一次闷响（不是撞击级别，是"东西停了"）。 */
+                toast('电池用光了 —— 马达停了');
+                SFX.motorOut();
               } else if (evs[i].indexOf('touch lvl=') === 0) {
                 // 分级接触反馈
                 const lv = parseInt(evs[i].split('lvl=')[1], 10) || 1;
@@ -4484,7 +4516,7 @@ const BIOMES = {
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
-                   progressWarning, failText, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
+                   progressWarning, failText, failCulprit, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
                    pumpChargeOf, batteryPctOf,
                    /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，
                     * 靠它才能断言"碎框走的是 structBreak 这一支"而不是靠人耳。 */

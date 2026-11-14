@@ -947,15 +947,22 @@
     if (state.wallCooldown > 0) state.wallCooldown -= dt;
     if (car.pumpHeld) car.pumpCharge = Math.min(0.8, car.pumpCharge + dt);
 
-    // 马达耗能（没电池时第一帧就报 motor_out，便于用例断言）
-    if (car.motor && car.energy <= 0 && !state.motorOutLogged) {
-      state.motorOutLogged = true;
-      log(state, 'motor_out');
-    }
+    /* 马达耗能。
+     *
+     * 这里原来有**两个**写 `motor_out` 的地方：
+     *   · `energy <= 0 && !motorOutLogged` → 写一条并置位；
+     *   · `energy > 0` 分支里扣到 0 时 → 直接写一条，**没有置位**。
+     * 于是"正常跑着把电用光"这条最常见的路径会写**两条**：第二条来自
+     * 下一帧那个"没电池时第一帧就报"的分支（因为第一条没置位）。
+     * 渲染层一旦按事件弹提示，玩家就会被同一件事提示两次。
+     * 现在把"跨过零点"收敛成唯一出口。 */
     if (car.motor && car.energy > 0) {
       car.energy = Math.max(0, car.energy - Params.motorEnergy * dt);
       state.motorUse += dt;
-      if (car.energy <= 0) log(state, 'motor_out');
+    }
+    if (car.motor && car.energy <= 0 && !state.motorOutLogged) {
+      state.motorOutLogged = true;
+      log(state, 'motor_out');
     }
 
     for (var s = 0; s < sub; s++) {

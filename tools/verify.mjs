@@ -70,6 +70,7 @@ const SCRIPTS = [
   'test_brake_release.js',
   'test_pump_charge_ring.js',
   'test_battery_icon.js',
+  'test_motor_out.js',
   'test_perf_stable.js'
 ];
 
