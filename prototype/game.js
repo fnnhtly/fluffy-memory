@@ -198,7 +198,7 @@
   // ---------------- 组装 ----------------
   var BUILD_COLS = 6, BUILD_ROWS = 8, CELL = 1.0;
 
-  function newBuild() { return { cells: {}, order: [] }; }
+  function newBuild() { return { cells: {}, order: [], hist: [] }; }
 
   /* 数量：一格能叠几个（气球/沙袋最多 3，其余恒为 1）。
    * 之所以用"一个零件 + 数量"而不是参考里的三个独立道具：
@@ -310,6 +310,7 @@
   function tryPlace(level, build, part, r, c) {
     var chk = canPlace(level, build, part, r, c);
     if (!chk.ok) return chk;
+    pushHistory(build);          // 任何一次成功的写入都是一个可撤销的"一步"
     var key = r + ',' + c;
 
     if (isInnerPart(part)) {
@@ -330,10 +331,13 @@
     return { ok: true, reason: '' };
   }
 
-  function removeAt(build, r, c) {
+  function removeAt(build, r, c, opts) {
     var key = r + ',' + c;
     var cell = build.cells[key];
     if (!cell) return false;
+    /* opts.quiet：同一次"橡皮划一笔"里的后续格子不再各记一步。
+     * 一笔扫过 5 格应该有 1 个撤销步，不是 5 个 —— 玩家心里那是"一次擦除"。 */
+    if (!(opts && opts.quiet)) pushHistory(build);
     // 先摘内嵌件，再拆框（和参考里"先拿猪再拆框"一致）
     if (cell.inner) {
       cell.inner = null;
@@ -347,26 +351,65 @@
     return true;
   }
 
+  /* 撤销 = 回到上一步的**整张图纸**，不是"删掉最后放下的那一件"。
+   *
+   * 原来是 `build.order.pop()` 再删掉那一格。而 order 只在**放下**时 push、
+   * 在拆掉时 splice —— 被拆掉的东西压根不在 order 里。于是：
+   *   · 用橡皮擦掉一格再按 Z → 删掉的不是它，而是 order 末尾那件
+   *     （实测：擦掉一个气球后按 Z，**车上唯一的小猪被删了**）
+   *   · 拖出网格卸下之后按 Z → 同上，而且卸下的那件也回不来
+   * 也就是说这个按钮当时的实际行为是"主动毁掉玩家的零件"，不是"没用"。
+   *
+   * 现在记快照：每个改动图纸的**命令**进来前先压一份 cells+order 深拷贝，
+   * Z 整个恢复上一份。这样"撤销"和"我上一步做了什么"永远一致，
+   * 不管那一步是放、拆、转、清空，还是从车上拖出去。
+   * 快照是命令式的、必须由改动方显式调用（pushHistory），
+   * 不靠"猜哪一次改动算一步"。 */
+  var HIST_CAP = 40;
+
+  function snapBuild(build) {
+    var cells = {};
+    Object.keys(build.cells).forEach(function (k) {
+      var c = build.cells[k];
+      cells[k] = { part: c.part, dir: c.dir, inner: c.inner, n: c.n };
+    });
+    return { cells: cells, order: build.order.slice() };
+  }
+
+  function pushHistory(build) {
+    if (!build.hist) build.hist = [];
+    build.hist.push(snapBuild(build));
+    if (build.hist.length > HIST_CAP) build.hist.shift();
+  }
+
   function undo(build) {
-    var key = build.order.pop();
-    if (!key) return false;
-    if (key.indexOf('inner:') === 0) {
-      var ck = key.slice(6);
-      if (build.cells[ck]) build.cells[ck].inner = null;
-      return true;
-    }
-    delete build.cells[key];
+    if (!build.hist || !build.hist.length) return false;
+    var s = build.hist.pop();
+    build.cells = s.cells;
+    build.order = s.order;
     return true;
+  }
+
+  /* 丢回上一步快照：给"开了头但实际没改动任何东西"的操作用来收尾。
+   * 拖拽换格子被占 → 零件弹回原格，图纸净变化为零，
+   * 那就不能留下一步"撤销了等于没撤"的空步（按 Z 没反应比按 Z 乱删更吓人）。 */
+  function dropHistory(build) {
+    if (build.hist && build.hist.length) build.hist.pop();
   }
 
   function rotateAt(build, r, c) {
     var cell = build.cells[r + ',' + c];
     if (!cell) return false;
+    pushHistory(build);
     cell.dir = (cell.dir + 1) % 4;
     return true;
   }
 
-  function clearBuild(build) { build.cells = {}; build.order = []; }
+  function clearBuild(build) {
+    if (Object.keys(build.cells).length === 0 && build.order.length === 0) return;
+    pushHistory(build);
+    build.cells = {}; build.order = [];
+  }
 
   // ---------------- 车 ----------------
   function partPos(r, c) {
@@ -1290,7 +1333,7 @@
     BUILD_COLS: BUILD_COLS, BUILD_ROWS: BUILD_ROWS, CELL: CELL,
     resetParams: resetParams, makeTerrain: makeTerrain,
     newBuild: newBuild, tryPlace: tryPlace, canPlace: canPlace, removeAt: removeAt, undo: undo,
-    rotateAt: rotateAt, clearBuild: clearBuild, budgetLeft: budgetLeft,
+    dropHistory: dropHistory, pushHistory: pushHistory, rotateAt: rotateAt, clearBuild: clearBuild, budgetLeft: budgetLeft,
     interactiveCount: interactiveCount, buildVehicle: buildVehicle,
     createRun: createRun, step: step, stepLoose: stepLoose, damageCar: damageCar, setBrake: setBrake, pressInteract: pressInteract,
     pressInteract: pressInteract,

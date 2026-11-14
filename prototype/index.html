@@ -545,6 +545,15 @@
     state.selected = part;
   }
 
+  /* 撤销：整个回到上一步图纸（见 game.js 里 undo 的注释 —— 原来的
+   * `order.pop()` 版本在"擦掉 / 卸下之后按 Z"会删掉车上另一件东西）。
+   * 空历史必须出声：按了没反应和按了乱删，玩家都以为是 bug。 */
+  function undoStep() {
+    if (!RAP.undo(state.build)) { toast('没有可撤销的步骤'); SFX.deny(); return; }
+    SFX.remove();
+    toast('已撤销上一步');
+  }
+
   function tryPlaceAt(r, c) {
     const part = state.selected;
     if (part === 'eraser') {
@@ -686,7 +695,7 @@
       const bLaunch = btnRect('launch'), bClear = btnRect('clear'), bUndo = btnRect('undo');
       if (hit(bLaunch, p.x, p.y)) { launch(); return; }
       if (hit(bClear, p.x, p.y)) { RAP.clearBuild(state.build); toast('已清空'); return; }
-      if (hit(bUndo, p.x, p.y)) { RAP.undo(state.build); return; }
+      if (hit(bUndo, p.x, p.y)) { undoStep(); return; }
       const bRot = btnRect('rotate');
       if (hit(bRot, p.x, p.y)) {
         const hc2 = cellAt(p.x, p.y) || cellAt(state.mouse.x, state.mouse.y);
@@ -796,7 +805,10 @@
       const c0 = cellAt(p.x, p.y);
       if (c0) {
         const kk = c0.r + ',' + c0.c;
-        if (state.build.cells[kk]) RAP.removeAt(state.build, c0.r, c0.c);
+        /* quiet：一笔擦过的每一格都并进"同一笔"那一步撤销里。
+         * 不 quiet 的话，按住擦过 5 格 = 5 步，玩家按一次 Z 只回一格，
+         * 会觉得"撤销不好使"。 */
+        if (state.build.cells[kk]) RAP.removeAt(state.build, c0.r, c0.c, { quiet: true });
       }
     }
     // 按住已放零件并移动超过 8px → 才拿起它（单击不算移动）
@@ -811,6 +823,10 @@
            * `{ part, dir }`。于是"把 3 个气球拖到另一个格子"会变成 1 个，
            * 另外 2 个静悄悄回到待使用：一次拖动**既改位置又改数量**，还没提示。
            * 叠放是这个游戏唯一的数量载体，丢了它就是丢了玩家的意图。 */
+          /* 拿起这一下就开始一步撤销：整次拖动（换位 / 卸下）都算"一步"。
+           * 被占格退回时由下面 mouseup 里的 dropHistory 把这一步撤掉，
+           * 免得留下"按 Z 什么都不变"的空步。 */
+          RAP.pushHistory(state.build);
           state.dragMove = { r: pc.r, c: pc.c, part: there.part, dir: there.dir || 0,
                              n: there.n, inner: there.inner || null };
           delete state.build.cells[key];
@@ -862,6 +878,9 @@
       const mv = state.dragMove;
       const cell = cellAt(p.x, p.y);
       let placed = false;
+      /* 这次拖动是否真的改了图纸。放在原格 = 没改，被占退回 = 没改；
+       * 两种情况都不要留撤销步。 */
+      let placedNet = true;
       if (cell) {
         const key = cell.r + ',' + cell.c;
         const occupied = !!state.build.cells[key];
@@ -874,6 +893,9 @@
           state.build.order.push(key);
           if (mv.inner) state.build.order.push('inner:' + key);
           placed = true;
+          /* 落回**原来那一格**：净变化是零（拿起时删了，这里又写回去了）。
+           * 这一步不能留在撤销栈里 —— 否则按 Z 会"撤销一次什么也没变"。 */
+          if (samePlace) placedNet = false;
         }
       }
       if (!placed) {
@@ -902,10 +924,12 @@
           state.build.order.push(key);
           if (mv.inner) state.build.order.push('inner:' + key);
           toast('那一格占着：' + (RAP.PARTS[mv.part] ? RAP.PARTS[mv.part].label : mv.part) + ' 放回原处');
+          placedNet = false;
         }
       } else {
         SFX.place();
       }
+      if (!placedNet) RAP.dropHistory(state.build);
       state.dragMove = null;
       state.dragPart = null;
       return;
@@ -982,7 +1006,7 @@
     if (k === 'h') { state.helpOpen = !state.helpOpen; return; }
     if (k === 't') { state.paramsOpen = !state.paramsOpen; document.getElementById('panel').style.display = state.paramsOpen ? 'block' : 'none'; return; }
     if (state.phase === 'build') {
-      if (k === 'z') RAP.undo(state.build);
+      if (k === 'z') undoStep();
       else if (k === 'c') RAP.clearBuild(state.build);
       else if (k === ' ') { launch(); ev.preventDefault(); }
       else if (k === 'r') {

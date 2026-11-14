@@ -44,7 +44,7 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（`tools/build_levels_js.js`） | ✅ 自洽校验通过 |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**50 项自检全绿**（37 个脚本 + 静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**51 项自检全绿**（38 个脚本 + 静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 37/37 |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
 | 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |
@@ -54,6 +54,7 @@
 | 结算金币诚实 | `tools/test_coin_display.js` | ✅ 13/13（卡上的 +N 必须等于钱包实增；重刷/失败不许再写 +N） |
 | 失败归因具体化 | `tools/test_fail_culprit.js` | ✅ 13/13（"还剩 3 个沙袋没扔"，数量必须等于车上实际剩余） |
 | 拖出网格=卸下 | `tools/test_drag_unequip.js` | ✅ 19/19（待使用 +n / 叠放 n 不许丢 / 被占格弹回不卸下 / 出网格才提示） |
+| 撤销语义 | `tools/test_undo.js` | ✅ 21/21（回到上一步整张图纸；卸下/擦除/放置/换向都算一步；一笔擦除只记一步） |
 | 气球沙袋的可见链路 | `tools/test_lift_ui.js` | ✅ 25/25（真鼠标点车身 / 徽标像素对照 / 终点高度提示） |
 | 美术方案 | `docs/art-bible.md`（四层景深 + 6 个 3D 手段 + 调色板 + 零件语言） | ✅ |
 | 官方素材目录 | `docs/art-catalog.md` + `docs/art/imageid-probe-{1,2}.png` | ✅ 实测：无场景素材，UI 图标可用 |
