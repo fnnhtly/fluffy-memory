@@ -13,10 +13,28 @@
     motor: { label: '马达', mass: 1.8, motor: true, color: '#e06a4a' , desc: '持续驱动力（6 m/s²），耗能 4/秒，自带 12 电量；没电池只能跑约 3 秒。'},
     battery: { label: '电池', mass: 1.0, energy: 100, inner: true, color: '#8fd66a' , desc: '只能放进木框里。+100 能量，供马达使用。'},
     pump: { label: '打气筒', mass: 0.8, interactive: true, dir: true, thrust: 6.0, color: '#4f8fb0' , desc: '手动交互件。按住蓄力、松开喷出冲量；喷气方向 = 组装时箭头的方向。同色同类零件算一组，按一下整组一起喷。'},
+    /* 气球与沙袋是参考里最漂亮的一对：气球给浮力、沙袋给配重，
+     * 玩家靠"什么时候抛沙袋、什么时候扎气球"控制高度。
+     *
+     * 和参考的**有意差异**：参考里一格能放 1/2/3 个，是三种独立道具（三个独立预算槽）。
+     * 我们做成一个零件 + 叠加数量（再点一次同一格 → 数量 +1，到 3 回绕到 1），
+     * 因为托盘已经有 7 项、再塞 5 项会挤爆；而"一格多个"的语义、以及总预算按个数算，
+     * 这两条都保住了。预算里 `balloon: 6` 就是"总共 6 个气球，随便怎么分布"。
+     *
+     * liftMass = 每个气球能"举起"多少 kg（浮力 = liftMass · n · G）。
+     * 用 kg 而不是牛顿，是因为玩家心里的秤是 kg（HUD 上写着总重）。
+     * 1.2 是量出来的：4 个气球能举起 4.8 kg，正好让"最轻的车 + 丢掉沙袋"浮起来，
+     * 而 6 个气球配轻车会直接冲进暴风层（这就是关卡要教的那件事）。 */
+    balloon: { label: '气球', stack: true, maxStack: 3, liftMass: 1.2, mass: 0.05,
+               interactive: true, tapOnBody: true, popOnGround: true, color: '#e0708f',
+               desc: '每格最多 3 个（再点一次同一格 → +1，到 3 换回 1）。每个能把 1.2 kg 举起来。碰地会被扎破，也可以按按钮主动扎。' },
+    sandbag: { label: '沙袋', stack: true, maxStack: 3, mass: 0.8,
+               interactive: true, tapOnBody: true, dropOne: true, color: '#b79b6a',
+               desc: '每格最多 3 个。纯粹是重量（每个 0.8 kg）——压住气球不让它飞、顺便压住车少弹。行驶中可以按按钮一个一个扔。' },
     pig: { label: '小猪', mass: 1.5, hp: 3, pig: true, inner: true, color: '#6fc25a' , desc: '胜负判定对象。必须放进木框里；木框碎了它会掉出来摔在地上，滚停就算失败。'}
   };
 
-  var TRAY_ORDER = ['wood_frame', 'wood_wheel', 'iron_wheel', 'motor', 'battery', 'pump', 'pig'];
+  var TRAY_ORDER = ['wood_frame', 'wood_wheel', 'iron_wheel', 'motor', 'battery', 'pump', 'balloon', 'sandbag', 'pig'];
 
   // ---------------- 可调参数（HTML 面板里能改，也是真机的数值基线） ----------------
   var DEFAULTS = {
@@ -28,12 +46,30 @@
     wheelGrip: 1.2,
     rollResist: 0.06,   // 高速滚动阻力（低速另有慢速阻力）
     creepBrake: 2.5,
+    /* 蠕行刹车的放行坡度（|tan| 阈值）。
+     * 滚动阻力是 0.14，所以坡度小于 0.14 的"斜坡"在物理上本来就不该动；
+     * 取 0.12 让这一点点缓坡仍会被刹住，而真正能滚的坡不被吃掉。 */
+    creepMinSlope: 0.12,
     brakeGrip: 1.6,         // 刹车时轮子抓地倍率
     brakeDecel: 9.0,        // 刹车减速度 m/s²
     groundGrip: 1.0,        // 地面抓地总倍率
     groundFriction: 0.0,    // 着地时整车受到的摩擦减速度（m/s²）
     chassisGrip: 0.75,      // 车壳（木框）静摩擦系数
     drag: 0.02,
+    /* 上升速度硬上限（m/s），只在车上有气球时生效。
+     * 试过"用空气阻力收敛终端速度"，不行：终端速度 = G·(lift−m)/(k·lift)，
+     * 对净浮力极度敏感 —— 6 个气球只有 0.46 m/s（看不出在飞），
+     * 少挂一个又完全不飞。玩家学不到可预期的规则。
+     * 改成硬封顶后规则是一句话：**带得起来就以 2.5 m/s 匀速上升**，
+     * 与挂几个气球无关，只与"带不带得起来"有关（net = mass − lift < 0）。
+     * 2.5 m/s 是量出来的：1 秒爬 2.5 米（2.5 格），跨 6 米沟要 2.4 秒，
+     * 玩家有足够时间决定"要不要扎"。 */
+    liftMaxRise: 2.5,
+    /* 到终点时车身离终点地表的允许高度差。
+     * 车静止时车心离地 1.3–1.6 米（实测 1-1..1-5 的标准解都是这个区间），
+     * 所以 2.2 足够"停在旗子旁边"，但容不下"从旗子上空飞过去"。
+     * 没有这条的话，气球流就是"挂一堆气球飘过终点线"——这关白设计。 */
+    goalMaxAlt: 2.2,
     interactCap: 3,
     maxSpeed: 12.0,
     demoTimeLimit: 60
@@ -139,13 +175,19 @@
 
   function newBuild() { return { cells: {}, order: [] }; }
 
+  /* 数量：一格能叠几个（气球/沙袋最多 3，其余恒为 1）。
+   * 之所以用"一个零件 + 数量"而不是参考里的三个独立道具：
+   * 托盘已经 9 项了，再拆成 5 项会挤爆；而"一格能放多个"和"总预算按个数算"
+   * 这两条语义都保住了。 */
+  function cellCount(cell) { return (cell && cell.n) || 1; }
+
   function budgetLeft(level, part, build) {
     var box = level.partsBox || {};
     var total = box[part] || 0;
     var used = 0;
     Object.keys(build.cells).forEach(function (k) {
       var cell = build.cells[k];
-      if (cell.part === part) used++;
+      if (cell.part === part) used += cellCount(cell);
       if (cell.inner === part) used++;
     });
     return total - used;
@@ -161,7 +203,11 @@
   function interactiveCount(build) {
     var n = 0;
     Object.keys(build.cells).forEach(function (k) {
-      if (isInteractive(build.cells[k].part)) n++;
+      /* 气球/沙袋不算进"交互键上限"。
+       * 那条上限的用意是"控制面板别超过 3 个键"（交互件即键位），
+       * 而气球/沙袋在参考里是**直接在车身上点破/点掉**的消耗品，不是驱动控制键，
+       * 所以我们让它们走"点车身"这条路径，不占面板额度（见 popBalloon / dropSandbag）。 */
+      if (isInteractive(build.cells[k].part) && !PARTS[build.cells[k].part].tapOnBody) n++;
     });
     return n;
   }
@@ -195,17 +241,30 @@
       return { ok: true, reason: '' };
     }
 
-    if (budgetLeft(level, part, build) <= 0) return { ok: false, reason: 'budget' };
-
     var there = build.cells[key];
     if (there) {
+      /* 已放的同类可叠件 → 数量 +1；到 maxStack 之后回到 1。
+       * 回到 1 而不是弹"满了"，是因为玩家最常见的动作就是"点多了想减"，
+       * 而这一格上除了数量没有别的东西可点 —— 回绕比拒绝更省事。
+       *
+       * 预算检查只拦"往上加"，不拦"往下减"：6 个气球全放下之后，
+       * 玩家仍然要能把某一格改回 1 个。 */
+      if (there.part === part && PARTS[part].stack) {
+        var cur = cellCount(there);
+        var nxt = cur >= (PARTS[part].maxStack || 3) ? 1 : cur + 1;
+        if (nxt > cur && budgetLeft(level, part, build) <= 0) return { ok: false, reason: 'budget' };
+        return { ok: true, reason: '', stacked: true, n: nxt };
+      }
       // 已放的同类方向件 → 可旋转
       if (there.part === part && isDirectional(part)) {
         return { ok: true, reason: '', rotated: true, dir: ((there.dir || 0) + 1) % 4 };
       }
       return { ok: false, reason: 'occupied' };
     }
-    if (isInteractive(part) && interactiveCount(build) >= Params.interactCap) {
+
+    if (budgetLeft(level, part, build) <= 0) return { ok: false, reason: 'budget' };
+    // 气球/沙袋走"点车身"，不占面板键位（见 interactiveCount 的注释）
+    if (isInteractive(part) && !PARTS[part].tapOnBody && interactiveCount(build) >= Params.interactCap) {
       return { ok: false, reason: 'interact_limit' };
     }
     // 结构件（木框）可以当起点自由放置；其他零件必须贴着结构件
@@ -237,7 +296,11 @@
       build.cells[key].dir = chk.dir;
       return { ok: true, reason: '', rotated: true, dir: chk.dir };
     }
-    build.cells[key] = { part: part, dir: 0 };
+    if (chk.stacked) {
+      build.cells[key].n = chk.n;
+      return { ok: true, reason: '', stacked: true, n: chk.n };
+    }
+    build.cells[key] = { part: part, dir: 0, n: PARTS[part].stack ? 1 : undefined };
     build.order.push(key);
     return { ok: true, reason: '' };
   }
@@ -307,14 +370,25 @@
       var cc = parseInt(k.split(',')[1], 10);
       var def = PARTS[cell.part];
       var p = partPos(rr, cc);
-      parts.push({ part: cell.part, def: def, r: rr, c: cc, lx: p.x, ly: p.y, dir: cell.dir, hp: def.hp || 1 });
-      mass += def.mass;
+      var cnt = cellCount(cell);
+      /* 可叠零件（气球/沙袋）：一个格子代表 cnt 个物理件。
+       * 质量按个数算；气球还要记下自己 lifts 多少 kg（浮力）。
+       * 这里把 cnt 存到零件上，是为了"扔一个"之后能就地减一，
+       * 而不必重建整车（重建会丢速度、丢 HP，也会让回放跳变）。 */
+      var isStack = !!def.stack;
+      var pm = def.mass * (isStack ? cnt : 1);
+      parts.push({ part: cell.part, def: def, r: rr, c: cc, lx: p.x, ly: p.y, dir: cell.dir,
+                   hp: def.hp || 1, n: isStack ? cnt : 1, key: k });
+      mass += pm;
       if (def.energy) energy += def.energy;
       if (def.interactive) {
-        interactives.push(cell.part);
-        var g0 = groups.filter(function (g) { return g.part === cell.part; })[0];
-        if (!g0) { g0 = { part: cell.part, color: def.color, list: [], on: false }; groups.push(g0); }
-        g0.list.push(parts[parts.length - 1]);
+        // 只有"占面板键位"的交互件才进 groups；气球/沙袋走点车身
+        if (!def.tapOnBody) {
+          interactives.push(cell.part);
+          var g0 = groups.filter(function (g) { return g.part === cell.part; })[0];
+          if (!g0) { g0 = { part: cell.part, color: def.color, list: [], on: false }; groups.push(g0); }
+          g0.list.push(parts[parts.length - 1]);
+        }
       }
       if (cell.inner) {
         var idf = PARTS[cell.inner];
@@ -339,7 +413,7 @@
     var motor = parts.some(function (p) { return p.def.motor; });
     var w = maxX - minX, h = maxY - minY;
     var inertia = mass * (w * w + h * h) / 12;
-    return {
+    var car = {
       parts: parts, wheels: wheels, motor: motor,
       mass: mass, inv: 1 / mass, invI: 1 / Math.max(0.4, inertia),
       hull: { minX: minX, maxX: maxX, minY: minY, maxY: maxY },
@@ -351,6 +425,24 @@
       interactives: interactives,
       pumpCharge: 0, pumpHeld: false, braking: false, odo: 0
     };
+    recomputeLift(car);
+    return car;
+  }
+
+  /* 浮力：气球每个 lifts `liftMass` kg，等效"负重量"。
+   * 存成 `liftMass`（kg）而不是力（N），是因为重力是可调参数 ——
+   * 用 kg 表达的话，改重力时气球和车一起变重变轻，浮沉关系不乱。
+   * netMass = 真实质量 - 浮力质量：>0 会往下掉，<0 会往上飘。 */
+  function recomputeLift(car) {
+    var lift = 0, bags = 0;
+    car.parts.forEach(function (p) {
+      if (p.def.liftMass) lift += p.def.liftMass * (p.n || 1);
+      if (p.def.dropOne) bags += (p.n || 1);
+    });
+    car.liftMass = lift;
+    car.sandbagCount = bags;
+    car.netMass = car.mass - lift;
+    return car;
   }
 
   // ---------------- 一局 ----------------
@@ -365,6 +457,8 @@
       time: 0, acc: 0,
       boxes: (level.boxes || []).map(function (b, i) { return { i: i + 1, col: b.col, row: b.row, got: false }; }),
       boxesGot: 0, wallHits: 0, pigHP: 3, motorUse: 0, pumpPress: 0, maxAngle: 0,
+      // 气球/沙袋的消耗记账（给三星条件用：「一个气球都不破」「沙袋全扔」之类）
+      balloonPops: 0, balloonPopsBurst: 0, sandbagsDropped: 0,
       // 「不散架 KRAK SNAP」用：参考里这一颗星要求"载具没散架，且猪没从载具里掉出来"。
       // 两个标记必须分开，因为"框碎了但猪还卡在上面"和"框好好的猪却掉出来了"都该判失败。
       hullBroken: false, pigEjected: false,
@@ -394,6 +488,103 @@
   }
 
   function log(state, msg) { state.events.push(msg); }
+
+  /* 气球扎破的碎片：写进事件流交给渲染层（和 impact 同一套消费方式）。
+   * 物理层不生成特效对象 —— 那个职责在 index.html 的 spawnDebris。 */
+  function spawnBurst(state, x, y) { log(state, 'burst x=' + x.toFixed(1) + ' y=' + y.toFixed(1)); }
+
+  /* 质量类字段只能通过这里改。
+   * 以前 `damageCar` 里手写了一遍（重算 mass/inv/wheels），现在多了一个
+   * 会改质量的路径（扔沙袋），两处手写迟早会分叉 —— 统一收进来。 */
+  function syncCarMass(car) {
+    var m = 0;
+    car.parts.forEach(function (p) { m += p.def.mass * (p.n || 1); });
+    car.mass = m > 0 ? m : 0.01;
+    car.inv = 1 / car.mass;
+    car.wheels = car.parts.filter(function (p) { return p.def.wheel; });
+    var w = car.hull.maxX - car.hull.minX, h = car.hull.maxY - car.hull.minY;
+    var inertia = car.mass * (w * w + h * h) / 12;
+    car.invI = 1 / Math.max(0.4, inertia);
+    recomputeLift(car);
+    return car;
+  }
+
+  /* 消耗一件可叠零件。
+   * 返回 { ok, kind, left, part } —— kind 是 'balloon' / 'sandbag'。
+   * 用"就地减一"而不是"重建整车"：重建会丢速度、丢 HP，回放也会跳变。
+   * `which` 可以指定具体那一格的零件（碰地扎破时要扎破**这一个**，
+   * 不能随便挑一个 —— 挑错了玩家会觉得"我没碰到的气球凭什么破"）。 */
+  function consumeStack(state, part, n, which) {
+    if (state.phase !== 'run' || !state.car) return { ok: false };
+    n = n || 1;
+    var pick = null;
+    if (which && which.def === part && (which.n || 0) >= n) {
+      pick = which;
+    } else {
+      for (var i = 0; i < state.car.parts.length; i++) {
+        if (state.car.parts[i].def === part && (state.car.parts[i].n || 0) >= n) { pick = state.car.parts[i]; break; }
+      }
+    }
+    if (!pick) return { ok: false };
+    pick.n -= n;
+    var kind = pick.def.liftMass ? 'balloon' : 'sandbag';
+    var left = Math.max(0, pick.n);
+    if (pick.n <= 0) {
+      var idx = state.car.parts.indexOf(pick);
+      if (idx >= 0) state.car.parts.splice(idx, 1);
+      state.car.groups.forEach(function (g) {
+        var j = g.list.indexOf(pick); if (j >= 0) g.list.splice(j, 1);
+      });
+    }
+    return { ok: true, kind: kind, left: left, part: pick, at: { x: pick.lx, y: pick.ly } };
+  }
+
+  /* 主动扎破一个气球 / 扔一个沙袋。
+   * 两者共用一套"消耗 + 记账 + 同步质量"，因为对物理来说它们是同一件事：
+   * 少了一个会改质量（和浮力）的件。差别只在计数器和事件名。 */
+  function popBalloon(state, which) {
+    var r = consumeStack(state, PARTS.balloon, 1, which);
+    if (!r.ok) return false;
+    state.balloonPops = (state.balloonPops || 0) + 1;
+    syncCarMass(state.car);
+    log(state, 'balloon_pop left=' + state.car.liftMass.toFixed(2));
+    return true;
+  }
+
+  function dropSandbag(state, which) {
+    var r = consumeStack(state, PARTS.sandbag, 1, which);
+    if (!r.ok) return false;
+    state.sandbagsDropped = (state.sandbagsDropped || 0) + 1;
+    syncCarMass(state.car);
+    // 沙袋落地：视觉用的自由体（和框碎掉出来的东西同一套）
+    var wp = worldOf(state.car, r.at.x, r.at.y);
+    state.loose.push({
+      part: 'sandbag', x: wp.x, y: wp.y,
+      vx: state.car.vx * 0.8, vy: state.car.vy * 0.5,
+      a: 0, w: (Math.random() - 0.5) * 5, r: 0.3, rest: 0
+    });
+    log(state, 'sandbag_drop left=' + state.car.sandbagCount);
+    return true;
+  }
+
+  /* 点车身：在世界坐标 (wx, wy) 附近找气球/沙袋并消耗一个。
+   * 为什么不做成面板按钮：面板已经有"交互键上限 3"，而参考里这两件是
+   * 直接在车身上点破/点掉的消耗品，不是驱动器。做成按钮会把打气筒/电风扇
+   * 那些真正的控制键挤掉。也正因为如此它们**不占** interactCap 额度。 */
+  function tapAt(state, wx, wy) {
+    if (state.phase !== 'run' || !state.car) return null;
+    var best = null, bestD = 1e9;
+    state.car.parts.forEach(function (p) {
+      if (!p.def.stack) return;
+      var wp = worldOf(state.car, p.lx, p.ly);
+      var d = Math.hypot(wp.x - wx, wp.y - wy);
+      if (d < bestD) { bestD = d; best = p; }
+    });
+    if (!best || bestD > 0.85) return null;
+    var kind = best.def.liftMass ? 'balloon' : 'sandbag';
+    var ok = kind === 'balloon' ? popBalloon(state) : dropSandbag(state);
+    return ok ? { ok: true, kind: kind, part: best } : null;
+  }
 
   function worldOf(car, lx, ly) {
     var ca = Math.cos(car.a), sa = Math.sin(car.a);
@@ -447,11 +638,7 @@
       state.car.parts = state.car.parts.filter(function (p) {
         return broken.indexOf(p) < 0 && !(p.inner && brokenKeys.indexOf(p.host) >= 0);
       });
-      var m = 0;
-      state.car.parts.forEach(function (p) { m += p.def.mass; });
-      state.car.mass = m > 0 ? m : 0.01;
-      state.car.inv = 1 / state.car.mass;
-      state.car.wheels = state.car.parts.filter(function (p) { return p.def.wheel; });
+      syncCarMass(state.car);
     }
     var now = state.time;
     if (vn > 10 && now - (state.lastPigHurt || -9) > 0.6) {
@@ -484,6 +671,13 @@
     }
     var pigLoose = state.loose.filter(function (L) { return PARTS[L.part].pig; })[0];
     if (pigLoose && pigLoose.rest > 0.5) resolve(state, 'pig_lost');
+  }
+
+  function failLabel(reason) {
+    return ({
+      pig_dead: 'pig_dead', pig_lost: 'pig_lost', out_of_bounds: 'out_of_bounds',
+      flew_away: 'flew_away', stuck: 'stuck', empty: 'empty', timeout: 'timeout'
+    })[reason] || reason;
   }
 
   function resolve(state, reason) {
@@ -532,6 +726,19 @@
        * 只判前者的话，"框好好的、猪却从缺口滑出去了"会被误判成成功；
        * 只判后者的话，"框全碎了但猪还卡在一角"同样不该算。 */
       case 'noBreak': return !state.hullBroken && !state.pigEjected;
+      /* 「气球一个都没破」—— 飞行关的第三颗星。
+       * 用 balloonPops（含主动扎和碰地扎），因为"自己扎破"和"摔破"对玩家
+       * 来说是同一件事：气球没了。要是只判碰地，主动扎光气球反而能拿三星。 */
+      case 'noPop': return (state.balloonPops || 0) === 0;
+      /* 「沙袋全扔完」—— 配重关的第三颗星：证明玩家真的用掉了配重，
+       * 而不是"多带了一堆沙袋一路压过来"。 */
+      case 'allSandbags':
+        var totalBags = 0;
+        (state.build ? Object.keys(state.build.cells) : []).forEach(function (k) {
+          var cell = state.build.cells[k];
+          if (PARTS[cell.part] && PARTS[cell.part].dropOne) totalBags += cellCount(cell);
+        });
+        return totalBags > 0 && (state.sandbagsDropped || 0) >= totalBags;
       default: return false;
     }
   }
@@ -616,6 +823,20 @@
         fx -= fd * car.vx / sp * car.mass;
         fy -= fd * car.vy / sp * car.mass;
       }
+
+      /* 浮力：气球每个 lifts `liftMass` kg，等效"少这么多重量"。
+       * 注意这里加的是 +G·liftMass（力），不是改 mass ——
+       * mass 参与碰撞与惯性，浮力不改变惯性，只抵消重力。
+       * 结果是：车轻、气球多 → netMass < 0 → 一直往上飘；
+       *          车重、气球少 → netMass > 0 → 只是"变轻了"，照样得靠轮子。
+       *
+       * 上升速度由 `liftMaxRise` 硬封顶（下面做积分时钳 vy），
+       * 而不是靠空气阻力收敛。试过阻力模型：终端速度 =
+       * G·(lift−m)/(k·lift)，对"净浮力"极度敏感 —— 挂 6 个气球只有 0.46 m/s
+       * （慢到看不出在飞），少挂一个又完全不飞。玩家学不到可预期的规则。
+       * 封顶之后规则变成一句话：**能带起来就以 2.5 m/s 匀速上升**，
+       * 与挂几个气球无关，只与"带不带得起来"有关。 */
+      if (car.liftMass > 0) fy += G * car.liftMass;
 
       // 轮子
       var groundWheels = 0;
@@ -745,6 +966,9 @@
       car.w += tq * car.invI * h;
       var spd = Math.hypot(car.vx, car.vy);
       if (spd > Params.maxSpeed) { car.vx *= Params.maxSpeed / spd; car.vy *= Params.maxSpeed / spd; }
+      /* 上升速度兜底：气球很多时净浮力可能一帧之内跳变（扔沙袋、连扎几个），
+       * 不希望出现"一帧跳上去两米"的观感。只压上升，不碰下落。 */
+      if (car.vy > Params.liftMaxRise) car.vy = Params.liftMaxRise;
       car.vx *= (1 - 0.025 * h);
       car.w *= (1 - 3.4 * h);
       // 刹车：直接给一个反向减速度（轮胎咬死），低速时彻底停住
@@ -757,11 +981,22 @@
           car.w *= 0.70;   // 落地压角速度
         }
       }
-      // 蠕行刹车：慢于 1.5 m/s 且没有动力在输出时，额外阻尼，避免"永远滑一点点"
+      /* 蠕行刹车：慢于 1.5 m/s 且没有动力在输出时，额外阻尼，避免"永远滑一点点"。
+       *
+       * ⚠ 必须让开斜坡，否则它会吃掉重力。
+       * 这条刹车是按比例削速度的（每子步 ×(1 − 2.5·(1−v/1.5)·h)，60Hz 下每秒剩 8%），
+       * 而它并不知道"我现在站在坡上"。结果：气球把净重压到 1.8/9.0 kg 时，
+       * 沿坡的重力加速度只剩 0.67 m/s²（= 每帧 0.011 m/s），
+       * 而刹车每帧抹掉 4% —— 车永远到不了 1.5 m/s，永远被刹车按住，
+       * 10 秒只挪 2 米，看起来像"气球让车变傻了"。
+       *
+       * 正确语义：这条刹车是为了抹掉**平地上**的残余抖动（用户把 groundFriction 定为 0）。
+       * 斜坡上重力是真实的驱动力，不该被它抵消 —— 坡度超过 rollResist 就不再施加。 */
       var spNow = Math.hypot(car.vx, car.vy);
       var driving = (car.motor && car.energy > 0) ||
         (car.groups || []).some(function (g) { return g.on; });
-      if (!driving && spNow < 1.5) {
+      var onSlope = Math.abs(ter.surfaceSlope(car.x)) > Params.creepMinSlope;
+      if (!driving && !onSlope && spNow < 1.5) {
         var k = 1 - Params.creepBrake * (1 - spNow / 1.5) * h;
         car.vx *= Math.max(0, k);
         car.vy *= Math.max(0, k);
@@ -773,6 +1008,23 @@
     }
 
     stepLoose(state, dt);
+
+    /* 气球碰地 = 扎破（参考的行为：碰到墙/地自动破）。
+     * 这条不是"惩罚"而是"节奏"：气球让车飞起来，但一旦落地就全泄了 ——
+     * 所以玩家必须在飞的时候想清楚"现在还要不要这么多气球"。
+     * 判定用气球球心低于地表（不是车体）：车翻滚时气球可能先着地。 */
+    var balloons = car.parts.filter(function (p) { return p.def.liftMass && (p.n || 0) > 0; });
+    for (var bi2 = 0; bi2 < balloons.length; bi2++) {
+      var bp = worldOf(car, balloons[bi2].lx, balloons[bi2].ly);
+      if (bp.y - 0.3 <= ter.surfaceY(bp.x)) {
+        var before = state.car.balloonPopsBurst || 0;
+        if (popBalloon(state, balloons[bi2])) {
+          state.balloonPopsBurst = before + 1;
+          spawnBurst(state, bp.x, bp.y);
+        }
+        break;                 // 一帧最多破一个，免得一次全破光（那是"失败"不是"反馈"）
+      }
+    }
 
     // 木箱
     for (var bi = 0; bi < state.boxes.length; bi++) {
@@ -786,8 +1038,43 @@
     }
 
     // 终点 / 失败
-    if (car.x >= state.level.goal.col) { resolve(state, 'win'); return; }   // 车身到达旗子所在格即算到
+    /* 「到终点」必须同时满足"横向到了"和"人在这儿"。
+     *
+     * 只判 x 的话，气球流玩法会当场塌掉：车一直往上飘、vx 还有 2 m/s，
+     * 于是"什么都不做"也能飘过终点线 —— 实测 maxY=19.9 判 win。
+     * 那样这关教的就是"挂气球然后挂机"，而不是"扔沙袋起飞、扎气球落地"。
+     *
+     * 所以加一条高度门槛：到终点那一格时，车必须在终点地表 3 米以内。
+     * 3 米是从"最矮的木头轮车壳高度 1 米 + 一个气球直径"量出来的：
+     * 正常贴地滚过、轻跳着过都算到，只有真的在天上飞才不算。 */
+    /* 「到终点」= **在终点的高度上**越过了终点线。
+     *
+     * 只判 x 的话，气球流玩法会当场塌掉：车一直往上飘、vx 还有 2 m/s，
+     * 于是"什么都不做"也能飘过终点线 —— 实测 maxY=19.9 判 win。
+     * 那样这关教的就是"挂气球然后挂机"，而不是"扔沙袋起飞、扎气球落地"。
+     *
+     * 只判"离地高度"也不行：车飞过旗子之后才落下来，落地时 x 早就越过终点，
+     * 于是"飞过去再摔在后面"照样判 win（实测在终点线上空 8 米掠过，2.7 秒后判赢）。
+     *
+     * 正确语义：车必须**落在终点那一格的地面上** ——
+     * 即 x 越过终点线，且车身高度和终点地表的高度差在一个车壳以内。
+     * 这个差值对任何关卡都成立（车静止时车心离地恒定约 1.8 米），
+     * 所以它是"车停在终点地上"，不是"车飞过终点上空"。 */
+    if (car.x >= state.level.goal.col) {
+      var goalAlt = Math.abs(car.y - ter.surfaceY(car.x));
+      if (goalAlt <= Params.goalMaxAlt) { resolve(state, 'win'); return; }
+      if (!state.overGoalLogged) {
+        state.overGoalLogged = true;
+        log(state, 'over_goal alt=' + goalAlt.toFixed(1));
+      }
+    }
     if (car.y < -2 || car.x < -2 || car.x > ter.cols + 2) { resolve(state, 'out_of_bounds'); return; }
+    /* 天花板：气球把车顶到天上去了。
+     * 没有这条的话，"只挂气球不装轮子"这种造法永远不会结算 ——
+     * 车以 2.5 m/s 匀速上升，8 秒后已经在地图上方 20 米，
+     * 而失败判定只看 x/y 下界，于是这一局会一直 running。
+     * 有天花板之后，气球从"能飞"变成"有代价地飞"，这才是个决定。 */
+    if (car.y > ter.rows + 6) { resolve(state, 'flew_away'); return; }
     state.maxAngle = Math.max(state.maxAngle || 0, Math.abs(car.a));
     var sp2 = Math.hypot(car.vx, car.vy);
     if (sp2 < 0.2) {
@@ -819,7 +1106,17 @@
     '1-4i': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], iron_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
     '1-4w': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], wood_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
     '1-5m': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]], motor: [[4, 4]], pig: [[4, 1]] },
-    '1-5n': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]], pig: [[4, 1]] }
+    '1-5n': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]], pig: [[4, 1]] },
+    /* 1-6 的标准解不只是摆位，还包含两个"什么时候动手"的时刻：
+     *   扔沙袋 @3.0s —— 沙袋是起飞开关，早扔会飘、晚扔冲进沟
+     *   扎 1 个 @7.0s —— 扎太多会砸下去，一个才够把"上升"变成"缓降"
+     * 这两个动作必须走和玩家点击同一条代码路径（dropSandbag / popBalloon），
+     * 否则测试通过而实际玩不通。 */
+    '1-6': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]],
+             balloon: [[3, 1], [3, 2]], sandbag: [[5, 2]], pig: [[4, 2]],
+             _stacks: { balloon: 3, sandbag: 3 },
+             _drops: [{ t: 4.5, n: 3 }],
+             _pops: [{ t: 8.0, n: 1 }] }
   };
 
   function applySpec(level, build, spec) {
@@ -827,6 +1124,19 @@
       if (part.charAt(0) === '_') return;                 // 元数据不是零件
       spec[part].forEach(function (rc) {
         tryPlace(level, build, part, rc[0], rc[1]);
+      });
+    });
+    /* 可叠零件（气球/沙袋）的摆放位置只能表达"放哪几个格子"，
+     * 表达不了"每格几个"。再点同一格 n−1 次才是真的堆上去，
+     * 而且必须走 tryPlace —— 直接写 cell.n 会绕过预算检查。 */
+    var stacks = spec._stacks || {};
+    Object.keys(stacks).forEach(function (part) {
+      (spec[part] || []).forEach(function (rc) {
+        var want = stacks[part] || 1;
+        for (var k = 1; k < want; k++) {
+          var res = tryPlace(level, build, part, rc[0], rc[1]);
+          if (!res.ok || res.n === undefined) break;
+        }
       });
     });
     return build;
@@ -854,12 +1164,29 @@
     applySpecRuntime(state, spec);
     var dt = 1 / 60;
     var maxT = opts.maxTime || 70;
-    var acts = ((spec && spec._presses) || opts.presses || []).slice()
-      .sort(function (a, b) { return a.t - b.t; });
+    /* 三类运行期动作统一成一条时间轴：
+     *   press/release —— 交互件（打气筒）的按下与松开
+     *   drop          —— 扔一个沙袋
+     *   pop           —— 扎一个气球
+     * 后两类走的是和玩家点车身完全相同的 dropSandbag / popBalloon，
+     * 不是伪造状态（伪造状态会让测试绿而实机红）。 */
+    var acts = [];
+    ((spec && spec._presses) || opts.presses || []).forEach(function (a) {
+      acts.push({ t: a.t, k: a.k || 'press' });
+    });
+    ((spec && spec._drops) || []).forEach(function (a) {
+      for (var i = 0; i < (a.n || 1); i++) acts.push({ t: a.t + i * 0.016, k: 'drop' });
+    });
+    ((spec && spec._pops) || []).forEach(function (a) {
+      for (var i = 0; i < (a.n || 1); i++) acts.push({ t: a.t + i * 0.016, k: 'pop' });
+    });
+    acts.sort(function (a, b) { return a.t - b.t; });
     var ai = 0;
     while (state.phase === 'run' && state.time < maxT) {
       while (ai < acts.length && acts[ai].t <= state.time) {
-        if (acts[ai].k === 'press' || !acts[ai].k) pressInteract(state, 1);
+        if (acts[ai].k === 'drop') dropSandbag(state);
+        else if (acts[ai].k === 'pop') popBalloon(state);
+        else if (acts[ai].k === 'press') pressInteract(state, 1);
         else releaseInteract(state, 1);
         ai++;
       }
@@ -879,7 +1206,10 @@
     rotateAt: rotateAt, clearBuild: clearBuild, budgetLeft: budgetLeft,
     interactiveCount: interactiveCount, buildVehicle: buildVehicle,
     createRun: createRun, step: step, stepLoose: stepLoose, damageCar: damageCar, setBrake: setBrake, pressInteract: pressInteract,
+    pressInteract: pressInteract,
     releaseInteract: releaseInteract, challengePass: challengePass,
+    popBalloon: popBalloon, dropSandbag: dropSandbag, tapAt: tapAt, syncCarMass: syncCarMass,
+    recomputeLift: recomputeLift, cellCount: cellCount,
     SPECS: SPECS, applySpec: applySpec, applySpecRuntime: applySpecRuntime,
     simulate: simulate, partPos: partPos
   };

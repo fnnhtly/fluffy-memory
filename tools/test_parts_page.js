@@ -69,10 +69,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const geom = JSON.parse(await ev(`(() => {
     const C = window.__rap.welcomeCard();
+    const n = window.__rap.RAP.TRAY_ORDER.length;   // 行数跟着零件表走，别写死 7
     const rows = [];
-    for (let i = 0; i < 7; i++) rows.push({ i, x: C.x + 36 + 20, y: C.y + 100 + i * 34 + 13 });
-    return JSON.stringify({ card: C, rows });
+    for (let i = 0; i < n; i++) rows.push({ i, x: C.x + 36 + 20, y: C.y + 100 + i * 32 + 13 });
+    return JSON.stringify({ card: C, rows, n });
   })()`));
+  const expectRows = await ev('window.__rap.RAP.TRAY_ORDER.length');
 
   const pairs = geom.rows.map(r => ({ x: r.x, y: r.y, tag: 'icon' + r.i }));
   // 背景参考点：卡片内一块空白（右下角内边距）
@@ -94,10 +96,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       ')  最大色差 ' + dmax);
   });
   // 卡片底部不能溢出：卡片底 + 按钮顶之间要留白
-  const lastRow = geom.rows[6];
+  const lastRow = geom.rows[geom.rows.length - 1];
   const gapToCardBottom = (geom.card.y + geom.card.h) - (lastRow.y + 13);
   out.push((gapToCardBottom >= 12 ? '✓ ' : '✗ ') + '最后一行到卡片底留白 ' + Math.round(gapToCardBottom) + 'px');
   if (gapToCardBottom < 12) bad++;
+  // 9 件零件必须在页面上全部出现（加零件时忘了改这一页是真实发生过的）
+  out.push((geom.n === expectRows ? '✓ ' : '✗ ') + '零件一览列出了全部 ' + geom.n + ' / ' + expectRows + ' 件');
+  if (geom.n !== expectRows) bad++;
 
   console.log(out.join('\n'));
   console.log('\n图标未绘制: ' + bad);

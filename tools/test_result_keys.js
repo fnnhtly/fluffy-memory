@@ -52,18 +52,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // 快速跑一关到结算（用官方预设 + 直接推进）
   // 注意 SPECS 的键不等于 levelId：1-4 有两套（1-4i 冰面 / 1-4w 木轮），
   // 1-5 也有两套（1-5m 用马达 / 1-5n 不用马达）。
-  const SPEC_OF = ['1-1', '1-2', '1-3', '1-4i', '1-5m'];
+  // 再加关时不改这里：找不到就退化成 levelId 本身，再不行就直接发射（呼吸测试不关心星数）。
   async function runToResult(levelIdx) {
-    await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[${levelIdx}];
+    const ok = await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[${levelIdx}];
       window.__rap.startLevel(${levelIdx}); s.welcome=0; s.introT=1;
-      R.applySpec(lv, s.build, R.SPECS['${SPEC_OF[levelIdx]}']);
+      const k=['1-1','1-2','1-3','1-4i','1-5m'][${levelIdx}] || lv.levelId;
+      R.applySpec(lv, s.build, R.SPECS[k]);
       window.__rap.launch(); return 1;})()`);
+    if (!ok) return false;
     for (let i = 0; i < 160; i++) {
       await sleep(200);
       if ((await ev('window.__rap.state.phase')) === 'resolved') return true;
     }
     return false;
   }
+  const LAST = (await ev('window.__rap.levels.length')) - 1;
 
   A.chk('能跑到 1-1 的结算页', await runToResult(0));
   await sleep(900);
@@ -97,7 +100,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await shot('rk-03-next');
 
   // 最后一关：N 不该越界
-  A.chk('能跑到最后一关的结算', await runToResult(4));
+  A.chk('能跑到最后一关（' + (LAST + 1) + '/' + (LAST + 1) + '）的结算', await runToResult(LAST));
   await sleep(900);
   const lastIdx = await ev('window.__rap.state.levelIndex');
   await key('n', 'KeyN', 78);

@@ -5,8 +5,10 @@
  *   node tools/verify.mjs --fast   只跑数值校核（约 2 秒）
  *
  * 检查项：
- *   1. check_html_logic.js     34 项数值校核
- *   2. 23 个交互/流程脚本      真实浏览器 + 真实鼠标，检查 0 控制台异常
+ *   1. check_html_logic.js     37 项数值校核
+ *   1b. test_parts_lift.js     34 条气球/沙袋机制断言（纯 Node）
+ *   1c. test_1_6.js            18 条 1-6 设计判定（读真 level 文件）
+ *   2. 29 个交互/流程脚本      真实浏览器 + 真实鼠标，检查 0 控制台异常
  *   3. 内联脚本语法
  *
  * 退出码：0 全绿；1 有失败
@@ -43,6 +45,7 @@ const SCRIPTS = [
   'test_arrow_visibility.js',
   'test_run_banner.js',
   'test_fullplay.js',
+  'test_lift_ui.js',
   'test_result_keys.js',
   'test_all_levels.js',
   'test_drive_sequence.js',
@@ -71,10 +74,26 @@ const results = [];
 
 // 1) 数值校核
 {
-  const r = run(process.execPath, [path.join('prototype', 'check_html_logic.js')], '数值校核 34 项');
+  const r = run(process.execPath, [path.join('prototype', 'check_html_logic.js')], '数值校核 37 项');
   const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
   const pass = !!(m && m[2] === '0' && r.ok);
   results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
+}
+
+// 1b) 气球 / 沙袋的机制单测（纯 Node，不开浏览器）
+{
+  const r = run(process.execPath, [path.join('tools', 'test_parts_lift.js')], '气球沙袋机制');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
+// 1c) 1-6 的设计判定（四格 + 容错 + 关卡结构，读真 level 文件）
+{
+  const r = run(process.execPath, [path.join('tools', 'test_1_6.js')], '1-6 教学设计');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
 }
 
 // 2) 内联脚本语法

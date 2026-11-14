@@ -39,6 +39,9 @@
   let ctx = cv.getContext('2d');   // let：离屏缓存时会临时切换（见 paintOffscreen）
   // 设计分辨率（所有坐标都基于它）；实际画布按窗口等比缩放
   const DW = 1280, DH = 720, PPM = 32;
+  /* 闭包里需要一个"当前 HUD 净重行"的读取点（供测试断言玩家实际看到的文字）。
+   * 必须声明在 window.__rap 之前 —— 那里用箭头函数引用它，运行时才取值。 */
+  let liftLineCache = '';
 
   // 千星的画布预设（用于自测各尺寸下的排版）
   const CANVAS_PRESETS = [
@@ -254,6 +257,12 @@
       win() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.1), i * 110)); },
       fail() { tone(300, 0.22, 'sawtooth', 0.09, 140); setTimeout(() => tone(220, 0.28, 'sawtooth', 0.08, 110), 140); },
       pump() { tone(300, 0.1, 'square', 0.06, 700); },
+      /* 扎气球：短促的"啪"（噪声爆 + 一个高频滑落）。
+       * 沙袋：低沉的"咚"。名字不能叫 thud —— 下面已经有一个分级触地音叫 thud(lvl)，
+       * 对象字面量里同名键后者覆盖前者，于是 `SFX.thud()` 会走进触地音那条分支、
+       * 拿到 lvl=undefined → NaN 时长 → AudioParam 抛异常（真跑红过一次）。 */
+      pop() { noise(0.08, 0.16); tone(900, 0.09, 'square', 0.08, 320); },
+      bagDrop() { tone(120, 0.14, 'sine', 0.11, 62); noise(0.05, 0.06); },
       hurt() { tone(160, 0.16, 'square', 0.08, 90); },
       star(n) { tone(660 + (n || 0) * 220, 0.12, 'triangle', 0.1); },   // 星星逐颗弹出
       cheer() { [784, 988, 1175].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
@@ -664,6 +673,22 @@
       for (let i = 0; i < nm; i++) {
         const rect = { x: xs + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
         if (hit(rect, p.x, p.y)) { RAP.pressInteract(state.run, i + 1); SFX.pump(); return; }
+      }
+      /* 点车身：气球 → 扎破一个，沙袋 → 扔掉一个。
+       *
+       * 这是 1-6 唯一的两个操作，所以热区也得直接落在零件上 ——
+       * 让玩家"看着气球点气球"，而不是去记某个键盘键。
+       * 坐标必须用**这一帧真正渲染用的镜头**（state.camLive）反算，
+       * 用 buildCam() 或者 camState 都会有半帧偏差，点不准。
+       * 半径给 0.85 米（约 27 像素），比气球本身大一圈，不然手一抖就点空。 */
+      const cm = state.camLive || state.cam || buildCam();
+      const s = PPM * cm.zoom;
+      const wx = cm.x + (p.x - DW / 2) / s;
+      const wy = cm.y - (p.y - DH / 2) / s;
+      const t = RAP.tapAt(state.run, wx, wy);
+      if (t && t.ok) {
+        if (t.kind === 'balloon') SFX.pop(); else SFX.bagDrop();
+        return;
       }
       // 行驶期这一层不再有任何"重开"热区：重开是左上的绿圆钮（restartRun），
       // 在全局按钮分支里已经判过了。以前这里还留着 retryRun 的判定，
@@ -1595,6 +1620,22 @@ const BIOMES = {
     ctx.restore();
   }
 
+  /* 堆叠徽标：同一格放了 n 个（气球/沙袋）时，右下角一个小圆角数字。
+   * 只用形状画是分不出"1 个气球"和"3 个气球"的，而这两个的浮力差 2.4 倍。 */
+  function drawStackBadge(x, y, n) {
+    const r = 11;
+    ctx.save();
+    ctx.fillStyle = 'rgba(12,20,26,.92)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.85)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#f4e2b0';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('×' + n, x, y + 0.5);
+    ctx.restore();
+  }
+
   function drawPartShape(part, cx, cy, size, dir, hp, spin) {
     const def = RAP.PARTS[part];
     if (!def) {
@@ -1606,7 +1647,7 @@ const BIOMES = {
     ctx.save();
     ctx.translate(cx, cy); ctx.rotate((dir || 0) * Math.PI / 2);
     // 零件自身投影（厚重感第一步：离地感）
-    if (def.structure || def.wheel || def.motor || def.energy || def.interactive) {
+    if (def.structure || def.wheel || def.motor || def.energy || def.interactive || def.liftMass || def.dropOne) {
       ctx.save();
       ctx.globalAlpha = 0.22;
       ctx.fillStyle = '#0a1016';
@@ -1776,6 +1817,58 @@ const BIOMES = {
       ctx.strokeStyle = '#8d3b28'; ctx.lineWidth = 2;
       roundRect(-h * 0.72, -h * 0.48, size * 0.72, size * 0.52, 4); ctx.stroke();
 
+    } else if (def.liftMass) {
+      /* ---------- 气球：一束（个数由 n 决定，由调用方单独画徽标） ---------- */
+      // 扎口绳
+      ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = Math.max(1.2, size * 0.035);
+      ctx.beginPath(); ctx.moveTo(0, h * 0.28); ctx.lineTo(0, h * 0.92); ctx.stroke();
+      // 球体：底色 + 高光 + 描边
+      const rg = ctx.createRadialGradient(-h * 0.22, -h * 0.32, size * 0.04, 0, -h * 0.1, size * 0.56);
+      rg.addColorStop(0, '#f6b6c8');
+      rg.addColorStop(0.55, def.color);
+      rg.addColorStop(1, '#a8455f');
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.ellipse(0, -h * 0.1, size * 0.40, size * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(90,30,45,.75)'; ctx.lineWidth = Math.max(1.2, size * 0.035);
+      ctx.beginPath(); ctx.ellipse(0, -h * 0.1, size * 0.40, size * 0.46, 0, 0, Math.PI * 2); ctx.stroke();
+      // 高光
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.beginPath(); ctx.ellipse(-h * 0.18, -h * 0.34, size * 0.09, size * 0.14, -0.4, 0, Math.PI * 2); ctx.fill();
+      // 扎口结
+      ctx.fillStyle = '#8a4757';
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.055, h * 0.28); ctx.lineTo(size * 0.055, h * 0.28); ctx.lineTo(0, h * 0.40);
+      ctx.closePath(); ctx.fill();
+
+    } else if (def.dropOne) {
+      /* ---------- 沙袋：麻布口袋 + 缝线 + 束口 ---------- */
+      const bg = ctx.createLinearGradient(0, -h * 0.6, 0, h * 0.8);
+      bg.addColorStop(0, '#cbb083');
+      bg.addColorStop(0.6, def.color);
+      bg.addColorStop(1, '#8d7448');
+      ctx.fillStyle = bg;
+      // 袋身：下宽上窄的梯形（束口感）
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.30, -h * 0.62);
+      ctx.lineTo(h * 0.30, -h * 0.62);
+      ctx.lineTo(h * 0.62, h * 0.34);
+      ctx.quadraticCurveTo(h * 0.62, h * 0.78, 0, h * 0.78);
+      ctx.quadraticCurveTo(-h * 0.62, h * 0.78, -h * 0.62, h * 0.34);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(74,56,28,.8)'; ctx.lineWidth = Math.max(1.2, size * 0.035); ctx.stroke();
+      // 口子上的束带
+      ctx.fillStyle = '#6b563a';
+      roundRect(-h * 0.34, -h * 0.70, size * 0.34, size * 0.14, 3); ctx.fill();
+      // 缝线
+      ctx.strokeStyle = 'rgba(96,74,42,.55)'; ctx.lineWidth = Math.max(1, size * 0.022);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.34, h * 0.02); ctx.lineTo(h * 0.34, h * 0.02);
+      ctx.moveTo(-h * 0.28, h * 0.34); ctx.lineTo(h * 0.28, h * 0.34);
+      ctx.stroke();
+      // 麻布高光
+      ctx.fillStyle = 'rgba(255,244,214,.28)';
+      ctx.beginPath(); ctx.ellipse(-h * 0.26, -h * 0.10, size * 0.11, size * 0.26, -0.2, 0, Math.PI * 2); ctx.fill();
+
     } else if (def.interactive) {
       /* ---------- 打气筒：筒身 + 活塞 + 压力表 + 出气管 ---------- */
       ctx.fillStyle = '#2f5e78';
@@ -1827,6 +1920,10 @@ const BIOMES = {
         }
         drawPartShape(cell.part, p.x, p.y, BUILD_PX * sc, cell.dir,
           cell.part === 'wood_frame' ? 3 : undefined);
+        /* 堆叠徽标：气球/沙袋同一格可以放 1–3 个，形状本身画不出"这里堆了几个"。
+         * 用右下角的圆角数字，和托盘上的计数同一套视觉。 */
+        const n = RAP.cellCount(cell);
+        if (n > 1) drawStackBadge(p.x + BUILD_PX * 0.30, p.y + BUILD_PX * 0.30, n);
       }
     });
     // 方向件箭头：只在「选中该款零件」或「鼠标悬停在该格」时显示
@@ -2022,12 +2119,28 @@ const BIOMES = {
     const mass = built ? built.mass : 0;
     const energy = built ? built.energyMax : 0;
     let line = `${level().levelId} ${level().name}　总重 ${mass.toFixed(1)} kg　能量 ${Math.round(energy)}　交互键 ${built ? built.interactives.length : 0}/${RAP.Params.interactCap}`;
-    let boxLine = '';
+    /* 建造期就把"净重"算给玩家看 —— 气球/沙袋的全部意义都在这个数上：
+     * 净重 > 0 贴地跑，净重 < 0 才飞得起来。不显示的话，
+     * 玩家只能靠反复发射去试"到底挂几个气球能飞"。 */
+    let liftLine = '';
+    if (built && (built.liftMass > 0 || built.sandbagCount > 0)) {
+      const net = built.netMass;
+      liftLine = `浮力 ${built.liftMass.toFixed(1)}　压舱 ${(built.sandbagCount * RAP.PARTS.sandbag.mass).toFixed(1)}` +
+        `　净重 ${net.toFixed(1)} kg　${net < 0 ? '会飘起来' : '压得住'}`;
+    }    let boxLine = '';
     if (state.phase === 'run' && state.run) {
       const car = state.run.car;
       line = `总重 ${car.mass.toFixed(1)} kg　能量 ${Math.round(car.energy)}　速度 ${Math.hypot(car.vx, car.vy).toFixed(1)} m/s`;
       boxLine = `木箱 ${state.run.boxesGot}/${state.run.boxes.length}`;
+      if (car.liftMass > 0 || car.sandbagCount > 0) {
+        const leftBags = car.sandbagCount || 0;
+        liftLine = `气球 ${car.parts.filter(p => p.def.liftMass).reduce((a, p) => a + (p.n || 0), 0)}` +
+          `　沙袋 ${leftBags}　净重 ${car.netMass.toFixed(1)} kg　${car.netMass < 0 ? '↑ 上升中' : '↓ 会落下'}`;
+      }
     }
+    /* 给测试留一个读取口：HUD 这一行是"玩家唯一能看到的浮力信息"，
+     * 断言它比断言 car.netMass 更有意义（前者才是玩家实际读到的）。 */
+    liftLineCache = liftLine;
 
     // 左上：暂停 / 重来（可点击）；右上：帮助
     if (state.phase === 'run') {
@@ -2207,7 +2320,8 @@ const BIOMES = {
       const boxParts = Object.keys(level().partsBox || {})
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + '×' + level().partsBox[k]).join('　');
       text('零件箱：' + (boxParts || '无') + '　　分数：★★ 拿木箱　★★★ ' +
-        ({ none: '本关没有', pumpPress: '不按打气筒', energyLeft: '能量剩≥30', noFlip: '不翻车', motorUse: '不用马达' }
+        ({ none: '本关没有', pumpPress: '不按打气筒', energyLeft: '能量剩≥30', noFlip: '不翻车', motorUse: '不用马达',
+           noPop: '一个气球都不扎', allSandbags: '沙袋全扔' }
           [(level().challenge || {}).type] || (level().challenge || {}).type || '—'),
         96, 148, 12, '#b9cbd8');
     }
@@ -2222,6 +2336,16 @@ const BIOMES = {
         ctx.fillStyle = 'rgba(10,18,24,.88)';
         roundRect(RT.box.x, RT.box.y, RT.box.w, RT.box.h, 8); ctx.fill();
         text(boxLine, RT.box.x + RT.box.w - 16, RT.box.y + 19, 13, '#cfe0ef', 'right');
+      }
+      /* 气球/沙袋的实时状态：剩几个气球、还剩几个沙袋、净重多少。
+       * 这是这一关唯一的"仪表盘" —— 玩家要靠它判断"现在扔/现在扎"。 */
+      if (liftLine) {
+        const LW = 300, LX = DW / 2 - LW / 2, LY = RT.box.y + RT.box.h + 6;
+        ctx.fillStyle = 'rgba(10,18,24,.88)';
+        roundRect(LX, LY, LW, 24, 8); ctx.fill();
+        ctx.strokeStyle = 'rgba(232,200,122,.35)'; ctx.lineWidth = 1; ctx.stroke();
+        const rising = state.run.car.netMass < 0;
+        text(liftLine, LX + LW / 2, LY + 17, 12, rising ? '#9fe08a' : '#cfe0ef', 'center');
       }
     }
 
@@ -2441,6 +2565,19 @@ const BIOMES = {
       }
       const baseRot = p.def.wheel ? 0 : ((p.dir || 0) + (car.a * 180 / Math.PI) / 90);
       drawPartShape(p.part, s.x, s.y, size, baseRot, p.hp, spin);
+      /* 行驶期也要看得到"这一格还挂着几个气球 / 还有几个沙袋"。
+       * 用和建造期同一个徽标，视觉上是同一套语言；≤1 不画，免得满屏数字。
+       * 可点提示：还活着的气球画一圈淡金虚线，告诉玩家"这个能点"。 */
+      const n = p.n || 1;
+      if (n > 1) drawStackBadge(s.x + size * 0.30, s.y + size * 0.30, n);
+      if (p.def.liftMass && n > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,230,170,.40)';
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.arc(s.x, s.y, size * 0.56, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
     });
     // 车体里没有猪的话（零件箱没放），提示一下
     if (!car.hasPig) {
@@ -2529,6 +2666,7 @@ const BIOMES = {
 
   function failText(reason) {
     return ({ pig_dead: '猪受伤过重', pig_lost: '小猪掉队了', out_of_bounds: '掉出地图',
+              flew_away: '飘得太高，飞出地图了',
               stuck: '卡住了：动力或重心不对', timeout: '超时', empty: '没放零件' })[reason] || reason;
   }
 
@@ -2763,8 +2901,11 @@ const BIOMES = {
     state.resultBtnY = btnY;
   }
 
-  const WELCOME_PAGES = [
-    {
+  /* 零件一览的行高。9 件零件下 32px 刚好一行不压一行，
+   * 同时把卡高压到 408 —— 卡底 540，下面还留得出按钮的位置。 */
+  const PART_ROW_H = 32;
+
+  const WELCOME_PAGES = [    {
       title: '欢迎来到「滚蛋吧！猪」',
       lines: [
         '你是一个猪车工程师。',
@@ -2776,18 +2917,14 @@ const BIOMES = {
       art: 'car'
     },
     {
-      // 用户明确要求：引导不要"建造三步"，要一页说清每种结构是干什么的
+      /* 用户明确要求：引导不要"建造三步"，要一页说清每种结构是干什么的。
+       *
+       * 这一页原来写死 7 件零件的文案，加气球/沙袋时忘了改 —— 一个玩家看完"零件一览"
+       * 仍然不知道那两件是干什么的。所以现在**从 RAP.TRAY_ORDER 现推**：
+       * 名称与说明都取 def.label / def.desc，类别从标志位拼。
+       * 这样以后再加零件，这一页自动跟着长。 */
       title: '零件一览 · 每样东西负责什么',
-      art: 'parts',
-      parts: [
-        ['wood_frame', '结构', '中空。车身的骨架，中间能塞下小猪；挨打会裂、会黑、最后散。'],
-        ['wood_wheel', '轮', '抓地强、跑得慢，爬坡最靠得住；到了冰面几乎打滑。'],
-        ['iron_wheel', '轮', '抓地弱、跑得快，唯一能在冰面上走的轮子。'],
-        ['motor', '动力', '装上就一直转，每秒吃 4 点能量，没电就停。'],
-        ['battery', '能量', '装上直接 +100 能量，是马达的饭。'],
-        ['pump', '手动', '有朝向。运行期按住蓄力、松手朝箭头方向喷一下。'],
-        ['pig', '乘客', '只能坐进中空木框里。它到终点才算赢，从车上掉出去就输。']
-      ]
+      art: 'parts'
     },
     {
       title: '跑起来之后',
@@ -2803,10 +2940,35 @@ const BIOMES = {
     }
   ];
 
+  /* 「零件一览」的行内容由 PARTS 现推，不再手抄一份。
+   * 手抄的版本在加气球/沙袋那一轮漏掉了两件 —— 玩家看完引导仍然不知道新零件干什么。
+   * 类别用标志位拼，说明直接用 def.desc，两边只有一份来源。 */
+  function welcomePartRows() {
+    const CAT = p => {
+      const d = RAP.PARTS[p];
+      if (d.pig) return '乘客';
+      const t = [];
+      if (d.structure) t.push('结构');
+      if (d.wheel) t.push('轮');
+      if (d.motor) t.push('动力');
+      if (d.energy) t.push('能量');
+      if (d.liftMass) t.push('浮力');
+      if (d.dropOne) t.push('压舱');
+      if (d.interactive && !d.liftMass && !d.dropOne) t.push('手动');
+      return t.join(' / ') || '零件';
+    };
+    return RAP.TRAY_ORDER.map(p => [p, CAT(p), RAP.PARTS[p].desc || '']);
+  }
+
   // 引导卡几何：绘制与点击共用，按钮放到卡片下方（和结算页同一套"对话框 + 底部动作"）
   function welcomeCard() {
     const page = WELCOME_PAGES[(state.welcome || 1) - 1] || WELCOME_PAGES[0];
-    return { x: (DW - 760) / 2, y: 132, w: 760, h: page.art === 'parts' ? 380 : 306 };
+    /* 零件一览的高度必须跟着行数走：9 件零件 × 32 行 = 288，加首行 100 与底部留白，
+     * 卡高 408。写死 380 会让最后一行压出卡外（排版审计会红）。 */
+    const h = page.art === 'parts'
+      ? 100 + welcomePartRows().length * PART_ROW_H + 20
+      : 306;
+    return { x: (DW - 760) / 2, y: 132, w: 760, h: h };
   }
   function welcomeBtnRect() {
     const C = welcomeCard();
@@ -2851,9 +3013,9 @@ const BIOMES = {
       drawPartShape('wood_wheel', cx2 - 46, cy2 + 40, 46 * 0.7, 0);
       drawPartShape('wood_wheel', cx2 + 46, cy2 + 40, 46 * 0.7, 0);
     } else if (page.art === 'parts') {
-      // 零件一览：一行一件 —— 图标 + 名称/类别 + 一句话职责
-      const rowsX = X + 36, rowW = W - 72, rowH = 34;
-      page.parts.forEach((it, i) => {
+      // 零件一览：一行一件 —— 图标 + 名称/类别 + 一句话职责（内容由 PARTS 现推）
+      const rowsX = X + 36, rowW = W - 72, rowH = PART_ROW_H;
+      welcomePartRows().forEach((it, i) => {
         const ry = Y + 100 + i * rowH;
         const [pid, cat, desc] = it;
         // 隔行淡底，长列表更好追
@@ -2863,16 +3025,28 @@ const BIOMES = {
         }
         // 图标
         if (pid === 'pig') {
-          drawPig(rowsX + 20, ry + 13, 11, 0, 'normal');
+          drawPig(rowsX + 20, ry + 12, 11, 0, 'normal');
+        } else if (RAP.PARTS[pid].maxStack > 1) {
+          // 可叠件画两个，一眼看出"这是能叠的"
+          drawPartShape(pid, rowsX + 13, ry + 10, 22, 0);
+          drawPartShape(pid, rowsX + 27, ry + 14, 22, 0);
+          drawStackBadge(rowsX + 36, ry + 4, 3);
         } else {
-          drawPartShape(pid, rowsX + 20, ry + 13, 26, 0,
+          drawPartShape(pid, rowsX + 20, ry + 12, 24, 0,
             pid === 'wood_frame' ? 3 : undefined);
         }
         // 名称 + 类别
-        text(RAP.PARTS[pid].label, rowsX + 46, ry + 18, 14.5, '#ffe9b0', 'left', true);
-        text(cat, rowsX + 132, ry + 18, 11, 'rgba(176,208,230,.92)', 'left');
-        // 职责
-        text(desc, rowsX + 176, ry + 18, 12.5, '#c9dae8', 'left');
+        text(RAP.PARTS[pid].label, rowsX + 48, ry + 17, 14, '#ffe9b0', 'left', true);
+        text(cat, rowsX + 134, ry + 17, 11, 'rgba(176,208,230,.92)', 'left');
+        // 职责：长说明会被卡右边挤出去，先量再缩
+        let ds = 12.5;
+        const maxW = X + W - 30 - (rowsX + 186);
+        ctx.font = `${ds}px "Microsoft YaHei", sans-serif`;
+        while (ds > 9 && ctx.measureText(desc).width > maxW) {
+          ds -= 0.5;
+          ctx.font = `${ds}px "Microsoft YaHei", sans-serif`;
+        }
+        text(desc, rowsX + 186, ry + 17, ds, '#c9dae8', 'left');
       });
     } else {
       // 三个按钮图标竖排，互不重叠
@@ -3042,11 +3216,11 @@ const BIOMES = {
     lg.addColorStop(1, 'rgba(232,200,122,0)');
     ctx.fillStyle = lg; ctx.fillRect(0, 138, DW, 1.5);
 
-    const CW = 216, CH = 250, GAP = 18;
-    const totalW = levels.length * CW + (levels.length - 1) * GAP;
+    const L = levelCardsLayout();
+    const CW = L.CW, CH = L.CH;
     levels.forEach((lv, i) => {
-      const x = (DW - totalW) / 2 + i * (CW + GAP);
-      const y = 168;
+      const x = L.x0 + i * (CW + L.GAP);
+      const y = L.y;
       // 每次都从 localStorage 重新读，避免只在启动时读一次
       const pr = readRecord(lv.levelId) ||
         { goals: { arrive: false, boxes: false, challenge: false }, best: null, boxes: 0 };
@@ -3108,9 +3282,18 @@ const BIOMES = {
       // 零件箱
       // 地形缩略图：从 44px 加高到 56px，能看出坡度和坑的深浅
       drawLevelThumb(lv, x + 12, y + 172, CW - 24, 56);
+      /* 零件箱清单：卡片宽度现在是自适应的（6 关时只有 187），
+       * 9 个零件的清单在 10px 下就可能超出卡面。所以先量再定字号，
+       * 宁可小一号也不出卡 —— 出卡的文字在选关页看起来像是渲染坏了。 */
       const boxTxt = Object.keys(lv.partsBox || {})
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + lv.partsBox[k]).join(' ');
-      text(boxTxt, x + CW / 2, y + 240, 10, 'rgba(212,228,240,.82)', 'center');
+      let bxSize = 10;
+      ctx.font = `700 ${bxSize}px "Microsoft YaHei", sans-serif`;
+      while (bxSize > 7 && ctx.measureText(boxTxt).width > CW - 16) {
+        bxSize -= 0.5;
+        ctx.font = `700 ${bxSize}px "Microsoft YaHei", sans-serif`;
+      }
+      text(boxTxt, x + CW / 2, y + 240, bxSize, 'rgba(212,228,240,.82)', 'center');
     });
     // 底部进度条带：填掉卡片下方的大片空白，同时给一个"总进度"的目标感
     {
@@ -3173,15 +3356,30 @@ const BIOMES = {
     text('点卡片进入关卡　·　按 ESC 或点空白关闭', DW / 2, DH - 18, 12, '#7f97a6', 'center');
   }
 
+  /* 选关卡片的排版只允许有一份。
+   * 原来是 drawLevelSelect 和 levelCardRect 各写一遍 `216/250/18`，
+   * 加到第 6 关时 6×216 + 5×18 = 1386 > 1280，卡片整体溢出屏幕 —— 而点击热区
+   * 用的是另一份拷贝，于是"看得见"和"点得着"会分家。
+   * 现在按卡片数自适应宽度：能放下 216 就用 216，放不下就等分。 */
+  function levelCardsLayout() {
+    const n = levels.length, GAP = 14, SIDE = 44;
+    const CW = Math.min(216, Math.floor((DW - SIDE * 2 - (n - 1) * GAP) / n));
+    const CH = 250;
+    const totalW = n * CW + (n - 1) * GAP;
+    return { CW, CH, GAP, x0: (DW - totalW) / 2, y: 168 };
+  }
+
   function levelCardRect(i) {
-    const CW = 216, CH = 250, GAP = 18;
-    const totalW = levels.length * CW + (levels.length - 1) * GAP;
-    return { x: (DW - totalW) / 2 + i * (CW + GAP), y: 168, w: CW, h: CH };
+    const L = levelCardsLayout();
+    return { x: L.x0 + i * (L.CW + L.GAP), y: L.y, w: L.CW, h: L.CH };
   }
 
   function drawHelp() {
     if (!state.helpOpen) return;
-    const W = 920, H = 540, X = (DW - W) / 2, Y = 84;
+    /* 高度跟着零件数走：托盘已有 9 款零件，固定 540 会把最后一行（小猪）挤到框外。
+     * 行高 62、首行留 84、底部再留 56 给关闭按钮。 */
+    const W = 920, ROWH = 58;
+    const H = 84 + RAP.TRAY_ORDER.length * ROWH + 46, X = (DW - W) / 2, Y = Math.max(58, (DH - H) / 2 - 8);
     fillScreen('rgba(6,12,14,.78)');
     ctx.fillStyle = '#132430'; roundRect(X, Y, W, H, 16); ctx.fill();
     ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 2; ctx.stroke();
@@ -3190,29 +3388,32 @@ const BIOMES = {
     const order = RAP.TRAY_ORDER;
     order.forEach((part, i) => {
       const def = RAP.PARTS[part];
-      const yy = Y + 84 + i * 62;
-      drawPartShape(part, X + 58, yy + 6, 36, 0);
-      text(def.label, X + 92, yy, 15, '#e6f0f8', 'left', true);
+      const yy = Y + 84 + i * ROWH;
+      drawPartShape(part, X + 58, yy + 6, 34, 0);
+      text(def.label, X + 92, yy, 14, '#e6f0f8', 'left', true);
       const tags = [def.mass + ' kg'];
       if (def.structure) tags.push('结构');
       if (def.wheel) tags.push('轮子');
       if (def.motor) tags.push('动力');
       if (def.energy) tags.push('能量 +' + def.energy);
+      if (def.liftMass) tags.push('浮力 +' + def.liftMass + ' kg');
+      if (def.dropOne) tags.push('压舱');
       if (def.interactive) tags.push('交互件');
       if (def.inner) tags.push('只能放框里');
       if (def.dir) tags.push('有方向');
-      text(tags.join(' · '), X + 92, yy + 18, 11, '#8fb6c9', 'left');
+      if (def.maxStack > 1) tags.push('同格可叠 ' + def.maxStack);
+      text(tags.join(' · '), X + 92, yy + 17, 11, '#8fb6c9', 'left');
       // 说明文字自动换行
       const chars = (def.desc || '').split('');
-      let line = '', ly = yy + 2, lx = X + 236;
+      let line = '', ly = yy + 2, lx = X + 250;
       for (let k = 0; k < chars.length; k++) {
         const test = line + chars[k];
         if (ctx.measureText(test).width > X + W - 30 - lx) {
-          text(line, lx, ly, 13, '#cfe0ee', 'left');
-          line = chars[k]; ly += 19;
+          text(line, lx, ly, 12.5, '#cfe0ee', 'left');
+          line = chars[k]; ly += 18;
         } else line = test;
       }
-      if (line) text(line, lx, ly, 13, '#cfe0ee', 'left');
+      if (line) text(line, lx, ly, 12.5, '#cfe0ee', 'left');
     });
     // 右上角关闭按钮
     const cb = { x: X + W - 56, y: Y + 16, w: 34, h: 34 };
@@ -3563,7 +3764,8 @@ const BIOMES = {
                    welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect,
                    runChallengeRect, challengeStatus, coinsOf, totalCoins, SAVE_KEY,
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,
-                   totalStars, GOALS, RAP };
+                   totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
+                   drawStackBadge, liftLineOf: () => liftLineCache };
   startLevel(0);
   requestAnimationFrame(frame);
 })();

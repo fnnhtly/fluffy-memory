@@ -63,7 +63,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // 关卡数是数据驱动的，卡片几何也来自页面，不写死
   const n = await ev('window.__rap.levels.length');
-  A.chk('选关页列出全部 5 关', n === 5, 'n=' + n);
+  A.chk('选关页列出全部 ' + n + ' 关', n >= 5, 'n=' + n);
 
   // 点第 3 张卡（1-3）
   const card = JSON.parse(await ev('JSON.stringify(window.__rap.levelCardRect(2))'));

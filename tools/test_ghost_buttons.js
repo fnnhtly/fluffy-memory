@@ -69,8 +69,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const gs=(R.state.run&&R.state.run.car.groups)||[];
     const n=Math.min(3,gs.length), xs=1280/2-(n*104)/2;
     for(let i=0;i<n;i++) add({x:xs+i*104-4,y:720-150-4,w:100,h:100});
-    // 顶部关卡页签
-    for(let i=0;i<5;i++) add({x:24+i*86,y:18,w:80,h:30});
+    // 顶部关卡页签（个数跟着 levels 走 —— 加关时不改这里，测试就会把第 6 个页签当成幽灵）
+    for(let i=0;i<R.levels.length;i++) add({x:24+i*86,y:18,w:80,h:30});
     return JSON.stringify(out);
   })()`).then(JSON.parse);
 
