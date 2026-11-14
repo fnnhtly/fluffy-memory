@@ -44,12 +44,13 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（`tools/build_levels_js.js`） | ✅ 自洽校验通过 |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**45 项自检全绿**（32 个脚本 + 静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**47 项自检全绿**（34 个脚本 + 静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 37/37 |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
-| 1-6 教学设计 | `tools/test_1_6.js` | ✅ 18/18 |
+| 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |
 | 失败回放可见性 | `tools/test_replay_parts.js` | ✅ 9/9（像素对照：有气球 vs 没气球差 5900 点） |
 | 「没有进展」看门狗 | `tools/test_progress_watchdog.js` + `tools/test_resolve_sync.js` | ✅ 14/14 + 10/10（含"审计造状态不许被引擎覆盖"） |
+| 章节收束 | `tools/test_chapter_end.js` | ✅ 12/12（打通六关才出现「整章通关」，且只通 1-6 时不许出现） |
 | 气球沙袋的可见链路 | `tools/test_lift_ui.js` | ✅ 25/25（真鼠标点车身 / 徽标像素对照 / 终点高度提示） |
 | 美术方案 | `docs/art-bible.md`（四层景深 + 6 个 3D 手段 + 调色板 + 零件语言） | ✅ |
 | 官方素材目录 | `docs/art-catalog.md` + `docs/art/imageid-probe-{1,2}.png` | ✅ 实测：无场景素材，UI 图标可用 |

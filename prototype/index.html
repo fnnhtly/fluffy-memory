@@ -196,6 +196,36 @@
       return n + (pr ? starsOf(pr.goals) : 0);
     }, 0);
   }
+  /* 整个切片打通了吗？
+   *
+   * 为什么要专门问这一句：第 40 轮把六关都真跑了一遍（probe_chapter_end.js），
+   * 打完 1-6 的三星之后，屏幕上唯一的"终局"表达是一颗**灰掉的**
+   * 「已是最后一关」按钮 —— 玩家把垂直切片通关了，游戏一个字都没说。
+   * 这和"第三颗星是惩罚"是同一类错误：内容做完了，却没有收束。
+   *
+   * 判据只看 arrive（是否到过终点），不看星数 —— 全三星是"完美"，
+   * 但**打通**不等于全三星，两件事不能混成一个门槛。 */
+  function chapterDone() {
+    return levels.every(lv => {
+      const pr = readRecord(lv.levelId);
+      return !!(pr && pr.goals && pr.goals.arrive);
+    });
+  }
+  /* 结算页右下那个按钮到底是什么，只有一份定义。
+   *
+   * 三种情况：
+   *   1) 还有下一关        → 「下一关」N
+   *   2) 最后一关但没打通  → 「已是最后一关」灰掉（这才是它该有的样子）
+   *   3) 最后一关且已打通  → 「章节总览」L，点开选关看整张地图
+   *
+   * 第 3 种是把一颗死按钮换成真动作：玩家走到终点时最想看的东西，
+   * 就是"我一共点亮了多少"。它同时也给了卡面一个天然的收尾。 */
+  function resultNextBtn() {
+    const hasNext = state.levelIndex < levels.length - 1;
+    if (hasNext) return { label: '下一关', disabled: false, keycap: 'N', action: 'next' };
+    if (chapterDone()) return { label: '章节总览', disabled: false, keycap: 'L', action: 'overview' };
+    return { label: '已是最后一关', disabled: true, keycap: null, action: 'none' };
+  }
   /* 写存档：goals 取并集（只增不减），木箱取最好，时间取最短。
    * 返回 { before, after }，让调用方知道"这一次到底点亮了哪颗新星"。 */
   function saveProgress(levelId, goals, time, boxesGot) {
@@ -549,10 +579,17 @@
   }
 
   /* 标准解发射：给测试用的一步到位入口。
-   * `_presses` 里的按下/松开时刻会在跑的过程中按时送到 `RAP.pressInteract`
-   * —— 和玩家按 1/2/3 键走的是同一条代码路径，不是伪造状态。
-   * 之所以需要它：1-2 改成"必须按一下打气筒"之后，光是把零件摆好并不能通关，
-   * 用 SPECS 自动跑关的测试必须也能复现"什么时候按"。 */
+   *
+   * `_presses` / `_drops` / `_pops` 里的时刻会在跑的过程中按时送到
+   * `RAP.pressInteract` / `RAP.dropSandbag` / `RAP.popBalloon` ——
+   * 和玩家按 1/2/3 键、点车身走的是**同一条代码路径**，不是伪造状态。
+   *
+   * 为什么需要它：1-2 改成"必须按一下打气筒"之后，光是把零件摆好并不能通关；
+   * 1-6 更极端，"什么时候扔沙袋、什么时候扎气球"就是这一关的全部玩法。
+   * 如果 launchSpec 只认 _presses，那 1-6 在浏览器里就**根本没法自动跑到通关**
+   * —— 它只能在 Node 的 simulate 里过，而真浏览器里一次都没验过。
+   * 第 40 轮补上：三类动作统一成一条时间轴（`actScript`），
+   * 和 game.js 的 simulate 完全同构。 */
   function launchSpec(levelIndex, specKey) {
     if (typeof levelIndex === 'number') startLevel(levelIndex);
     const lv = level();
@@ -564,7 +601,16 @@
     if (!chk.ok) { toast('标准解装不上：' + chk.reason); return false; }
     launch();
     RAP.applySpecRuntime(state.run, spec);
-    state.run.pressScript = (spec._presses || []).slice();
+    const acts = [];
+    (spec._presses || []).forEach(a => acts.push({ t: a.t, k: a.k || 'press', n: a.n || 1 }));
+    (spec._drops || []).forEach(a => {
+      for (let i = 0; i < (a.n || 1); i++) acts.push({ t: a.t + i * 0.016, k: 'drop', n: 1 });
+    });
+    (spec._pops || []).forEach(a => {
+      for (let i = 0; i < (a.n || 1); i++) acts.push({ t: a.t + i * 0.016, k: 'pop', n: 1 });
+    });
+    acts.sort((a, b) => a.t - b.t);
+    state.run.actScript = acts;
     state.welcome = 0; state.introT = 1;
     return true;
   }
@@ -731,7 +777,10 @@
       if (replayPlaying()) { state.replayT = REPLAY_DUR; return; }
       if (hit(btnRect('retry'), p.x, p.y)) { state.phase = 'build'; state.run = null; return; }   // 保留拼装
       if (hit(btnRect('next'), p.x, p.y)) {
-        if (state.levelIndex < levels.length - 1) startLevel(state.levelIndex + 1);
+        const nb = resultNextBtn();
+        if (nb.action === 'next') startLevel(state.levelIndex + 1);
+        else if (nb.action === 'overview') state.levelSelect = true;
+        // action === 'none'：灰按钮，什么都不做（判定比画面多活一会儿才是幽灵热区）
         return;
       }
     }
@@ -884,7 +933,9 @@
         state.phase = 'build'; state.run = null; ev.preventDefault(); return;
       }
       if (k === 'n' || k === 'arrowright') {
-        if (state.levelIndex < levels.length - 1) startLevel(state.levelIndex + 1);
+        // 只兑现"下一关"。章节全通时那颗按钮写的是 L（选关本来就能开），
+        // 不能再偷偷让 N 也开一次 —— 键帽上没写的事就不做。
+        if (resultNextBtn().action === 'next') startLevel(state.levelIndex + 1);
         ev.preventDefault(); return;
       }
       // 其余键（L 选关 / ESC）继续走下面的通用分支
@@ -2961,11 +3012,41 @@ const BIOMES = {
       // 列出这一局**没**点亮的那几颗，并直接说清怎么拿
       const missing = GOALS.filter(k => !tgoals[k]);
       if (!missing.length) {
-        text('全部三星达成！', X + 42, cardY + 352, 15, '#b6ff9e', 'left', true);
+        /* 说清"本关"，因为最后一张卡上同一行右侧还会出现"整章通关 · 全三星"。
+         * 两处都只写"全三星"会读成同一件事，玩家分不出哪个是本关的。 */
+        text('本关三星达成！', X + 42, cardY + 352, 15, '#b6ff9e', 'left', true);
       } else {
         text('还差：' + missing.map(k => gnames[k]).join(' / '), X + 42, cardY + 352, 15,
           '#8fa3b4', 'left');
       }
+    }
+    /* 章节收束：这是**最后一关**、而且六关都到过终点时，卡片上必须有一句话
+     * 承认"你把这一段打完了"。
+     *
+     * 原来这里什么都没有 —— 打穿 1-6 之后，屏幕上唯一的终局表达是右下角
+     * 一颗灰掉的「已是最后一关」。玩家不知道自己是不是打完了、后面还有没有。
+     * 星级按"全三星"和"打通"分开说：只打通了也是通关，不该逼人刷满 18 星
+     * 才配看到一句话。 */
+    if (win && state.levelIndex === levels.length - 1 && chapterDone()) {
+      const tot = levels.length * 3, got = totalStars();
+      const per = tot > 0 ? Math.min(1, got / tot) : 1;
+      const done = got >= tot;
+      const by2 = cardY + 352;
+      text(done ? '整章通关 · 全三星！' : '整章通关！',
+        X + W - 42, by2, 15, done ? '#ffd93d' : '#b6ff9e', 'right', true);
+      // 进度小字：只用"拿到几颗星"，不发明新指标
+      text(done ? '六关 ' + tot + ' 颗星全亮' : '全章 ★ ' + got + ' / ' + tot + '　还可以回头补星',
+        X + W - 42, by2 + 22, 12,
+        done ? '#ffe9b0' : 'rgba(200,222,238,.8)', 'right');
+      // 一条极短的金线，把"收束"和上面的战报在视觉上分开
+      ctx.save();
+      const lg = ctx.createLinearGradient(X + W - 300, 0, X + W - 42, 0);
+      lg.addColorStop(0, 'rgba(232,200,122,0)');
+      lg.addColorStop(1, 'rgba(232,200,122,.7)');
+      ctx.strokeStyle = lg; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X + W - 300, by2 - 20); ctx.lineTo(X + W - 42, by2 - 20); ctx.stroke();
+      ctx.restore();
+      void per;
     }
 
     // 新纪录徽章（滑入后 0.7s 登场，带轻微弹跳）
@@ -3055,8 +3136,10 @@ const BIOMES = {
       }
     };
     btn(DW / 2 - 300, 260, '重试（保留拼装）', false, false, '空格');
-    const hasNext = state.levelIndex < levels.length - 1;
-    btn(DW / 2 + 40, 260, hasNext ? '下一关' : '已是最后一关', true, !hasNext, 'N');
+    {
+      const nb = resultNextBtn();
+      btn(DW / 2 + 40, 260, nb.label, true, nb.disabled, nb.keycap);
+    }
     state.resultBtnY = btnY;
   }
 
@@ -3845,13 +3928,17 @@ const BIOMES = {
         let guard = 0;
         while (state.run.acc >= 1 / 60 && guard++ < 5) {
           state.run.acc -= 1 / 60;
-          // 标准解里的"按下/松开"时刻（只由 launchSpec 注入）：
-          // 走的是玩家按 1/2/3 键的同一函数，不是伪造 pumpPress。
-          if (state.run.pressScript && state.run.pressScript.length) {
-            const ps = state.run.pressScript;
+          // 标准解里的"按下/松开/扔/扎"时刻（只由 launchSpec 注入）：
+          // 走的是玩家按键 / 点车身的同一批函数，不是伪造状态。
+          // 三类动作用同一条时间轴，和 game.js 的 simulate 同构 ——
+          // 否则 1-6 只会在 Node 里通关，浏览器里一次都跑不到（第 40 轮修）。
+          if (state.run.actScript && state.run.actScript.length) {
+            const ps = state.run.actScript;
             while (ps.length && ps[0].t <= state.run.time) {
               const a = ps.shift();
               if (a.k === 'release') RAP.releaseInteract(state.run, a.n || 1);
+              else if (a.k === 'drop') RAP.dropSandbag(state.run, a.n || 1);
+              else if (a.k === 'pop') RAP.popBalloon(state.run, a.n || 1);
               else RAP.pressInteract(state.run, a.n || 1);
             }
           }
@@ -3991,7 +4078,7 @@ const BIOMES = {
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
-                  progressWarning, failText };
+                  progressWarning, failText, chapterDone, resultNextBtn };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
