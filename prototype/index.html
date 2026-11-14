@@ -119,7 +119,7 @@
     levelIndex: 0, phase: 'build', build: RAP.newBuild(),
     selected: 'wood_frame', run: null, paramsOpen: false,
     dragPart: null, dragFromTray: false, mouse: { x: 0, y: 0, down: false },
-    helpOpen: false, paused: false, bounce: null, debris: [], slowmo: 0, lastImpact: null,
+    helpOpen: false, paused: false, bounce: null, debris: [], bursts: [], slowmo: 0, lastImpact: null,
     camState: { x: 0, y: 0, zoom: 1.7 }, shake: 0, flash: 0, vignette: 0, levelSelect: false,
     introT: 0,        // 入场镜头进度 0→1
     outroT: 0,        // 结算过渡进度 0→1
@@ -722,6 +722,13 @@
     }
 
     if (state.phase === 'resolved') {
+      /* 回放还没播完时，结算卡根本没画 —— 那些按钮的判定也必须一起关掉，
+       * 否则玩家在"回放画面"上随手一点，就会落到一个看不见的"重开"热区上。
+       * 这和 round35 删掉的那个 retryRun 幽灵热区是同一类问题：
+       * **判定比画面多活了一会儿**。
+       * 但也不能让点击完全失效 —— 那样玩家会觉得"点不动"。
+       * 所以这一下点击的语义是**跳过回放**：直接跳到卡已就位的时刻。 */
+      if (replayPlaying()) { state.replayT = REPLAY_DUR; return; }
       if (hit(btnRect('retry'), p.x, p.y)) { state.phase = 'build'; state.run = null; return; }   // 保留拼装
       if (hit(btnRect('next'), p.x, p.y)) {
         if (state.levelIndex < levels.length - 1) startLevel(state.levelIndex + 1);
@@ -868,6 +875,11 @@
     // 结算页键盘：面板上的按钮写了键帽，键盘就必须真的能用
     // （原来这里没有分支——README 说"空格重开"，按下去什么都不发生）
     if (state.phase === 'resolved') {
+      /* 同鼠标热区：回放没播完时卡还没画，空格/N 也不能生效 ——
+       * 否则玩家按一下空格就跳过了自己还没看到的回放。
+       * 按空格/回车的语义是**跳过回放**（跳到卡就位），不是"什么都没发生"，
+       * 这样玩家不会以为键盘失灵。 */
+      if (replayPlaying()) { state.replayT = REPLAY_DUR; ev.preventDefault(); return; }
       if (k === ' ' || k === 'enter') {
         state.phase = 'build'; state.run = null; ev.preventDefault(); return;
       }
@@ -2651,8 +2663,20 @@ const BIOMES = {
     if (st.phase === 'resolved' && st.result === 'fail' && st.replay && st.replay.length) {
       state.replayT += elapsed;
       const frames = st.replay;
-      const speed = 0.45;                        // 回放速度
-      const raw = state.replayT * speed * 20;    // 20 fps 采样
+      /* 回放**先播完，结算卡再滑入**。
+       *
+       * 这是量出来的：原来两者是同时进行的，而结算卡是 760×424、
+       * 位置正好盖住屏幕中央（x 260..1020, y 150..574）—— 回放的车就画在那儿。
+       * 用 tools/dbg_replay_visible.js 数像素：卡片滑入后「卡外」的气球粉
+       * 只剩 293 个（摘掉气球只掉 17 个），而卡片不画时是 5283 个。
+       * 也就是说**回放这一整段，玩家一帧都没看见**。
+       *
+       * 改法不是把回放挪到左边（卡片太大，挪到哪都被压住），而是**排序**：
+       * 先让玩家看 2.8 秒回放，卡再进来。2.8 秒是算出来的：
+       * 60 帧轨迹在 0.45 倍速下要 6.5 秒 —— 太长，没人会看完；
+       * 压到 2.8 秒刚好把"怎么出的事"播完一遍。 */
+      const raw = Math.min(frames.length - 1 + 12,
+        state.replayT / REPLAY_DUR * (frames.length - 1));
       const idx = Math.min(frames.length - 1, Math.floor(raw));
       const f = frames[idx];
       const isLast = idx >= frames.length - 1;
@@ -2676,27 +2700,27 @@ const BIOMES = {
       ctx.setLineDash([]);
       ctx.restore();
 
-      // 回放中的车（画出轮廓）
+      // 回放中的车：画**真正那辆车**（用录下来的位姿 + 实际的零件）
       const rp = worldToScreen(f.x, f.y, rcam);
-      ctx.save();
-      ctx.translate(rp.x, rp.y); ctx.rotate(f.a || 0);
-      ctx.globalAlpha = 0.9;
-      // 车体三格
-      for (let k = -1; k <= 1; k++) {
-        const bx = k * PPM * rcam.zoom * 0.85;
-        ctx.fillStyle = '#c99354';
-        roundRect(bx - PPM * rcam.zoom * 0.4, -PPM * rcam.zoom * 0.4,
-          PPM * rcam.zoom * 0.8, PPM * rcam.zoom * 0.8, 4); ctx.fill();
-        ctx.strokeStyle = '#7a4f22'; ctx.lineWidth = 2; ctx.stroke();
+      {
+        const ca3 = Math.cos(f.a || 0), sa3 = Math.sin(f.a || 0);
+        const ordered3 = st.car.parts.slice()
+          .sort((a, b) => (a.inner ? 1 : 0) - (b.inner ? 1 : 0));
+        ordered3.forEach(p => {
+          const wx = f.x + p.lx * ca3 - p.ly * sa3;
+          const wy = f.y + p.lx * sa3 + p.ly * ca3;
+          const sp3 = worldToScreen(wx, wy, rcam);
+          const size3 = PPM * rcam.zoom * (p.inner ? 0.62 : 1.0);
+          let spin3 = 0;
+          if (p.def.wheel) spin3 = (st.car.odo || 0) / (p.def.radius || 0.5);
+          const rot3 = p.def.wheel ? 0 : ((p.dir || 0) + (f.a * 180 / Math.PI) / 90);
+          /* 这里原来是画"三个方块 + 两个圆"的示意图 —— 和玩家刚造的那辆车
+           * 长得完全不一样（木框/马达/气球/沙袋全被抹平成一个方块），
+           * 失败回放最该回答的问题恰恰是"我那辆车到底怎么出事的"。
+           * 现在直接按录下来的位姿，用**同一套零件画法**重画。 */
+          drawPartShape(p.part, sp3.x, sp3.y, size3, rot3, p.hp, spin3);
+        });
       }
-      // 车轮
-      ctx.fillStyle = '#20262c';
-      for (const k of [-1, 1]) {
-        ctx.beginPath();
-        ctx.arc(k * PPM * rcam.zoom * 0.85, PPM * rcam.zoom * 0.5, PPM * rcam.zoom * 0.28, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
 
       // 定格：出事那一刻的冲击波
       if (isLast) {
@@ -2722,8 +2746,21 @@ const BIOMES = {
 
       // 标题
       text('回放 · ' + failText(st.failReason), DW / 2, 120, 22, '#ffb4a2', 'center', true);
-      text(isLast ? '出事的那一刻' : (speed.toFixed(2) + '× 慢放'), DW / 2, 148, 13,
+      /* 副标题原来写 `speed + '× 慢放'`，改成"压进固定时长"之后 speed 就不是
+       * 那个意思了（60 帧 / 2.8 秒 ≈ 实速），继续写"0.45× 慢放"是骗人的。
+       * 现在写**真实进度**：1.4 / 3.0 s —— 玩家能看出还剩多少，也顺手
+       * 告诉他自己可以点一下跳过。 */
+      const totalS = (frames.length - 1) / 20;
+      text(isLast ? '出事的那一刻'
+        : (Math.min(totalS, Math.max(0, idx) / 20)).toFixed(1) + ' / ' + totalS.toFixed(1) + ' s',
+        DW / 2, 148, 13,
         isLast ? '#ffd93d' : 'rgba(200,218,232,.7)', 'center');
+      if (!isLast) {
+        // 跳过提示：点击/空格现在真的能跳过，那就得说一声（否则等于藏了个操作）
+        ctx.globalAlpha = 0.5 + 0.5 * Math.sin(performance.now() / 380);
+        text('点击跳过回放', DW / 2, DH - 66, 12, 'rgba(200,218,232,.9)', 'center');
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
@@ -2738,8 +2775,33 @@ const BIOMES = {
     ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2); ctx.fill();
   }
 
+  /* 失败回放的时长与"是否还在播"。
+   *
+   * 抽成函数是因为它现在被三处共用：绘制（drawRun）、
+   * 结算卡的出场时机（drawResult）、以及输入（鼠标热区 / 键盘）。
+   * 三处各写一遍 `state.replayT < 2.8` 是必须避免的 ——
+   * 这个项目已经因为"同一个事实抄了多份"踩过三次坑（第三颗星的名字、
+   * 关卡卡片几何、零件行数）。 */
+  const REPLAY_DUR = 2.8;
+  function replayPlaying() {
+    const st = state.run;
+    if (!st || st.phase !== 'resolved' || st.result !== 'fail') return false;
+    if (!st.replay || !st.replay.length) return false;
+    return (state.replayT || 0) < REPLAY_DUR;
+  }
+
   function drawResult(elapsed) {
     const st = state.run;
+    /* 失败回放没播完之前，**结算卡不出现**。
+     *
+     * 两者原来同时画，而卡片 760×424 正好盖住屏幕中央 —— 回放的车就画在那儿。
+     * tools/dbg_replay_visible.js 量过：卡片滑入后「卡外」的气球粉只剩 293 个
+     * （摘掉气球只掉 17 个），而卡片不画时是 5283 个（摘掉气球掉 3320 个）。
+     * 结论很硬：**回放这一段玩家一个像素都没看到**。
+     *
+     * 现在回放先独占 REPLAY_DUR 秒，卡再滑入。提前返回也让 fillScreen
+     * 别压暗 —— 暗幕同样会吃掉回放的对比度。 */
+    if (replayPlaying()) return;
     fillScreen('rgba(8,14,10,.58)');
     const win = st.result === 'win';
 
