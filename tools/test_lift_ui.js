@@ -169,6 +169,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('扎破后浮力下降 1.2 kg', Math.abs((before.lift - after.lift) - 1.2) < 1e-6,
     `${before.lift.toFixed(2)} → ${after.lift.toFixed(2)}`);
 
+  /* 炸开的橡皮屑必须真的出现了。
+   * 没有这条，"点气球只有数字变、画面上什么都不发生"这种回归永远抓不到 ——
+   * 而玩家的第一反应会是"我没点中"。
+   * `burst` 事件是物理层写在事件层里的，渲染层消费它会 spawnBurstFx。 */
+  {
+    const nBurst = await ev('(window.__rap.state.bursts||[]).length');
+    A.chk('扎破时有爆炸粒子（不是只有数字变了）', nBurst >= 8, nBurst + ' 个粒子');
+    // 粒子必须会漂走并消失，不能永久堆在 state 里
+    await sleep(1200);
+    const nBurst2 = await ev('(window.__rap.state.bursts||[]).length');
+    A.chk('爆炸粒子会自己消失（不会一直堆在 state 里）', nBurst2 < nBurst, `${nBurst} → ${nBurst2}`);
+  }
+
   // 反向对照：点在远处（车外 220px）不该有任何副作用
   {
     const b2 = JSON.parse(await ev(`(()=>{const s=window.__rap.state.run;
@@ -199,6 +212,41 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     } else {
       A.chk('点沙袋 → 扔下去一个', false, '车上没有沙袋（1-6 规格里应该有）');
     }
+  }
+
+  // ---------- 三星条件条：1-6 是「沙袋全扔」，必须显示 已扔 n / 总数 ----------
+  {
+    const cs0 = JSON.parse(await ev(`JSON.stringify(window.__rap.challengeStatus(window.__rap.state.run))`));
+    A.chk('1-6 的三星条是「沙袋全扔」', /沙袋全扔/.test(cs0.label), cs0.label);
+    A.chk('三星条显示 已扔 / 总数（而不是只有一个数字）',
+      /\/\s*\d+/.test(cs0.value), cs0.value);
+    A.chk('总数来自出发那一刻的记账（不是现算 build）',
+      (await ev('window.__rap.state.run.sandbagTotal')) === 3,
+      'sandbagTotal=' + (await ev('window.__rap.state.run.sandbagTotal')));
+    // 把剩下两个也扔完 → 条件必须变成满足
+    await ev(`(()=>{const s=window.__rap.state.run;
+      while(window.__rap.RAP.dropSandbag(s)); return 1;})()`);
+    const cs1 = JSON.parse(await ev(`JSON.stringify(window.__rap.challengeStatus(window.__rap.state.run))`));
+    A.chk('扔完之后三星条变成满足（3/3 必须给星，不能差一个数）', cs1.pass === true,
+      'pass=' + cs1.pass + '  ' + cs1.value);
+  }
+
+  // ---------- 第三颗星的名字：三处显示必须是同一份 ----------
+  /* 之前是"结算页 / 行驶状态条 / 选关卡面"各写一份手抄表，
+   * 加气球/沙袋那两颗新星时只改了两处，选关卡面就会显示 "★★★：—"。
+   * 这里把三处的值都取出来对比。 */
+  {
+    const three = JSON.parse(await ev(`(()=>{const R=window.__rap, lv=R.levels[5];
+      return JSON.stringify({
+        card: R.challengeNameOf(lv),
+        result: R.goalNames().challenge,
+        bar: R.challengeStatus(R.state.run || {}).label
+      });})()`));
+    A.chk('选关卡面 / 结算页 / 状态条 三处的第三颗星名字一致',
+      three.card === three.result && three.card === three.bar,
+      `卡面「${three.card}」结算「${three.result}」状态条「${three.bar}」`);
+    A.chk('三处都不是占位符（"—" / 空 / 原始 type）',
+      !/^(—|)$/.test(three.card) && !/allSandbags/.test(three.card), three.card);
   }
 
   // ---------- 失败文案：flew_away 必须有中文，不能落到 key 上 ----------

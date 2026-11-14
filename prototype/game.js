@@ -459,6 +459,17 @@
       boxesGot: 0, wallHits: 0, pigHP: 3, motorUse: 0, pumpPress: 0, maxAngle: 0,
       // 气球/沙袋的消耗记账（给三星条件用：「一个气球都不破」「沙袋全扔」之类）
       balloonPops: 0, balloonPopsBurst: 0, sandbagsDropped: 0,
+      /* 出发时一共带了几个沙袋 —— 「沙袋全扔」这颗星要在 HUD 上显示 已扔/总数，
+       * 而扔到中途时 build 里那格的数量已经变了，所以必须在出发那一刻结算一次。
+       * 和 challengePass 里的算法保持同一份（那边现在也读这个字段）。 */
+      sandbagTotal: (function (b) {
+        var t = 0;
+        Object.keys(b.cells || {}).forEach(function (k) {
+          var c = b.cells[k];
+          if (PARTS[c.part] && PARTS[c.part].dropOne) t += cellCount(c);
+        });
+        return t;
+      })(build),
       // 「不散架 KRAK SNAP」用：参考里这一颗星要求"载具没散架，且猪没从载具里掉出来"。
       // 两个标记必须分开，因为"框碎了但猪还卡在上面"和"框好好的猪却掉出来了"都该判失败。
       hullBroken: false, pigEjected: false,
@@ -548,6 +559,11 @@
     state.balloonPops = (state.balloonPops || 0) + 1;
     syncCarMass(state.car);
     log(state, 'balloon_pop left=' + state.car.liftMass.toFixed(2));
+    /* 炸点在**被扎破的那个气球原位**（用 r.at 的局部坐标换算到世界），
+     * 不是车心 —— 玩家点的是气球，碎片就该从气球那个位置炸开。
+     * 主动扎和碰地扎共用这条事件，所以渲染层只有一处要认 'burst'。 */
+    var bp = worldOf(state.car, r.at.x, r.at.y);
+    spawnBurst(state, bp.x, bp.y);
     return true;
   }
 
@@ -731,14 +747,13 @@
        * 来说是同一件事：气球没了。要是只判碰地，主动扎光气球反而能拿三星。 */
       case 'noPop': return (state.balloonPops || 0) === 0;
       /* 「沙袋全扔完」—— 配重关的第三颗星：证明玩家真的用掉了配重，
-       * 而不是"多带了一堆沙袋一路压过来"。 */
+       * 而不是"多带了一堆沙袋一路压过来"。
+       * 总数读 state.sandbagTotal（出发那一刻算好的），不再二次遍历 build ——
+       * HUD 的"已扔 2 / 3"和这里的判定必须是同一个数，否则玩家会看到
+       * "3/3 了但没给星"。 */
       case 'allSandbags':
-        var totalBags = 0;
-        (state.build ? Object.keys(state.build.cells) : []).forEach(function (k) {
-          var cell = state.build.cells[k];
-          if (PARTS[cell.part] && PARTS[cell.part].dropOne) totalBags += cellCount(cell);
-        });
-        return totalBags > 0 && (state.sandbagsDropped || 0) >= totalBags;
+        return (state.sandbagTotal || 0) > 0 &&
+               (state.sandbagsDropped || 0) >= state.sandbagTotal;
       default: return false;
     }
   }

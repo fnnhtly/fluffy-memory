@@ -441,6 +441,17 @@
           return { type: ch.type, label: '不散架', value: '猪掉出来了', pass: false };
         }
         return { type: ch.type, label: '不散架', value: '结构完好', pass: true };
+      /* 气球/沙袋那两颗星（第 37 轮）。
+       * 这两个条件都是"用掉消耗品"，和「不散架」的思路正好相反：
+       * 前者奖励"敢花"，后者奖励"别碰"。放在同一套条里才看得出这种反差。 */
+      case 'noPop':
+        return { type: ch.type, label: '一个气球都不扎',
+                 value: '已扎 ' + (st.balloonPopsBurst || 0) + ' 个',
+                 pass: (st.balloonPopsBurst || 0) === 0 };
+      case 'allSandbags':
+        return { type: ch.type, label: '沙袋全扔',
+                 value: '已扔 ' + (st.sandbagsDropped || 0) + ' / ' + (st.sandbagTotal || 0),
+                 pass: (st.sandbagsDropped || 0) >= (st.sandbagTotal || 0) && (st.sandbagTotal || 0) > 0 };
       default:
         return { type: 'none', label: '本关没有 ★★★', value: '', pass: false };
     }
@@ -448,18 +459,32 @@
   /* 三颗星的名字（结算页与实时状态条共用一份，避免两处文案漂移）。
    * 照参考的顺序：① 到终点 ② 全木箱 ③ 关卡特殊条件。 */
   function goalNames() {
-    const ch = (level() || {}).challenge || { type: 'none' };
-    const cmp = {
-      none: '本关没有特殊条件',
-      pumpPress: '不按打气筒',
-      energyLeft: '能量剩 ≥ ' + (ch.min || 0),
-      noFlip: '全程不翻车',
-      motorUse: '不用马达通关',
-      noBreak: '不散架（KRAK SNAP）',
-      time: '限时 ≤ ' + (ch.max || 0).toFixed(1) + ' s'
+    return {
+      arrive: '小猪抵达终点',
+      boxes: '收齐所有木箱',
+      challenge: challengeNameOf(level())
     };
-    return { arrive: '小猪抵达终点', boxes: '收齐所有木箱', challenge: cmp[ch.type] || '特殊条件' };
   }
+  /* 第三颗星的名字：结算页、行驶期状态条、选关卡面三处都要显示它。
+   * 原来是三份互不相同的手抄表（选关那处写「不散架（KSP）」、结算写「KRAK SNAP」、
+   * 状态条写「不散架」），加气球/沙袋那两颗新星时只改了其中两处 ——
+   * 选关卡面就会显示 "★★★：—"。现在只有一个来源。 */
+  function challengeNameOf(lvx) {
+    const ch = (lvx || {}).challenge || { type: 'none' };
+    const m = {
+      none: '无特殊条件',
+      pumpPress: '不按打气筒',
+      energyLeft: '能量剩 ≥ ' + (ch.min || 30),
+      noFlip: '不翻车',
+      motorUse: '不用马达',
+      noBreak: '不散架（KRAK SNAP）',
+      time: '限时 ≤ ' + (ch.max || 0).toFixed(1) + ' s',
+      noPop: '一个气球都不扎',
+      allSandbags: '沙袋全扔'
+    };
+    return m[ch.type] || '—';
+  }
+
   function hit(rect, mx, my) { return rect && mx >= rect.x && mx <= rect.x + rect.w && my >= rect.y && my <= rect.y + rect.h; }
 
   function closeWelcome() {
@@ -2359,6 +2384,12 @@ const BIOMES = {
         const goals = [];
         if (lv.boxes && lv.boxes.length) goals.push('拿 ' + lv.boxes.length + ' 个木箱');
         goals.push('把小猪送到终点旗');
+        /* 气球/沙袋的操作是"点车身"，没有按钮、也没在引导里教过 ——
+         * 不在这 2 秒的横幅里说一句，玩家会挂着一堆气球乱撞，
+         * 完全不知道"点一下就能扎"。横幅只在开局出现，正好是唯一该说的地方。 */
+        const pb = lv.partsBox || {};
+        if (pb.balloon) goals.push('点气球扎破');
+        if (pb.sandbag) goals.push('点沙袋扔掉');
         ctx.save();
         ctx.globalAlpha = a;
         // 上下两条渐隐金线，中间留一条"胶片带"
@@ -2456,6 +2487,7 @@ const BIOMES = {
     });
 
     drawDebris(cam);
+    drawBursts(cam);
     drawDust(cam);
     drawConfetti(cam);
 
@@ -3270,13 +3302,7 @@ const BIOMES = {
       text(pr.best ? '最佳 ' + pr.best.toFixed(2) + ' s' : '未通关',
         x + CW / 2, y + 140, 12, pr.best ? '#9fe0a8' : '#7f97a6', 'center');
       // 第三颗星的条件（说清"这颗星要做什么"）
-      const gn = (function (lvx) {
-        const ch = lvx.challenge || { type: 'none' };
-        const m = { none: '无特殊条件', pumpPress: '不按打气筒', energyLeft: '能量剩 ≥ 30',
-                    noFlip: '不翻车', motorUse: '不用马达', noBreak: '不散架（KSP）',
-                    time: '限时 ≤ ' + ((ch.max || 0).toFixed(1)) + ' s' };
-        return m[ch.type] || '—';
-      })(lv);
+      const gn = challengeNameOf(lv);
       text('★★★：' + gn, x + CW / 2, y + 166, 11,
         pr.goals.challenge ? '#b6ff9e' : '#8fb6c9', 'center');
       // 零件箱
@@ -3426,6 +3452,48 @@ const BIOMES = {
     ctx.moveTo(ccx + 7, ccy - 7); ctx.lineTo(ccx - 7, ccy + 7);
     ctx.stroke();
     text('点任意处关闭 / 按 H', X + W - 26, Y + H - 18, 12, '#7f97a6', 'right');
+  }
+
+  /* 气球炸开：一圈粉色橡皮屑 + 一团雾。
+   * 和 spawnDebris（木质碎片）分开，因为气球炸开该是"轻、飘、粉色"，
+   * 用木头碎片会看起来像"车散架了"，语义完全不对。 */
+  function spawnBurstFx(wx, wy) {
+    state.bursts = state.bursts || [];
+    for (let i = 0; i < 9; i++) {
+      const ang = (i / 9) * Math.PI * 2 + Math.random() * 0.5;
+      const sp = 2.2 + Math.random() * 3.4;
+      state.bursts.push({
+        x: wx, y: wy,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.8 + 1.2,
+        r: 2.5 + Math.random() * 3,
+        life: 0.42 + Math.random() * 0.28, maxLife: 0.7,
+        color: ['#e0708f', '#f6b6c8', '#a8455f'][i % 3]
+      });
+    }
+    // 中心一团白雾，让"炸开"有一瞬间的体积
+    for (let i = 0; i < 4; i++) {
+      state.bursts.push({
+        x: wx + (Math.random() - 0.5) * 0.2, y: wy + (Math.random() - 0.5) * 0.2,
+        vx: (Math.random() - 0.5) * 1.2, vy: (Math.random() - 0.5) * 1.2,
+        r: 7 + Math.random() * 5,
+        life: 0.28 + Math.random() * 0.16, maxLife: 0.44,
+        color: 'rgba(255,236,244,.9)'
+      });
+    }
+  }
+
+  function drawBursts(cam) {
+    if (!state.bursts || !state.bursts.length) return;
+    state.bursts.forEach(b => {
+      const p = worldToScreen(b.x, b.y, cam);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, b.life / b.maxLife));
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, b.r * PPM * cam.zoom / 32, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
   }
 
   function spawnDebris(wx, wy) {
@@ -3594,6 +3662,16 @@ const BIOMES = {
     } else if (state.phase === 'run' || state.phase === 'resolved') {
       // 慢动作衰减（撞击后 0.25 倍，0.35 秒内恢复）
       if (state.slowmo > 0) state.slowmo = Math.max(0, state.slowmo - dt);
+      // 气球炸开的橡皮屑：轻、飘、带上升（气球是"往上炸"的）
+      if (state.bursts && state.bursts.length) {
+        state.bursts.forEach(b => {
+          b.x += b.vx * dt; b.y += b.vy * dt;
+          b.vx *= (1 - 2.6 * dt);
+          b.vy -= 1.2 * dt;          // 继续往上飘，不是往下掉
+          b.life -= dt;
+        });
+        state.bursts = state.bursts.filter(b => b.life > 0);
+      }
       // 尘土：上浮 + 扩散 + 淡出
       if (state.dust && state.dust.length) {
         state.dust.forEach(d => {
@@ -3653,6 +3731,17 @@ const BIOMES = {
                 state.flash = 1;
                 state.vignette = 1;
                 spawnDebris(state.run.car.x, state.run.car.y + 0.4);
+              } else if (evs[i].indexOf('burst') === 0) {
+                /* 气球炸了：在炸点撒一圈橡皮屑 + 一小团粉色雾。
+                 * 没有这个，点气球只有"数字变了"、画面上什么都不发生 ——
+                 * 玩家会以为没点中。坐标由物理层写进事件串，渲染层只负责画。 */
+                const mb = evs[i].match(/x=(-?[\d.]+) y=(-?[\d.]+)/);
+                const bx = mb ? parseFloat(mb[1]) : state.run.car.x;
+                const by = mb ? parseFloat(mb[2]) : state.run.car.y;
+                spawnBurstFx(bx, by);
+                SFX.pop();
+              } else if (evs[i].indexOf('sandbag_drop') === 0) {
+                SFX.bagDrop();
               } else if (evs[i].indexOf('touch lvl=') === 0) {
                 // 分级接触反馈
                 const lv = parseInt(evs[i].split('lvl=')[1], 10) || 1;
@@ -3765,7 +3854,8 @@ const BIOMES = {
                    runChallengeRect, challengeStatus, coinsOf, totalCoins, SAVE_KEY,
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
-                   drawStackBadge, liftLineOf: () => liftLineCache };
+                   drawStackBadge, liftLineOf: () => liftLineCache,
+                   challengeNameOf, goalNames, challengeStatus };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
