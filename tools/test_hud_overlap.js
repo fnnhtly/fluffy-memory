@@ -50,6 +50,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const r=R.btnRect(n); if(r) add(n,r);
     });
     if (s.phase==='run') { const t=R.runTimeRects(); add('timer',t.timer); add('box',t.box);
+      // 第 45 轮新加的木框耐久条：它必须和上面两块、下面的挑战条都分开
+      if (t.frame) add('frame',t.frame);
       const pp=R.runProgressRect(); add('progress',pp.panel); add('infoBarRun',{x:84,y:90,w:700,h:30});
       add('challenge', R.runChallengeRect()); }
     if (s.phase==='build') {

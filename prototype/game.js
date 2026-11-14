@@ -97,7 +97,23 @@
      * 标准解的最长"无实质进展"实测只有 1.6 秒（1-6，升空那一段），
      * 离 8 秒有 5 倍余量 —— 这就是它不会误杀的依据。 */
     progressWindow: 8.0,
-    progressGain: 2.0
+    progressGain: 2.0,
+    /* ---------- 结构伤害的起始法向速度 ----------
+     *
+     * 旧值写死 6，和「分级接触反馈」的档位（0.8 / 2.5 / 4.5 / 6）不同步：
+     * 于是「撞得最响的那一档（lvl 4, >6）」才有伤害，而 lvl 3 那档
+     * （>4.5，画面已经是全屏闪 + 大量碎屑 + 镜头抖 0.85）**一点耐久都不掉**。
+     * 玩家的观感和引擎的判定对不上：明明撞得很惨，木框却完好无损。
+     *
+     * 挪到 4.5 让两套东西对齐：**响得那么一下，就得掉耐久**。
+     *
+     * 这个数不是为了让伤害更容易发生才挑的，是量出来的：
+     *   · 六关标准解（官方答案）的 max|vn| = 1.27 ~ 1.91 → 4.5 有 2.5 倍余量，
+     *     正式解法永远不会误伤；
+     *   · 随机造法 × 六关共 340 局，通关局 max|vn| 中位数 8.06 —— 也就是说
+     *     玩家自己乱装的车**本来就撞得到 4.5 以上**，只是以前不掉耐久；
+     *   · 1 米落差 ≈ 4.5 m/s，1-2 那种地形台阶上就有，门槛落在"看得见的坎"上。 */
+    damageMin: 4.5
   };
 
   var MOTOR_BASE_ENERGY = 12;   // 马达自带一点电：只装马达也能跑 7~10 秒
@@ -685,7 +701,7 @@
 
   function damageCar(state, vn) {
     if (state.time < (state.spawnGrace || 0)) return;      // 出生落地不算摔
-    if (vn < 6) return;
+    if (vn < Params.damageMin) return;
     // 同一段路连续磕碰只算一次（0.35 秒冷却），否则木框会被接触帧打穿
     if (state.time - (state.lastStructHurt || -9) < 0.35) return;
     state.lastStructHurt = state.time;
@@ -693,10 +709,20 @@
      * 旧代码写的是 `vn > 14 ? 2 : 1`，但 Params.maxSpeed = 12 给整车速度设了硬上限，
      * 实测 30 米自由落体砸地也只能到 11.97 m/s —— 那个 2 点档是**死档**，
      * 永远进不去。改成下面的三段，每一段都实测可达：
-     *   6 ~ 8   磕一下      1 点（木框裂一道）
-     *   8 ~ 11  撞狠了      2 点（木框接近散）
-     *   ≥ 11    从高处砸下来 直接散架（这一档只有坠落能触发，平地跑最快也才 2.3）
-     * 平地正常跑起来的最大法向速度约 2.3 m/s，所以这三档在日常通关里都不会误伤。 */
+     *   4.5 ~ 8   磕一下      1 点（木框裂一道）
+     *   8 ~ 11    撞狠了      2 点（木框接近散）
+     *   ≥ 11      从高处砸下来 直接散架
+     *
+     * 为什么下沿是 4.5 而不是 6：木框的耐久是 3，而 3 段裂纹要**两次 1 点**
+     * 才走得完（3 → 2 → 1）。以前只有在"撞到 4.5 以上、又没到 8"的窗口里
+     * 才掉 1 点，那个窗口又窄又难踩 —— 实测 340 局随机造法里
+     * **hp = 1 这一档一次都没出现过**（9 点直接碎，或者 2 点然后失败）。
+     * 也就是说 win 玩家眼里的木框只有"完好"和"已碎"两态，
+     * drawPartShape 里画好的裂纹/破损两档美术**根本没人看到过**。
+     *
+     * 把下沿挪到 4.5（= 分级接触反馈的第 3 档），窗口变成 4.5 ~ 8，
+     * 宽了 3.5 倍，两次 1 点才走得到的"破损"才真的会出现。
+     * 门槛本身有 2.5 倍余量：六关标准解的 max|vn| 只有 1.27 ~ 1.91。 */
     var dmg = vn >= 11 ? 9 : (vn >= 8 ? 2 : 1);
     var broken = [];
     state.car.parts.forEach(function (p) {
@@ -704,6 +730,16 @@
       p.hp -= dmg;
       if (p.hp <= 0) broken.push(p);
     });
+    /* 掉耐久但还没碎，也是一件"玩家必须看见"的事：木框裂了一道缝。
+     * 渲染层原来只能靠 part_broken（碎了）才知道结构受损 —— 也就是说
+     * 从 3 掉到 2、从 2 掉到 1 这两次，画面上**一声不响**，玩家要到结算页
+     * 发现「不散架」这颗星没了才回头怀疑"什么时候撞的"。
+     * 现在每次掉血都写一条事件，渲染层照样用事件流，不碰物理。 */
+    if (broken.length < state.car.parts.filter(function (p) { return p.def.structure; }).length) {
+      var alive = state.car.parts.filter(function (p) { return p.def.structure && p.hp > 0; });
+      var minHp = alive.length ? Math.min.apply(null, alive.map(function (p) { return p.hp; })) : 0;
+      log(state, 'struct_hurt v=' + vn.toFixed(1) + ' hp=' + minHp);
+    }
     if (broken.length) {
       state.hullBroken = true;      // 「不散架」星：哪怕只碎一格，这颗星就没了
       broken.forEach(function (p) {
@@ -981,7 +1017,10 @@
             }
           }
           if (vn < -0.8) {
-            if (Math.abs(vn) > 6) { log(state, 'impact v=' + Math.abs(vn).toFixed(1) + ' at=' + w.r + ',' + w.c); damageCar(state, Math.abs(vn)); }
+            if (Math.abs(vn) > Params.damageMin) {
+              log(state, 'impact v=' + Math.abs(vn).toFixed(1) + ' at=' + w.r + ',' + w.c);
+              damageCar(state, Math.abs(vn));
+            }
           }
         }
       }
@@ -1030,7 +1069,7 @@
           fy += ny2 * N2 + tY * Ft2;
           tq += rx2 * (ny2 * N2 + tY * Ft2) - ry2 * (nx2 * N2 + tX * Ft2);
           if (Params.collectContacts) Params.collectContacts.push(+Math.abs(vn2).toFixed(2));
-          if (vn2 < -6) { log(state, 'impact v=' + Math.abs(vn2).toFixed(1) + ' at=chassis'); damageCar(state, Math.abs(vn2)); }
+          if (vn2 < -Params.damageMin) { log(state, 'impact v=' + Math.abs(vn2).toFixed(1) + ' at=chassis'); damageCar(state, Math.abs(vn2)); }
         }
       }
 

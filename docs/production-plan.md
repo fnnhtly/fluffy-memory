@@ -44,7 +44,7 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（`tools/build_levels_js.js`） | ✅ 自洽校验通过 |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**51 项自检全绿**（38 个脚本 + 静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**52 项自检全绿**（39 个脚本 + 静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 37/37 |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
 | 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |

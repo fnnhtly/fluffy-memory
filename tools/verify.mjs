@@ -5,10 +5,10 @@
  *   node tools/verify.mjs --fast   只跑数值校核（约 2 秒）
  *
  * 检查项：
- *   1. check_html_logic.js     37 项数值校核
+ *   1. check_html_logic.js     39 项数值校核
  *   1b. test_parts_lift.js     34 条气球/沙袋机制断言（纯 Node）
  *   1c. test_1_6.js            18 条 1-6 设计判定（读真 level 文件）
- *   2. 38 个交互/流程脚本      真实浏览器 + 真实鼠标，检查 0 控制台异常
+ *   2. 39 个交互/流程脚本      真实浏览器 + 真实鼠标，检查 0 控制台异常
  *   3. 内联脚本语法
  *
  * 退出码：0 全绿；1 有失败
@@ -62,6 +62,7 @@ const SCRIPTS = [
   'test_wheel_spin.js',
   'test_touch_fx.js',
   'test_touch_all.js',
+  'test_frame_damage.js',
   'test_perf_stable.js'
 ];
 
@@ -83,7 +84,7 @@ const results = [];
 
 // 1) 数值校核
 {
-  const r = run(process.execPath, [path.join('prototype', 'check_html_logic.js')], '数值校核 37 项');
+  const r = run(process.execPath, [path.join('prototype', 'check_html_logic.js')], '数值校核 39 项');
   const m = (r.out || '').match(/PASS (\d+) \/ FAIL (\d+)/);
   const pass = !!(m && m[2] === '0' && r.ok);
   results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });

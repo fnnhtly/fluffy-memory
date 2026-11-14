@@ -121,19 +121,37 @@ ok('1-5 不用马达也能通关 → 3 星（重力即动力）',
   st.spawnGrace = 0;
 
   /* 伤害分档必须和"物理上真到得了的速度"对齐（见 game.js damageCar 注释）：
-   *   6 ~ 8   → 1 点（磕一下）
-   *   8 ~ 11  → 2 点（撞狠了）
-   *   ≥ 11    → 直接散架（只有坠落能触发）
+   *   4.5 ~ 8  → 1 点（磕一下，木框裂一道）
+   *   8 ~ 11   → 2 点（撞狠了，木框接近散）
+   *   ≥ 11     → 直接散架（只有坠落能触发）
    * 下面三段各验一次，并**在每段之前恢复耐久**，
    * 否则前一段的伤害会污染后一段 —— 之前的版本就是这样让"掉 2"变成 hp=-6 的。 */
   const reset = () => { st.car.parts.forEach(p => { if (p.def.structure) p.hp = 3; }); };
+  /* 注意：`state.time` 必须**单调递增**。damageCar 里有 0.35 秒的撞击冷却，
+   * 判断式是 `state.time - lastStructHurt < 0.35` —— 把时间往回拨会得到一个
+   * 很大的负差值，于是后面每一次伤害都被冷却吞掉。
+   * 第一版这里写了 1 / 2 / 3 / 10 / 12 混着用，结果 v=9 那一条读出来 hp=3，
+   * 看起来像"分档坏了"，其实是量具把时间倒流了。 */
   reset(); st.time = 1;
-  RAP.damageCar(st, 7);
-  ok('磕一下（v=7）扣 1 点 → 耐久 2', host.hp === 2, 'hp=' + host.hp);
-  reset(); st.time = 2;
+  RAP.damageCar(st, 6);
+  ok('磕一下（v=6）扣 1 点 → 耐久 2', host.hp === 2, 'hp=' + host.hp);
+  /* 门槛从 6 降到 4.5 的**唯一理由**就是这一段：两次 1 点才走得到「破损」。
+   * 耐久是 3，3 → 2 → 1 需要两次"1 点"的撞击；以前 6 的门槛要求两次都落在
+   * 6~8 的窄窗口里，实测 340 局随机造法一次都没成功过，hp=1 那档美术没人看到。
+   * 把门槛挪到 4.5 后窗口宽了 3.5 倍。下面这条断言就是这个"能不能走到"的证明：
+   * 它必须**连续打两次**、中间不恢复耐久，才算是真的走得通。 */
+  reset(); st.time = 3;
+  RAP.damageCar(st, 5.0);
+  st.time = 3.5;
+  RAP.damageCar(st, 5.0);
+  ok('连续两次"磕一下" → 耐久 3→2→1（「破损」这一段真的走得到）', host.hp === 1, 'hp=' + host.hp);
+  reset(); st.time = 5;
+  RAP.damageCar(st, 4.4);
+  ok('4.4 m/s 还不到门槛（标准解 max|vn| 1.91，留 2.4 倍余量）', host.hp === 3, 'hp=' + host.hp);
+  reset(); st.time = 7;
   RAP.damageCar(st, 9);
   ok('撞狠了（v=9）扣 2 点 → 耐久 1', host.hp === 1, 'hp=' + host.hp);
-  reset(); st.time = 3;
+  reset(); st.time = 9;
   RAP.damageCar(st, 12);
   ok('从高处砸下来（v=12）直接散架', st.events.some(e => e.indexOf('part_broken') === 0),
     st.events.join('|'));

@@ -297,6 +297,10 @@
       pop() { noise(0.08, 0.16); tone(900, 0.09, 'square', 0.08, 320); },
       bagDrop() { tone(120, 0.14, 'sine', 0.11, 62); noise(0.05, 0.06); },
       hurt() { tone(160, 0.16, 'square', 0.08, 90); },
+      /* 木框掉耐久（还没碎）：木头裂开的"咔"。
+       * 和 SFX.hurt 分开 —— hurt 是猪被撞疼（红），crack 是结构受损（棕）。
+       * 两者在同一个时间点可能都发生，用同一个音就分不清"谁受伤了"。 */
+      crack() { noise(0.07, 0.10); tone(240, 0.13, 'square', 0.07, 110); },
       star(n) { tone(660 + (n || 0) * 220, 0.12, 'triangle', 0.1); },   // 星星逐颗弹出
       cheer() { [784, 988, 1175].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
       // 轮子滚动环境音：用持续振荡器，速度调制频率与音量
@@ -429,13 +433,42 @@
   function runTimeRects() {
     return {
       timer: { x: DW - 224, y: 138, w: 192, h: 30 },
-      box: { x: DW - 224, y: 174, w: 192, h: 26 }
+      box: { x: DW - 224, y: 174, w: 192, h: 26 },
+      /* 木框耐久条（第 45 轮）。放在木箱下面自成一块：木框耐久和木箱是
+       * 两件完全不同的事（一个是"还剩几个箱子能捡"，一个是"车还结不结实"），
+       * 挤在一行里玩家会读混。y 上留 6 px 间距，和上方木箱面板是同一竖列。 */
+      frame: { x: DW - 224, y: 206, w: 192, h: 26 }
     };
   }
   // 行驶期的「★★★ 条件」状态条：把奖励条件做成实时读数，
   // 否则玩家整趟都在猜"我这算不算没按打气筒"。纯函数，供绘制与测试共用。
   function runChallengeRect() {
     return { x: 84, y: 162, w: 552, h: 28 };
+  }
+  /* 木框耐久读数（绘制与判定共用一份）。
+   * 返回 { min, max, n }：最低耐久、单格满耐久、还活着的木框格数。
+   * 没有木框时 min = max = 0 —— 调用方必须自己处理这个"空车"的情况，
+   * 否则「不散架」会在空车上判成"已碎"。 */
+  /* 木框耐久条的三段格子几何。
+   * 绘制和像素测试必须读同一份 —— 测试自己再算一遍坐标的话，
+   * 改了面板位置就会出现"测试找到的是空气、仍然全绿"。
+   * 三段固定 3 格：PARTS.wood_frame 的 maxHp 是 3，耐久条讲的就是这三点。 */
+  function frameSegRects() {
+    const F = runTimeRects().frame;
+    const segW = 20, segH = 12, gap = 4, segX = F.x + 52, segY = F.y + 7;
+    const out = [];
+    for (let i = 0; i < 3; i++) out.push({ x: segX + i * (segW + gap), y: segY, w: segW, h: segH });
+    return out;
+  }
+  function frameHpOf(run) {
+    const car = (run || {}).car || {};
+    const frames = (car.parts || []).filter(p => p.def && p.def.structure);
+    if (!frames.length) return { min: 0, max: 0, n: 0 };
+    return {
+      min: Math.min.apply(null, frames.map(p => p.hp)),
+      max: Math.max.apply(null, frames.map(p => (p.def.maxHp || 3))),
+      n: frames.length
+    };
   }
   function challengeStatus(run) {
     const lv = level();
@@ -465,15 +498,36 @@
         return { type: ch.type, label: '限时 ≤ ' + (ch.max || 0).toFixed(1) + ' s',
                  value: '现在 ' + (st.time || 0).toFixed(1) + ' s',
                  pass: (st.time || 0) <= (ch.max || 0) };
-      /* 不散架（KRAK SNAP）：参考里最经典的那颗星 —— 载具没散架、猪也没掉出来。 */
-      case 'noBreak':
+      /* 不散架（KRAK SNAP）：参考里最经典的那颗星 —— 载具没散架、猪也没掉出来。
+       *
+       * 第 45 轮把它从"碎/没碎"两态改成**带耐久读数**的三态：
+       * 以前这一行只有「结构完好」和「木框已碎」，而引擎里木框有三点耐久，
+       * 中间那两次掉血在画面上完全静默 —— 玩家只会在结算页突然发现星没了。
+       * 把最低耐久和裂纹段位直接印在这一行里（"木框 2/3 裂了"），
+       * 掉一颗血的那一刻就能看见数字变了，不必等结算。 */
+      case 'noBreak': {
+        const fh = frameHpOf(st);
         if (st.hullBroken) {
           return { type: ch.type, label: '不散架', value: '木框已碎', pass: false };
         }
         if (st.pigEjected) {
           return { type: ch.type, label: '不散架', value: '猪掉出来了', pass: false };
         }
+        /* 只有真的读到木框时才报耐久读数。
+         * 构造出来的 state（测试、以及结算页之外的临时对象）可能没有 car.parts，
+         * 那时 frameHpOf 会返回 n=0 —— 绝不能再把"读不到"解释成"已碎"，
+         * 否则任何没带零件的模拟状态都会被判成散架（test_challenge_bar 就是这么红的）。 */
+        if (fh.n > 0) {
+          if (fh.min <= 0) return { type: ch.type, label: '不散架', value: '木框已碎', pass: false };
+          if (fh.min <= 1) {
+            return { type: ch.type, label: '不散架', value: '木框 ' + fh.min + '/' + fh.max + ' 快散了', pass: true };
+          }
+          if (fh.min <= 2) {
+            return { type: ch.type, label: '不散架', value: '木框 ' + fh.min + '/' + fh.max + ' 裂了', pass: true };
+          }
+        }
         return { type: ch.type, label: '不散架', value: '结构完好', pass: true };
+      }
       /* 气球/沙袋那两颗星（第 37 轮）。
        * 这两个条件都是"用掉消耗品"，和「不散架」的思路正好相反：
        * 前者奖励"敢花"，后者奖励"别碰"。放在同一套条里才看得出这种反差。 */
@@ -2533,6 +2587,36 @@ const BIOMES = {
         roundRect(RT.box.x, RT.box.y, RT.box.w, RT.box.h, 8); ctx.fill();
         text(boxLine, RT.box.x + RT.box.w - 16, RT.box.y + 19, 13, '#cfe0ef', 'right');
       }
+      /* 木框耐久条（第 45 轮）。
+       *
+       * 为什么非加这一条：引擎里木框有 3 点耐久，drawPartShape 也早就画好了
+       * 「裂纹」和「破损」两档美术 —— 但在此之前玩家**只可能看到完好或碎**：
+       * 掉 1 点、掉 2 点这两次，画面上只有木头上一道淡淡的缝，没有读数、没有声音；
+       * 「不散架」这颗星却已经悄悄没了。也就是说这颗星一直在惩罚玩家看不见的东西。
+       * 这里把耐久摊开成段 + 数字，掉血那一刻读数就变，玩家还来得及反应。 */
+      const FH = frameHpOf(state.run);
+      if (FH.n > 0 && FH.min > 0) {
+        const F = RT.frame;
+        ctx.fillStyle = 'rgba(10,18,24,.88)';
+        roundRect(F.x, F.y, F.w, F.h, 8); ctx.fill();
+        const low = FH.min <= 1, mid = FH.min === 2;
+        ctx.strokeStyle = low ? 'rgba(224,129,106,.62)' : (mid ? 'rgba(232,200,122,.55)' : COL.goldDim);
+        ctx.lineWidth = 1; ctx.stroke();
+        text('木框', F.x + 10, F.y + 18, 12, 'rgba(200,222,238,.9)', 'left');
+        // 三段格子：实心 = 还剩的耐久，空心 = 已经裂掉的段
+        const segs = frameSegRects();
+        for (let i = 0; i < segs.length; i++) {
+          const sg = segs[i], on = i < FH.min;
+          ctx.fillStyle = on
+            ? (low ? 'rgba(224,129,106,.92)' : (mid ? 'rgba(232,200,122,.92)' : 'rgba(159,214,106,.85)'))
+            : 'rgba(255,255,255,.10)';
+          roundRect(sg.x, sg.y, sg.w, sg.h, 3); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1;
+          roundRect(sg.x, sg.y, sg.w, sg.h, 3); ctx.stroke();
+        }
+        text(FH.min + '/' + FH.max, F.x + F.w - 12, F.y + 18, 12,
+          low ? '#ffb4a2' : (mid ? '#ffe9b0' : '#cfe0ef'), 'right', true);
+      }
       /* 气球/沙袋的实时状态：剩几个气球、还剩几个沙袋、净重多少。
        * 这是这一关唯一的"仪表盘" —— 玩家要靠它判断"现在扔/现在扎"。 */
       if (liftLine) {
@@ -4084,6 +4168,14 @@ const BIOMES = {
                 SFX.pop();
               } else if (evs[i].indexOf('sandbag_drop') === 0) {
                 SFX.bagDrop();
+              } else if (evs[i].indexOf('struct_hurt') === 0) {
+                /* 木框掉耐久（还没碎）。在它之前，这件事在画面上是**完全静默**的：
+                 * 只有木头上多一道相对淡的缝，没有音、没有抖、没有闪。
+                 * 于是「不散架」这颗星是靠"你回头自己发现"来惩罚玩家的。
+                 * 这里给它一声木头裂的音 + 一点点抖，量级比 touch lvl=4 小一半：
+                 * 掉耐久不是灾难片，是提醒。 */
+                SFX.crack();
+                state.shake = Math.min(1.1, state.shake + 0.30);
               } else if (evs[i].indexOf('touch lvl=') === 0) {
                 // 分级接触反馈
                 const lv = parseInt(evs[i].split('lvl=')[1], 10) || 1;
@@ -4208,7 +4300,7 @@ const BIOMES = {
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
-                  progressWarning, failText, chapterDone, resultNextBtn };
+                   progressWarning, failText, chapterDone, resultNextBtn, frameHpOf, frameSegRects };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
