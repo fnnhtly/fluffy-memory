@@ -885,8 +885,14 @@
   // 交互键：n = 1..3
   function setBrake(state, on) {
     if (state.phase !== 'run' || !state.car) return false;
+    var was = !!state.car.braking;
     state.car.braking = !!on;
-    if (on) log(state, 'brake on');
+    /* 只在**状态真的变了**时才写事件。
+     * 原来是 `if (on) log('brake on')` —— 无条件写。
+     * 而浏览器按住 S 会 auto-repeat（约 30 次/秒），于是事件流里每秒塞 30 条
+     * 一模一样的 `brake on`（实测按 0.7 秒写了 13 条）。
+     * 事件数组是只增不减的，它会被 test_perf_stable 一起量进去。 */
+    if (state.car.braking !== was) log(state, state.car.braking ? 'brake on' : 'brake off');
     return true;
   }
 

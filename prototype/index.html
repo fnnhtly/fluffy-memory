@@ -1136,7 +1136,27 @@
         if (TRAY[i]) selectPart(TRAY[i]);
       }
     } else if (state.phase === 'run' && state.run) {
-      if (k === 'arrowdown' || k === 's') { RAP.setBrake(state.run, true); ev.preventDefault(); }
+      /* 刹车：面板上写着「按住」，那就必须"按住刹、松手不刹"。
+       * 原来这里只有 `setBrake(true)`，整份键盘处理里**没有任何地方**
+       * 调 `setBrake(false)` —— 用键盘刹过一次车的玩家整局都被刹住，
+       * 只能靠点一下鼠标或重新开局解除（tools/dbg_brake_key.js 实测：
+       * 按下 S 后 braking=true，松手后仍然 true）。
+       * 现在按下时注册一次 keyup，和交互键同一套写法。 */
+      if (k === 'arrowdown' || k === 's') {
+        ev.preventDefault();
+        if (state.heldKeys[k]) return;         // auto-repeat：已经按着了
+        state.heldKeys[k] = true;
+        RAP.setBrake(state.run, true);
+        window.addEventListener('keyup', function upBrake(e2) {
+          const kk = e2.key.toLowerCase();
+          if (kk === 's' || kk === 'arrowdown') {
+            delete state.heldKeys[kk];
+            if (state.phase === 'run' && state.run) RAP.setBrake(state.run, false);
+            window.removeEventListener('keyup', upBrake);
+          }
+        });
+        return;
+      }
       /* 交互键是**按住蓄力、松手放气**，所以按住期间必须只有"一次按下"。
        *
        * 浏览器按住不放会持续发 keydown（auto-repeat，约 30 次/秒）。

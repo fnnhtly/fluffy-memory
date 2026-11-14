@@ -2499,7 +2499,7 @@ lvl 4  > 6.0    更惨
   颜色分类、读数与渲染层同源、状态条文案、碎后整块隐去，
   外加一条"盖住面板后实心格数必须掉到 0"的量具自证。
 - `tools/probe_damage_tiers.js`：量具自检 4/4，六关标准解全部 0 伤害，`hp=2` 可达。
-- `node tools/verify.mjs` → **全部通过（56 项）**，0 控制台异常。
+- `node tools/verify.mjs` → **全部通过（57 项）**，0 控制台异常。
 
 ### 同一个数字上还挂着另一个 bug：impact 事件刷屏
 
@@ -2673,6 +2673,33 @@ B 按钮外松手：press 1 / release 0　pumpHeld=true　蓄力=0.72
 一个让松手彻底丢失。`tools/test_button_release.js` 8/8 全绿，
 其中一条前提断言是"B 组的松手点确实落在交互钮之外"——
 不断言它的话，B 组会和 A 组走同一条路径，整段测试变成空话。
+
+### 第七个坑：刹车键松手不松开
+
+刹车钮（右下角）上写着「刹 / 按住」，键盘是 S 或 ↓。
+但 `keydown` 只调了 `setBrake(state.run, true)`，整份键盘处理里
+**没有任何地方调 `setBrake(false)`** —— 只有鼠标的 mouseup 会调。
+`tools/dbg_brake_key.js` 实测：
+
+```
+按下前：{"braking":false}
+按下后：{"braking":true,  "brakeEvs":["brake on"]}
+松手后：{"braking":true,  "brakeEvs":["brake on"]}   ← 一直刹着
+```
+
+**任何用键盘刹过一次车的玩家，整局都被刹住**，只能靠点一下鼠标或重新开局解除。
+按 S 之后车开不动，玩家会以为物理坏了 —— 而按钮上的「按住」二字正是他的操作依据。
+这和上一条是同一个病：**"按住"语义的输入只写了按下、没写松开**。
+改法和交互键同一套：按下时注册一次 keyup，`heldKeys` 做 auto-repeat 去重。
+
+顺带修第二件事：`setBrake` 原来无条件 `log('brake on')`。
+按住 S 会 auto-repeat，实测 0.7 秒写了 **13 条**一模一样的 `brake on`。
+事件数组只增不减，`test_perf_stable` 量的就是这一局的内存与帧时间。
+改成只在**状态真的变了**时记一条（`brake on` / `brake off`）。
+
+`tools/test_brake_release.js` 8/8，其中两条是前提：
+"按下 S 真的刹住了"（否则"松手松开"是空话）、
+"鼠标刹车钮按下刹住、松手松开（对照路径本来是对的）"。
 
 ### 还没解决的（如实记录）
 

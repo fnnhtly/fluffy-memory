@@ -67,6 +67,7 @@ const SCRIPTS = [
   'test_break_sfx.js',
   'test_hold_key.js',
   'test_button_release.js',
+  'test_brake_release.js',
   'test_perf_stable.js'
 ];
 

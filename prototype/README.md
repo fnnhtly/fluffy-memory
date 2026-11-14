@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：56 项（43 个脚本 + 静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：57 项（44 个脚本 + 静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -67,6 +67,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_break_sfx.js` | 木框「裂」和「碎」是两种不同的音（crack vs structBreak），且一次撞击只响一声 |
 | `test_hold_key.js` | 按住交互键 1 秒只算 1 次按下 + 1 次放气（auto-repeat 曾让 pumpPress 变 17、1-2 三星永远拿不到） |
 | `test_button_release.js` | 按住交互钮后手指滑出按钮再松手，松手仍然作数（曾卡在 pumpHeld=true 永远放不了气） |
+| `test_brake_release.js` | 按住 S 刹车松手必须真的松开（曾整局一直刹着）；auto-repeat 也不许把 `brake on` 事件刷满 |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 
