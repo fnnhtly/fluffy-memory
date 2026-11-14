@@ -3092,14 +3092,19 @@ const BIOMES = {
       ctx.save();
       ctx.globalAlpha = coinT;
       const cy2 = cardY + 74;       // 与标题同一行右侧（新纪录徽章下方不会挡）
-      // 金币：按这一局实际拿到的木箱数结算（星星本身是永久标记，不重复计价）
-      const coins = win ? coinsOf(1, st.boxesGot) : 0;
+      /* 金币：这一局**实际进钱包**多少（主循环里前后各读一次总数算的差）。
+       * 原来写死 `coinsOf(1, boxes) = +80`，但钱包是推导出来的：
+       * 重刷同一关没有新标记，钱包一分不动，卡上却仍写 "+80" ——
+       * 实测连打三遍，实增 180 / 0 / 0，卡上三次全是 "+80"。
+       * 现在 0 就明说「已拿满」，不再假装在攒钱。 */
+      const coins = state.coinGain || 0;
       const badgeX = X + W - 190;
-      ctx.fillStyle = '#f0c040';
+      ctx.fillStyle = coins > 0 ? '#f0c040' : 'rgba(150,168,182,.55)';
       ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#8a6a10';
+      ctx.fillStyle = coins > 0 ? '#8a6a10' : 'rgba(90,104,116,.7)';
       ctx.beginPath(); ctx.arc(badgeX, cy2, 9, 0, Math.PI * 2); ctx.fill();
-      text('+' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
+      if (coins > 0) text('+' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
+      else text('已拿满', badgeX + 24, cy2 + 6, 14, 'rgba(190,208,222,.8)', 'left', true);
       // 评级：看**累计**星数（累计 3 星 = S），而不是这一局
       const accStars = starsOf(tgoals);
       const grade = !win ? 'F' : (accStars >= 3 ? 'S' : (accStars === 2 ? 'A' : 'B'));
@@ -4013,10 +4018,19 @@ const BIOMES = {
           const oldStars = rec ? starsOf(rec.goals) : 0;
           state.newBest = (oldBest === null || state.run.time < oldBest);
           state.oldBest = oldBest;
+          /* 这一局真正进钱包多少金币 —— 必须**量出来**，不能算。
+           *
+           * 金币总数是由永久标记推导的（coinsOf ← 星数 + 木箱），重刷同一关
+           * 只要没有新标记，钱包一点不动。可结算卡原来固定写 `+80`：
+           * 实测同一关连打三遍，卡上三次都写 "+80"，而钱包只涨了第一遍的 180。
+           * 也就是说屏幕上那个数字是**假的** —— 它承诺了没发生的事。
+           * 现在改成前后各读一次总数，卡上写的就是差。 */
+          const coinsBefore = totalCoins();
           // 这一局点亮了哪几颗**新**星（用于结算页的"新星"提示）
           const goals = state.run.starGoals ||
             { arrive: state.run.stars >= 1, boxes: state.run.stars >= 2, challenge: state.run.stars >= 3 };
           const res = saveProgress(level().levelId, goals, state.run.time, state.run.boxesGot);
+          state.coinGain = Math.max(0, totalCoins() - coinsBefore);
           state.newGoals = GOALS.filter(k => goals[k] && !res.before[k]);
           state.totalGoals = mergeGoals(res.after);
           state.newStarRecord = starsOf(res.after) > oldStars;
@@ -4025,6 +4039,7 @@ const BIOMES = {
           state.newBest = false;
           state.didSave = false;
           state.newGoals = [];
+          state.coinGain = 0;
           // 失败也要让玩家看到"这一关已经亮了几颗" —— 否则累计制读不出来
           const rec2 = readRecord(level().levelId);
           state.totalGoals = rec2 ? mergeGoals(rec2.goals) : mergeGoals(null);
