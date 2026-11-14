@@ -93,14 +93,35 @@ const PATCH = `(() => {
     return '';
   }
 
+  /* 等结算卡真正画出来，而不是"睡 3.4 秒"。
+   *
+   * 失败结算卡要等回放播完才出现，而回放进度是按**帧时间**推进的：
+   * `state.replayT += elapsed`，单帧 dt 上限 0.05（20 Hz 以下就被截断）。
+   * 也就是说机器一忙、帧率掉下来，2.8 秒的回放可能要 10 秒真实时间。
+   * 原来这里写死 `sleep(3400)`，在 verify 并发跑其它 headless 浏览器时
+   * 就会读到一个"卡片还没出现"的画面，于是连红 5 条 ——
+   * 那一次是量具等得太短，不是卡片坏了（单独跑 13/13 全绿）。
+   *
+   * 改成轮询：只要"原因："那一行出现就立刻往下走，最多等 20 秒。
+   * 超时才是真回归。 */
+  async function waitCard(maxMs) {
+    const deadline = Date.now() + (maxMs || 20000);
+    while (Date.now() < deadline) {
+      const recs = await recsNow();
+      if (recs.some(t => t.indexOf('原因：') >= 0 || t.indexOf('还能试') >= 0 ||
+                         t.indexOf('本关三星达成') >= 0 || t.indexOf('还差：') >= 0)) return recs;
+      await sleep(150);
+    }
+    return await recsNow();
+  }
+
   // ---------- 1. 1-6 造好车但一点不动 ----------
   await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[5];
     window.__rap.startLevel(5); s.welcome=0; s.introT=1;
     R.applySpec(lv, s.build, R.SPECS['1-6']);
     s.phase='build'; s.run=null; window.__rap.launch(); return 1;})()`);
   const r1 = await waitResult(200);
-  await sleep(3400);
-  const recs1 = await recsNow();
+  const recs1 = await waitCard(20000);
   A.chk('1-6 什么都不做真的会失败', r1 === 'fail', r1);
 
   const tip1 = recs1.find(t => t.indexOf('还能试') >= 0);
@@ -145,8 +166,7 @@ const PATCH = `(() => {
   await sleep(200);
   await ev(`window.__rap.launchSpec(5, '1-1')`);     // 1-1 的车：没气球没沙袋
   const r2 = await waitResult(200);
-  await sleep(3400);
-  const recs2 = await recsNow();
+  const recs2 = await waitCard(20000);
   A.chk('1-1 的车放 1-6 也失败', r2 === 'fail', r2);
   A.chk('车上没有可消耗件时，不出现「还能试」',
     !recs2.some(t => t.indexOf('还能试') >= 0),

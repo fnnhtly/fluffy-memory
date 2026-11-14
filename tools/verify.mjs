@@ -69,6 +69,7 @@ const SCRIPTS = [
   'test_button_release.js',
   'test_brake_release.js',
   'test_pump_charge_ring.js',
+  'test_battery_icon.js',
   'test_perf_stable.js'
 ];
 
