@@ -51,6 +51,8 @@ const SCRIPTS = [
   'test_drive_sequence.js',
   'test_replay.js',
   'test_replay_parts.js',
+  'test_resolve_sync.js',
+  'test_progress_watchdog.js',
   'test_wheel_spin.js',
   'test_touch_fx.js',
   'test_touch_all.js',

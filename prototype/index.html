@@ -2166,6 +2166,24 @@ const BIOMES = {
     return { alt, text: '⚠ 还在 ' + alt.toFixed(1) + ' 米高空 —— 落回地面才算到' };
   }
 
+  /* 「快要被判没进展了」的倒计时。
+   *
+   * 引擎每帧写 run.noGainFor（已经多久没有实质进展），这里只负责
+   * 把它翻译成玩家能懂的一句话。**两个数必须来自同一个字段** ——
+   * 界面上的"还剩 3 秒"和引擎里的"到 8 秒判负"如果各算一遍，
+   * 这个项目已经因此踩过三次坑（第三颗星的名字、关卡卡片几何、零件行数）。
+   *
+   * 为什么不从第 0 秒就显示：每局开头都在起跑，玩家会看到一个常驻的
+   * 黄色警告条，变成纯噪音。所以只在剩不到 4 秒时才出现 ——
+   * 那时玩家确实还来得及补救（扔沙袋、按打气筒）。 */
+  function progressWarning(run) {
+    if (!run || !run.car) return null;
+    const W = RAP.Params.progressWindow;
+    const left = W - (run.noGainFor || 0);
+    if (left > 4.0 || left <= 0) return null;
+    return { left, text: '⚠ ' + Math.max(1, Math.ceil(left)) + ' 秒内没有进展就要判负 —— 靠不了近、也升不高' };
+  }
+
   function drawHud() {
     const built = RAP.buildVehicle(level(), state.build);
     const mass = built ? built.mass : 0;
@@ -2399,21 +2417,30 @@ const BIOMES = {
         const rising = state.run.car.netMass < 0;
         text(liftLine, LX + LW / 2, LY + 17, 12, rising ? '#9fe08a' : '#cfe0ef', 'center');
       }
-      /* 「飞过终点但没落地」必须做成**实时读数**而不是一次性 toast。
-       * 用 probe_over_goal.js 量过：标准解在 t=9.47 就已经越过终点线、
-       * 但车还在 15 米高空，到 12.53 才落回地面判赢 —— 也就是说
-       * "飞太高"这个状态在**赢的那一局里也要持续 3 秒**。
-       * 一次性的 toast 会在每一局正常通关时弹一条警告，纯粹是噪音。
-       * 所以这里只在"此刻真的不算到"的时候显示，落地就自动消失。 */
+      /* 行驶期的两条"实时警报"，按出现顺序自上而下排，避免互相压住：
+       *   1. 飞过终点但没落地（probe_over_goal.js 量过：赢的那一局里
+       *      这个状态也要持续 3 秒，所以不能做成一次性 toast）；
+       *   2. 快要被判「没有进展」了。
+       *
+       * 第 2 条是新加的：引擎里 8 秒没更靠近终点也没升高就判负，
+       * 而在此之前玩家**完全无从得知**自己正在被判负 —
+       * 尤其是"车在慢慢溜"的那种局，看起来一切正常。
+       * 做成倒计时而不是警告灯：告诉他还剩几秒，他才有机会做点什么。 */
       {
+        const warns = [];
         const og = overGoalNotice(state.run);
-        if (og) {
-          const w2 = 300, x2 = DW / 2 - w2 / 2, y2 = runTimeRects().box.y + 24 + 34;
-          ctx.fillStyle = 'rgba(38,16,14,.90)';
-          roundRect(x2, y2, w2, 24, 8); ctx.fill();
-          ctx.strokeStyle = 'rgba(224,129,106,.55)'; ctx.lineWidth = 1; ctx.stroke();
-          text(og.text, x2 + w2 / 2, y2 + 17, 12, '#ffb4a2', 'center');
-        }
+        if (og) warns.push({ text: og.text, bg: 'rgba(38,16,14,.90)', line: 'rgba(224,129,106,.55)', fg: '#ffb4a2' });
+        const pw = progressWarning(state.run);
+        if (pw) warns.push({ text: pw.text, bg: 'rgba(40,32,10,.92)', line: 'rgba(232,200,122,.55)', fg: '#ffe9b0' });
+        let wy = runTimeRects().box.y + 24 + 34;
+        warns.forEach(w => {
+          const w2 = 320, x2 = DW / 2 - w2 / 2;
+          ctx.fillStyle = w.bg;
+          roundRect(x2, wy, w2, 24, 8); ctx.fill();
+          ctx.strokeStyle = w.line; ctx.lineWidth = 1; ctx.stroke();
+          text(w.text, x2 + w2 / 2, wy + 17, 12, w.fg, 'center');
+          wy += 28;
+        });
       }
     }
 
@@ -2767,7 +2794,14 @@ const BIOMES = {
   function failText(reason) {
     return ({ pig_dead: '猪受伤过重', pig_lost: '小猪掉队了', out_of_bounds: '掉出地图',
               flew_away: '飘得太高，飞出地图了',
-              stuck: '卡住了：动力或重心不对', timeout: '超时', empty: '没放零件' })[reason] || reason;
+              /* 「卡住」和「没进展」必须分开写 —— 玩家对这两种局面的反应完全不同：
+               *   卡住 = 车停了 → 该想想动力/轮子；
+               *   没进展 = 车在动但没在前进 → 该想想重心/配重/路线。
+               * 原来两者共用一句"卡住了：动力或重心不对"，而后者根本不卡，
+               * 玩家会以为游戏判定出错。 */
+              stuck: '卡住了：动力或重心不对',
+              no_progress: '一直在原地打转：8 秒没能更靠近终点',
+              timeout: '超时', empty: '没放零件' })[reason] || reason;
   }
 
   function badge(cx, cy, r, ring, fill) {
@@ -3796,7 +3830,15 @@ const BIOMES = {
         });
         state.debris = state.debris.filter(d => d.life > 0);
       }
-      if (state.run && state.run.phase === 'run' && !state.paused) {
+      /* 只有**整场都在跑**时才推进物理。
+       *
+       * 光判 run.phase 不够：state.phase 才是这一层认的那一个（相机、结算卡、
+       * 暂停都看它）。两边一旦不同步 —— 测试会直接把 state.phase 改成
+       * 'resolved' 去截结算页 —— 底下的这局还会继续走物理，而看门狗
+       * 拿着一个被外部改过的 time 一算 noGainFor 就立刻判负，
+       * 把刚设好的 win 覆盖成 fail，结算卡永远出不来。
+       * （第 39 轮加看门狗之后，排版审计和对比度审计就是这样同时挂的。） */
+      if (state.run && state.phase === 'run' && state.run.phase === 'run' && !state.paused) {
         // 固定 60Hz 累加
         const timeScale = state.slowmo > 0 ? 0.3 : 1;
         state.run.acc = (state.run.acc || 0) + dt * timeScale;
@@ -3948,7 +3990,8 @@ const BIOMES = {
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
-                   challengeNameOf, goalNames, challengeStatus, overGoalNotice };
+                   challengeNameOf, goalNames, challengeStatus, overGoalNotice,
+                  progressWarning, failText };
   startLevel(0);
   requestAnimationFrame(frame);
 })();

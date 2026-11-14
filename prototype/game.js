@@ -76,7 +76,28 @@
     goalMaxAlt: 2.2,
     interactCap: 3,
     maxSpeed: 12.0,
-    demoTimeLimit: 60
+    demoTimeLimit: 60,
+    /* ---------- 「没有进展」看门狗 ----------
+     *
+     * 为什么需要它：随机造法 × 六关跑 360 局，有 21 局是**跑满 60 秒才判 timeout** 的。
+     * 那份 trace 显示这些车并没有停 —— 它们以 0.2~0.4 m/s 在坡上慢慢溜，
+     * 速度高于 stuck 的 0.2 m/s 阈值，所以 stuck 永远不触发。
+     * 1-5 上「单框 + 单轮」就是这样：60 秒爬到 x=14.95（终点 25），
+     * 然后顶在墙前不动 —— 玩家这 60 秒既没法操作，也没有希望。
+     *
+     * 判据（量的，不是猜的）：**W 秒内「距终点」没缩小 D 米，并且高度没上升 D 米**。
+     *   - 只判 x 会误杀气球流（横向慢，但一路在爬升）→ 所以加上高度这一条；
+     *   - 只判"动了没有"会漏掉这些慢慢溜的车 → 所以判的是"朝终点的进展"。
+     *
+     * 阈值是扫出来的（tools/sweep_watchdog.js，8 组 (W,D) × 289 个失败局样本）：
+     *   W=8, D=2  → 期望速度 0.25 m/s，**误杀获胜局 0 局**，标准解 0 触发，
+     *   抓到 71/289 局，平均每局省 20.2 秒。
+     * 更严的 (6, 1.5) 抓得多但省得少（很多局本来 5 秒就 stuck 了）；
+     * 更松的 (12, 2) 只抓到 23 局。
+     * 标准解的最长"无实质进展"实测只有 1.6 秒（1-6，升空那一段），
+     * 离 8 秒有 5 倍余量 —— 这就是它不会误杀的依据。 */
+    progressWindow: 8.0,
+    progressGain: 2.0
   };
 
   var MOTOR_BASE_ENERGY = 12;   // 马达自带一点电：只装马达也能跑 7~10 秒
@@ -480,6 +501,14 @@
       result: null, failReason: '', stars: 0,
       // 三颗星各自独立达成（参考的累计制）：到终点 / 全木箱 / 挑战条件
       starGoals: { arrive: false, boxes: false, challenge: false },
+      /* 「没有进展」看门狗的历史采样（见 Params.progressWindow 的注释）。
+       * 每帧塞一条 {t, left, y}，超过窗口就丢 —— 只需要 W 秒的历史。
+       * 挂在这里而不是全局，是因为它必须随这一局一起消失。 */
+      progHist: [],
+      /* 上一次"达成进展"的时刻 + 已经多久没进展了。
+       * noGainFor 由引擎每帧写入，HUD 直接读它画倒计时警告 ——
+       * 这样"什么时候判负"和"界面上还剩几秒"永远是同一个数。 */
+      progLastGainT: 0, noGainFor: 0,
       events: [],
       replay: []
     };
@@ -696,7 +725,11 @@
   function failLabel(reason) {
     return ({
       pig_dead: 'pig_dead', pig_lost: 'pig_lost', out_of_bounds: 'out_of_bounds',
-      flew_away: 'flew_away', stuck: 'stuck', empty: 'empty', timeout: 'timeout'
+      flew_away: 'flew_away', stuck: 'stuck', empty: 'empty', timeout: 'timeout',
+      /* 新的一种失败：车一直在动，但一直在原地打转 / 慢慢溜，
+       * 永远到不了终点。玩家看到的是"我明明在动啊" —— 所以文案必须
+       * 直接说清"离终点越来越远是不行的"，不能只写"卡住了"。 */
+      no_progress: 'no_progress'
     })[reason] || reason;
   }
 
@@ -1109,6 +1142,32 @@
       state.stuckTimer += dt;
       if (state.stuckTimer > 5) { resolve(state, 'stuck'); return; }
     } else state.stuckTimer = 0;
+
+    /* 「没有进展」看门狗 —— 详细论证见 Params.progressWindow。
+     *
+     * 一句话：W 秒内既没有更靠近终点 D 米，也没有升高 D 米，就判没戏。
+     * 这比 stuck 宽容（车可以一直在动），但比 60 秒硬上限严厉得多 ——
+     * 它救的正是"以 0.2 m/s 慢慢溜、永远爬不上墙、也不肯停下来"那一类局。
+     *
+     * 实现：一条只保留 W 秒的滚动历史。每帧问一句"窗口内达标了吗"，
+     * 达标就把 progLastGainT 刷新成现在 —— 于是
+     *   noGainFor = now - progLastGainT
+     * 正好就是"这个条件已经多久没成立了"。HUD 要用同一个数显示倒计时警告，
+     * 所以它必须算在引擎里、而不是在渲染层再推一遍（同一事实只能有一份）。 */
+    var hist = state.progHist;
+    var left = state.level.goal.col - car.x;
+    hist.push({ t: state.time, left: left, y: car.y });
+    while (hist.length > 2 && hist[0].t < state.time - Params.progressWindow - 0.1) hist.shift();
+    var h0 = hist[0];
+    if (h0 && state.time - h0.t >= Params.progressWindow - 1e-6) {
+      var gainLeft = h0.left - left;          // 距终点缩小了多少米
+      var gainY = car.y - h0.y;               // 升高了多少米
+      if (gainLeft >= Params.progressGain || gainY >= Params.progressGain) {
+        state.progLastGainT = state.time;
+      }
+    }
+    state.noGainFor = state.time - (state.progLastGainT || 0);
+    if (state.noGainFor >= Params.progressWindow) { resolve(state, 'no_progress'); return; }
     if (state.time > Params.demoTimeLimit) { resolve(state, 'timeout'); return; }
 
     // 回放缓冲（3 秒）
