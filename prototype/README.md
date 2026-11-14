@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：54 项（41 个脚本 + 静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：56 项（43 个脚本 + 静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -65,6 +65,8 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_frame_damage.js` | 木框耐久三档（绿/金/红）的**像素**读数、掉耐久有音效与轻抖、碎后耐久条整块隐去 |
 | `test_impact_dedupe.js` | 一次硬着陆只写个位数条 `impact`（旧版会被写成 34 条 → 慢放/白闪反复重置） |
 | `test_break_sfx.js` | 木框「裂」和「碎」是两种不同的音（crack vs structBreak），且一次撞击只响一声 |
+| `test_hold_key.js` | 按住交互键 1 秒只算 1 次按下 + 1 次放气（auto-repeat 曾让 pumpPress 变 17、1-2 三星永远拿不到） |
+| `test_button_release.js` | 按住交互钮后手指滑出按钮再松手，松手仍然作数（曾卡在 pumpHeld=true 永远放不了气） |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 

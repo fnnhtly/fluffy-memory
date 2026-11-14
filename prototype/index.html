@@ -128,7 +128,13 @@
     popped: {},        // 刚落下的格子 → 播放弹性
     welcome: 0,        // 0=关闭，1..3=第几页
     cam: { x: 0, y: 0, zoom: 2.1 }, toast: '', toastT: 0, resultT: 0,
-    replayT: 0, replayIdx: 0
+    replayT: 0, replayIdx: 0,
+    /* 按住状态：交互键是"按住蓄力"，所以必须知道"这个键现在还按着吗"。
+     * 浏览器 auto-repeat 会在按住期间反复发 keydown，靠它把这些重复挡掉
+     * （见 keydown 分支里的注释与 tools/test_hold_key.js）。 */
+    heldKeys: {},
+    heldBtn: 0,
+    lastBreakSfx: 0
   };
 
   const levels = window.RAP_LEVELS;
@@ -612,6 +618,13 @@
     state.cam = buildCam();
     state.introT = 0;          // 触发入场镜头
     state.outroT = 0;
+    /* 换关/回建造页必须把"按住"状态清掉：如果玩家在按着 1 的时候按了 R，
+     * 那一局的 keyup 永远不会来了（keydown 分支已经不会再注册），
+     * 于是下一次按 1 会被 `state.heldKeys['1']` 挡掉 —— 交互键静默失灵。
+     * 鼠标按住的 `heldBtn` 同理：不清理的话下一次 mouseup 会去释放一个
+     * 早已不存在的组（`releaseInteract` 找不到组就返回 false，静默无事）。 */
+    state.heldKeys = {};
+    state.heldBtn = 0;
   }
 
   function selectPart(part) {
@@ -664,6 +677,8 @@
     state.runBanner = 2.0;      // 出发横幅：关卡名 + 本关目标
     SFX.launch();
     state.replayT = 0; state.replayIdx = 0;
+    state.heldKeys = {};        // 新的一局：按住状态必须从零开始（见 startLevel 的注释）
+    state.heldBtn = 0;
   }
 
   /* 标准解发射：给测试用的一步到位入口。
@@ -831,7 +846,20 @@
       const xs = DW / 2 - (nm * 104) / 2;
       for (let i = 0; i < nm; i++) {
         const rect = { x: xs + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
-        if (hit(rect, p.x, p.y)) { RAP.pressInteract(state.run, i + 1); SFX.pump(); return; }
+        if (hit(rect, p.x, p.y)) {
+          RAP.pressInteract(state.run, i + 1);
+          /* 记下"按的是第几个钮"。
+           *
+           * 原来松手时是**重新遍历按钮**去判命中哪个 —— 如果玩家的手在按住期间
+           * 滑出了按钮（几乎每次都会滑一点），松手那一下一个都不命中，
+           * `releaseInteract` 就永远不会被调用。后果（tools/dbg_mouse_drag_off.js
+           * 量到的）：`car.pumpHeld` 永远是 true、蓄力卡在 0.8、
+           * 玩家之后点车身点别的钮都解除不了，唯一解法是再点一次同一个钮。
+           * "按下的那个钮"才是松手时该放的那个钮，和指针现在在哪无关。 */
+          state.heldBtn = i + 1;
+          SFX.pump();
+          return;
+        }
       }
       /* 点车身：气球 → 扎破一个，沙袋 → 扔掉一个。
        *
@@ -1024,12 +1052,26 @@
       return;
     }
     if (state.phase === 'run' && state.run) {
+      /* 松手：放的是**按下去的那个钮**，不是"指针当前落在哪个钮上"。
+       *
+       * 原来的写法是重新遍历按钮判命中 —— 手一滑出按钮，松手就一个都不命中，
+       * `releaseInteract` 永远不被调用。实测（tools/dbg_mouse_drag_off.js）：
+       * 滑出后松手 `pumpHeld` 卡在 true、蓄力卡在 0.72，玩家得再点一次才能解除。
+       * 而"按住蓄力"本来就是要求玩家**按住一段时间**的动作，
+       * 手指在按住期间移动是常态，所以这不是边缘情况，是主路径。 */
+      if (state.heldBtn) {
+        RAP.releaseInteract(state.run, state.heldBtn);
+        state.heldBtn = 0;
+        state.dragPart = null;
+        return;
+      }
       const gs2 = state.run.car.groups || [];
       const nm2 = Math.min(3, gs2.length);
       const xs2 = DW / 2 - (nm2 * 104) / 2;
       for (let i = 0; i < nm2; i++) {
         const rect = { x: xs2 + i * 104, y: btnRect('interact').y, w: 92, h: 92 };
-        if (hit(rect, p.x, p.y)) { RAP.releaseInteract(state.run, i + 1); return; }
+        // 键盘按住时指针可能落在钮上（或用例直接注入 mouseup）—— 兜住这种情况
+        if (hit(rect, p.x, p.y)) { RAP.releaseInteract(state.run, i + 1); break; }
       }
     }
     state.dragPart = null;
@@ -1095,15 +1137,29 @@
       }
     } else if (state.phase === 'run' && state.run) {
       if (k === 'arrowdown' || k === 's') { RAP.setBrake(state.run, true); ev.preventDefault(); }
-      if (k >= '1' && k <= '3') RAP.pressInteract(state.run, parseInt(k, 10));
-      if (k === '1' || k === '2' || k === '3') ev.preventDefault();
-    }
-    if (k === '1' || k === '2' || k === '3') {
-      // 松手时释放（交互键是"按住蓄力"）
-      window.addEventListener('keyup', function up(e2) {
-        if (state.phase === 'run' && state.run) RAP.releaseInteract(state.run, parseInt(k, 10));
-        window.removeEventListener('keyup', up);
-      });
+      /* 交互键是**按住蓄力、松手放气**，所以按住期间必须只有"一次按下"。
+       *
+       * 浏览器按住不放会持续发 keydown（auto-repeat，约 30 次/秒）。
+       * 原来这里每收到一次就调一次 pressInteract，并且**每次都注册一个新的
+       * keyup 监听**。后果（tools/test_hold_key.js 量到的）：
+       *   · 按住 1.1 秒 → pressInteract 17 次 → `pumpPress = 17`，
+       *     而 1-2 的三星条件正是 `pumpPress ≤ 1` —— **正确玩法拿不到三星**；
+       *   · 松手时 17 个 keyup 全部触发 → releaseInteract 17 次
+       *     → 17 份冲量叠加，车被弹飞。
+       * 现在：`ev.repeat` 直接忽略；按住状态记在 `state.heldKeys` 里，
+       * 只有真的"从松到按"那一次才 pressInteract + 注册一个 keyup。 */
+      if (k >= '1' && k <= '3') {
+        ev.preventDefault();
+        if (ev.repeat || state.heldKeys[k]) return;
+        state.heldKeys[k] = true;
+        RAP.pressInteract(state.run, parseInt(k, 10));
+        window.addEventListener('keyup', function up(e2) {
+          const kk = e2.key.toLowerCase();
+          delete state.heldKeys[kk];
+          if (state.phase === 'run' && state.run) RAP.releaseInteract(state.run, parseInt(kk, 10));
+          window.removeEventListener('keyup', up);
+        });
+      }
     }
   });
 

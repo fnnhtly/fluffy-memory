@@ -2499,7 +2499,7 @@ lvl 4  > 6.0    更惨
   颜色分类、读数与渲染层同源、状态条文案、碎后整块隐去，
   外加一条"盖住面板后实心格数必须掉到 0"的量具自证。
 - `tools/probe_damage_tiers.js`：量具自检 4/4，六关标准解全部 0 伤害，`hp=2` 可达。
-- `node tools/verify.mjs` → **全部通过（54 项）**，0 控制台异常。
+- `node tools/verify.mjs` → **全部通过（56 项）**，0 控制台异常。
 
 ### 同一个数字上还挂着另一个 bug：impact 事件刷屏
 
@@ -2609,6 +2609,70 @@ SFX 走 WebAudio，测试**听不到**。所以这一轮在 index.html 里加了
 
 两条「前提」是这一轮的关键：不断言前提的话，「只裂时没有 structBreak」
 在"其实什么都没发生"的情形下也会绿 —— 那是假绿（第 44 轮踩过同样的坑）。
+
+### 按住蓄力：正确玩法反而拿不到三星
+
+策划案里打气筒是**按住蓄力、松手放气**（冲量 = `pumpImpulse × (0.35 + 0.65 × 蓄力)`，
+蓄力上限 0.8 秒）。1-2 的三星条件之一就是「不按打气筒 ≤ 1 次」，
+也就是玩家必须"只按一次、按够、放"。
+
+但 `index.html` 的 keydown 是这么写的：
+
+```js
+if (k >= '1' && k <= '3') RAP.pressInteract(state.run, parseInt(k, 10));
+...
+window.addEventListener('keyup', function up(e2){ RAP.releaseInteract(...); });
+```
+
+浏览器**按住不放会持续发 keydown**（auto-repeat，约 30 次/秒）。
+`tools/test_hold_key.js` 用真的 CDP 键盘事件（`autoRepeat: true`）量到：
+
+```
+单击一次：interact_key 1　pump_release 1　pumpPress 1
+按住 1.1 秒：interact_key 17　pump_release 17　pumpPress 17　松手前蓄力 0.8
+```
+
+两个后果都不是小问题：
+
+1. **`pumpPress = 17`**，而 1-2 的三星条件正是 `pumpPress ≤ 1` ——
+   **正确玩法永远拿不到三星**。判据和玩法直接矛盾。
+2. 每一次 keydown 都**再注册一个** keyup 监听 → 松手时 17 个监听全部触发 →
+   `releaseInteract` 17 次 → **17 份冲量叠加**（实测 vx 6.92 → 37.58，5.4 倍）。
+
+修法：`ev.repeat` 直接忽略；按住状态记进 `state.heldKeys`，
+只有真的"从松到按"那一次才 `pressInteract` + 注册一个 keyup。
+`startLevel` / `launch` 会把 `heldKeys` 清空 —— 否则"按着 1 的时候按 R，
+那一局的 keyup 永远不会来"，下一次按 1 就会被静默挡掉。
+
+### 第六个坑：松手时指针已经滑出按钮
+
+打气筒的鼠标入口是"点住交互钮"。既然要求玩家**按住一段时间**，
+手指在这段时间里移动就是常态。
+
+而原来的 `mouseup` 是**重新遍历按钮**判命中：
+
+```js
+for (i...) if (hit(rect, p.x, p.y)) { RAP.releaseInteract(state.run, i+1); return; }
+```
+
+指针离开了按钮 → 一个都不命中 → `releaseInteract` 永远不被调用。
+实测（`tools/dbg_mouse_drag_off.js`，鼠标在钮上按下 0.42 秒后滑到远处松手）：
+
+```
+A 按钮内松手：press 1 / release 1　pumpHeld=false　蓄力=0
+B 按钮外松手：press 1 / release 0　pumpHeld=true　蓄力=0.72
+```
+
+`pumpHeld` 永远是 true、蓄力卡在 0.72。玩家之后点车身、点刹车、点别的钮
+**都解除不了**，唯一解法是再点一次同一个钮 —— 而那一次又会被判成"又按了一下"。
+
+修法：按下时记住"按的是第几个钮"（`state.heldBtn`），松手释放**那一个**，
+和指针现在在哪无关。`startLevel` / `launch` 同样清 `heldBtn`。
+
+这两条都是"**按住**"这个动作暴露出来的问题：一个把按下次数刷成 17，
+一个让松手彻底丢失。`tools/test_button_release.js` 8/8 全绿，
+其中一条前提断言是"B 组的松手点确实落在交互钮之外"——
+不断言它的话，B 组会和 A 组走同一条路径，整段测试变成空话。
 
 ### 还没解决的（如实记录）
 
