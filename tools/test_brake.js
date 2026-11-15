@@ -82,23 +82,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }
   A.chk('刹车前车已经跑起来了（> 2 m/s）', v1 > 2.0, 'vx=' + v1.toFixed(2) + ' m/s');
 
-  // 按住刹车
-  const bk = await center("window.__rap.btnRect('brake')");
-  const bp = cl(bk.x, bk.y);
-  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bp.x, y: bp.y, button: 'none' });
-  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: bp.x, y: bp.y, button: 'left', clickCount: 1 });
+  /* 刹车钮已删（第 62 轮，用户要求）。这个脚本验的是**刹车物理**，
+   * 那件事没被删，所以不再点 UI，改为直接调引擎入口。
+   * 用鼠标点一个不存在的按钮会让 `btnRect` 返回 null 然后崩溃 ——
+   * 崩溃不是"测试失败"，它连一条断言都没跑到。 */
+  await ev('(()=>{window.__rap.setBrake(window.__rap.state.run, true); return 1;})()');
   await sleep(140);
-  A.chk('按下刹车钮后 braking 置位', (await ev('window.__rap.state.run.car.braking')) === true);
+  A.chk('刹车置位后 braking 为 true',
+    (await ev('window.__rap.state.run.car.braking')) === true);
   await sleep(430);
   const v2 = await ev('window.__rap.state.run.car.vx');
   // 判据改成"相对"的：降幅超过初速的 30%（绝对值随关卡坡度波动，写死 1.0 太脆）
-  A.chk('按住刹车 0.43s 速度明显下降（> 30%）', v2 < v1 * 0.7,
+  A.chk('刹车 0.43s 速度明显下降（> 30%）', v2 < v1 * 0.7,
     v1.toFixed(2) + ' → ' + v2.toFixed(2) + ' m/s  降 ' +
     (100 * (v1 - v2) / Math.max(0.01, v1)).toFixed(0) + '%');
   await shot('br-01-braking');
 
   // 松开：不再主动减速（速度不会继续被刹车拉低）
-  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: bp.x, y: bp.y, button: 'left', clickCount: 1 });
+  await ev('(()=>{window.__rap.setBrake(window.__rap.state.run, false); return 1;})()');
   await sleep(160);
   A.chk('松开后 braking 复位', (await ev('window.__rap.state.run.car.braking')) === false);
   const v3 = await ev('window.__rap.state.run.car.vx');

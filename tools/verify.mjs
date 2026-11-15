@@ -66,13 +66,17 @@ const SCRIPTS = [
   'test_break_sfx.js',
   'test_hold_key.js',
   'test_button_release.js',
-  'test_brake_release.js',
+  'test_brake_removed.js',
   'test_pump_charge_ring.js',
   'test_battery_icon.js',
   'test_motor_out.js',
   'test_perf_stable.js',
   'test_focus_blur.js',
   'test_mute.js',
+  'test_hint.js',
+  'test_build_view.js',
+  'test_no_black_block.js',
+  'test_tex_parallax.js',
   'test_build_preview.js'
 ];
 

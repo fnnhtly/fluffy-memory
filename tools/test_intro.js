@@ -84,9 +84,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }
   A.chk('过最广点之后 zoom 单调增大（推镜方向正确）', monotonic,
     zs.slice(iMin).map(v => v.toFixed(2)).join(' → '));
-  A.chk('推镜确实把镜头拉近了', zEnd - zmin > 0.6,
-    zmin.toFixed(2) + ' → ' + zEnd.toFixed(2));
-  A.near('推镜终点就是建造镜头 2.10', zEnd, 2.10, 0.02);
+  /* 推镜幅度：判"有没有明显推近"，不判具体倍数。
+   *
+   * 旧阈值 0.6 是按老构图定的（0.72 → 2.10，差 1.38）。
+   * 第 62 轮建造镜头换成"看全图"之后，起点 0.83 → 终点 1.27，差 0.44，
+   * 于是那条以 0.83 → 1.27 红了 —— 不是推镜坏了，是**构图变了**。
+   *
+   * 新的判据按**倍率**算而不是差值：推镜的定义是"从全景收到近景"，
+   * 终点至少要比最广处放大 40%。0.83→1.27 是 1.53 倍，稳稳通过；
+   * 而"完全没推"（1.00 倍）必红。这比差值更抗构图变化。 */
+  const zRatio = zEnd / Math.max(1e-6, zmin);
+  A.chk('推镜确实把镜头拉近了（终点 ≥ 最广处的 1.4 倍）', zRatio >= 1.4,
+    zmin.toFixed(2) + ' → ' + zEnd.toFixed(2) + '（' + zRatio.toFixed(2) + ' 倍）');
+  /* 推镜的终点不再是写死的 2.10 —— 第 62 轮把建造镜头换成了"可平移缩放的
+   * 看全图镜头"（buildView：进场默认把整关装进画面，1-1 实测 zoom≈1.27）。
+   * 所以判据改成：**终点必须等于这一帧真正的 buildView.zoom**。
+   * 写死一个数字的话，以后每换一次默认视角这条都会红一次，
+   * 而它真正想验的是"推镜有没有停在终点、有没有继续漂"，和具体倍率无关。 */
+  const bvZoom = await ev('window.__rap.state.buildView.zoom');
+  A.near('推镜终点就是建造镜头（= buildView.zoom）', zEnd, bvZoom, 0.03);
 
   // 推完之后不应该继续漂
   await sleep(400);

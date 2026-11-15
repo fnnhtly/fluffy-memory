@@ -134,14 +134,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const worstLong = Math.max.apply(null, runs.map(r => r.stats.longPct || 0));
   A.chk('长帧（>33ms）比例 < 25%（卡顿守卫）', worstLong < 25, '最差一次 ' + worstLong + '%');
 
-  // 建造页也要量（面板 + 网格 + 全部零件图元 + 统计卡）
+  /* 建造页也要量（面板 + 网格 + 全部零件图元 + 统计卡）。
+   *
+   * ⚠ 这里必须**丢第一轮**。第 62 轮把建造镜头改成"看全图"之后，
+   * 从行驶切回建造的**头 2 秒**会读到 21~45 fps，而稳定之后是 55~60
+   * （tools/dbg_build_fps3.js 连量四次：45.4 → 53.8 → 51.8 → 55.2）。
+   * 原因不是这一帧画得慢 —— CPU profile 显示 83% 采样落在 (idle)，
+   * 是切相那一帧的重排版/首帧光栅化成本。
+   *
+   * 判据该问的是"**稳态**建造页撑不撑得住"，不是"切过去那一瞬间"。
+   * 所以先空转 1 秒预热，再取第二轮。这和"行驶帧率取三次中位数"
+   * 是同一个道理（那边的注释也写了：单次采样会被启动抖动污染）。
+   *
+   * 顺带把阈值从 0.70 放松到 0.60：新的看全图视角对 1-3 这种 66 列的关卡
+   * 是 zoom 0.54，像素总量比旧的 2.1 特写多 3~4 倍，是**设计上换来的代价**，
+   * 不是回归。真掉到软件光栅化时是 0.23，0.60 离它仍有 2.6 倍余量。 */
   await ev(`(()=>{const s=window.__rap.state; s.phase='build'; s.run=null; s.introT=1; return 1;})()`);
-  await sleep(800);
+  await sleep(1200);
+  const warm = await measure(1.0);            // 预热轮，结果丢弃
   const b = await measure(2.0);
   const bRatio = b.fps / baseFps;
   A.log('建造帧率：' + b.fps.toFixed(1) + '，比值 ' + bRatio.toFixed(2) +
-    '，长帧 ' + (b.stats.longPct || 0) + '%');
-  A.chk('建造页 >= 0.70 × 空转基线', bRatio >= 0.70,
+    '，长帧 ' + (b.stats.longPct || 0) + '%（预热轮 ' + warm.fps.toFixed(1) + '，已丢弃）');
+  A.chk('建造页稳态 >= 0.60 × 空转基线', bRatio >= 0.60,
     bRatio.toFixed(2) + ' × ' + baseFps.toFixed(1) + ' fps');
 
   A.finish(ws, child, errs);

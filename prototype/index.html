@@ -57,6 +57,8 @@
   // 当前可视尺寸（设计坐标）。默认 = 设计分辨率；宽/高比例变化时扩展对应方向
   // ---------- 离屏缓存画布（性能：静态层不每帧重画）----------
   let terrainCache = null, terrainCacheId = '';
+  /* 石头渐变缓存（见 drawWorld 里那段注释）。键 = 深度色 + 尺寸。 */
+  const stoneGradCache = new Map();
   const stoneLayer = document.createElement('canvas');
   const stoneCtx = stoneLayer.getContext('2d');
   let stoneCacheKey = '';
@@ -120,6 +122,14 @@
     selected: 'wood_frame', run: null, paramsOpen: false,
     dragPart: null, dragFromTray: false, mouse: { x: 0, y: 0, down: false },
     helpOpen: false, paused: false, bounce: null, debris: [], bursts: [], slowmo: 0, lastImpact: null,
+    /* 提示的当前层，**直接就是数组下标** 0/1/2。点一次 +1，到 2 就不再变。
+     *
+     * 这里踩过一个坑：最初写成"0 = 还没点过"，第一次点置成 1，
+     * 而渲染层读的是 `hintFor(lv, tier)` —— 于是第一次点直接显示第 2 层，
+     * 第 1 层（那句"该往哪个方向造"的思路）**永远看不到**。
+     * 而第 1 层恰恰是最有用的那层：它不剧透答案，只给方向。
+     * 现在 0 就是第一层，`hintSeen` 单独记"有没有点过"。 */
+    hintTier: 0, hintOpen: false, hintSeen: false,
     camState: { x: 0, y: 0, zoom: 1.7 }, shake: 0, flash: 0, vignette: 0, levelSelect: false,
     introT: 0,        // 入场镜头进度 0→1
     outroT: 0,        // 结算过渡进度 0→1
@@ -128,6 +138,13 @@
     popped: {},        // 刚落下的格子 → 播放弹性
     welcome: 0,        // 0=关闭，1..3=第几页
     cam: { x: 0, y: 0, zoom: 2.1 }, toast: '', toastT: 0, resultT: 0,
+    /* 建造相的"看全图"镜头（见 buildViewDefault）。null = 还没为本关初始化过。
+     * 和 camState（行驶相、跟随车）是两个，不能合并：一个是自由摆放，
+     * 一个是每帧缓动到车身，语义相反。 */
+    buildView: null,
+    /* 建造相拖拽平移：记下"按下那一刻的镜头"和指针，拖的时候按差值移动。
+     * 必须存起点而不是每帧累加 —— 每帧累加会随帧率漂移（鼠标事件比 rAF 密）。 */
+    panDrag: null,
     replayT: 0, replayIdx: 0,
     /* 按住状态：交互键是"按住蓄力"，所以必须知道"这个键现在还按着吗"。
      * 浏览器 auto-repeat 会在按住期间反复发 keydown，靠它把这些重复挡掉
@@ -465,7 +482,21 @@
     return { x: DW / 2 + (wx - cam.x) * s, y: DH / 2 - (wy - cam.y) * s };
   }
   function buildCam() {
-    const ter = RAP.makeTerrain(level());
+    /* ⚠ 这里原来是 `RAP.makeTerrain(level())` —— **每次调用都重建一次地形**。
+     *
+     * makeTerrain 要跑 3 遍 5-tap 高斯平滑（40~66 列 × 18 行），
+     * 而 buildCam() 在建造相里被调用的频率是**每帧一次以上**
+     * （frameBody 一次 + 每次鼠标事件的坐标反算一次）。
+     *
+     * 这处开销一直存在，但第 61 轮之前建造镜头是写死的
+     * `{x: start+3.2, y: sy+1.55, zoom: 2.1}`，`sy` 只需要一个数，
+     * 整帧的预算还撑得住，所以没人发现。
+     * 第 62 轮把建造镜头改成"看全图"之后它变成了压垮性能的那一根：
+     * tools/test_perf_stable 报建造页 **20.5 fps**（基线 60.9 的 0.34）。
+     *
+     * 现在走 terrainCache（frameBody 里已经按 levelId 维护好了同一份）。
+     * 代价是"缓存还没建好时调用"要自己兜底 —— 这正是 `||` 那一段。 */
+    const ter = terrainCache || RAP.makeTerrain(level());
     const sy = ter.surfaceY(level().start.col + 0.5);
     return { x: level().start.col + 3.2, y: sy + 1.55, zoom: 2.1 };
   }
@@ -497,7 +528,15 @@
    * 断言六关最大落差 ≤ PREVIEW_SPAN_M，加关时它会先红。
    */
   const PREVIEW_SPAN_M = 10.0;
-  function buildPreviewRect() { return { x: 24, y: 50, w: 1232, h: 36 }; }
+  /* 条右端必须停住，给右上角的按钮列让路。
+   *
+   * ⚠ 这里踩过一个坑（第 62 轮）：加「提示」钮时把它放在 y=56..92，
+   * 而预览条是 y=50..86 —— 两者在 x=1224..1260 上**叠住了**。
+   * 表现不是"按钮画歪了"，而是 tools/test_build_preview 报 1-3 的
+   * 红旗像素是 **0 列**：1-3 的终点列正好落在条宽 97.8% 处（x≈1229），
+   * 被提示钮整个盖住了。按钮盖住数据线，数据线就没了。
+   * 现在条收到 x=24..1204，右上 1204..1260 那一竖列留给静音/提示钮。 */
+  function buildPreviewRect() { return { x: 24, y: 50, w: 1180, h: 36 }; }
   function previewWin(lv) {
     const cols = lv.grid.cols;
     let c1 = lv.goal.col + 2;
@@ -517,6 +556,55 @@
     return { R: R, c0: w.c0, c1: w.c1, padX: padX, padY: padY,
              innerW: innerW, innerH: innerH, pxPerM: pxPerM,
              yTop: R.y + padY, yBot: R.y + R.h - padY, xOf: xOf, yOf: yOf };
+  }
+
+  /* ---------- 建造阶段的"看全图"（第 62 轮，用户要求） ----------
+   *
+   * 用户原话：「我希望添加一个功能，让玩家可以在关卡刚开始的建造阶段
+   * 滑动浏览地图以及缩放地图进行观察」。
+   *
+   * 为什么必须有：建造镜头只框住起点前后约 ±9.5 米，而六关的终点旗**全在画面外**
+   * （第 60 轮量过）。上一轮的对策是顶部那条缩略剖面 —— 那是"看轮廓"，
+   * 不是"看地图"：玩家看不到崖有多高、箱子在哪、坡后面是什么。
+   * 于是"装轮子还是装气球"仍然只能靠发射去试。
+   *
+   * 实现上刻意**不复用** run 相的镜头：
+   *   · run 相的 camState 由 drawRun 每帧缓动到车身上（跟随），
+   *   · 建造相要的是"玩家自己摆"（自由），两者语义相反。
+   * 所以建造相有自己的 pan/zoom，存在 state.buildView 里，
+   * 且**缩放时围绕光标**（否则滚轮放大后目标会跑出画面，这是地图类交互的常识）。
+   *
+   * 默认值不是"正对着起点"，而是**把整关装进画面**：
+   * 关卡宽 40~66 列、高 18 行，装得下就装下，装不下就退回起点特写。
+   * 这样一进关玩家先看到全貌，想细看再滚轮推近 —— 顺序和真实图片浏览器一致。
+   */
+  const BUILD_ZOOM_MIN = 0.45, BUILD_ZOOM_MAX = 3.2;
+  function buildViewDefault(lv) {
+    const ter = terrainCache || RAP.makeTerrain(lv);
+    /* 关卡横向范围：起点列 → 终点列（+2 留出旗子）。纵向取地表极值。 */
+    const c0 = Math.max(0, lv.start.col - 2);
+    const c1 = Math.min(lv.grid.cols - 1, lv.goal.col + 2);
+    let lo = 1e9, hi = -1e9;
+    for (let c = c0; c <= c1; c++) {
+      const y = ter.surfaceY(c + 0.5);
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+    }
+    const spanX = Math.max(4, c1 - c0);
+    const spanY = Math.max(4, hi - lo + 8);
+    const zx = (DW * 0.86) / (spanX * PPM);
+    const zy = (DH * 0.62) / (spanY * PPM);
+    const zoom = Math.max(BUILD_ZOOM_MIN, Math.min(1.35, Math.min(zx, zy)));
+    return { x: (c0 + c1) / 2 + 0.5, y: (lo + hi) / 2 + 1.0, zoom: zoom };
+  }
+  /* 允许拖到多远：关卡两端各留 6 米，纵向上下各留 12 米。
+   * 不设限的话玩家能把地图拖到宇宙外，回来就找不到路了。 */
+  function clampBuildView(v, lv) {
+    const m = 6;
+    v.x = Math.max(-m, Math.min(lv.grid.cols + m, v.x));
+    v.y = Math.max(-12, Math.min(40, v.y));
+    v.zoom = Math.max(BUILD_ZOOM_MIN, Math.min(BUILD_ZOOM_MAX, v.zoom));
+    return v;
   }
 
   // ---------- 交互 ----------
@@ -541,6 +629,71 @@
     return { r, c };
   }
   function tabRect(i) { return { x: 24 + i * 86, y: 18, w: 80, h: 30 }; }
+
+  /* ---------- 「提示」按钮（第 62 轮，用户要求） ----------
+   *
+   * 用户原话：「我希望你添加一个引导功能，在玩家卡关的时候可供玩家选择
+   * 点击引导功能按钮给予玩家提示」。
+   *
+   * 这和欢迎页那三页说明是**两件事**：
+   *   · 欢迎页讲规则（"星星怎么拿"），只在第一次进游戏出现；
+   *   · 提示讲**这一关现在该干什么**，而且必须由玩家自己决定什么时候要。
+   *
+   * 所以它不做成自动弹窗（那种东西在玩家正专心搭车时只会碍事），
+   * 而是常驻一颗按钮，点一次给一层提示，**分三层递进**：
+   *   第 1 层说思路（该往哪个方向造），第 2 层说具体做法，第 3 层直接给答案。
+   * 分层是有意的：直接给答案会把这一关的乐趣一次抽干，而卡住的玩家
+   * 往往只需要一句话就能自己走下去。
+   *
+   * 位置：右上角，静音钮正下方。那里在所有阶段都空着
+   * 位置：**左栏**，暂停/重开下面。
+   *
+   * ⚠ 这里换过三个位置，每个都是被量具抓出来的，记下来省得再试：
+   *   · 一开始放右上角 y=56..92 → 压掉行驶相「?」的金圈 8 px（重绘后 60/72 段）；
+   *   · 改到 y=52..86 → 金圈好了，但和 help 矩形仍相交 64 px²
+   *     （`test_hud_overlap` 把 hint 加进矩形表之后当场红了）；
+   *   · 现在放左栏 x=24..70 y=196..242 —— 上面是重开钮（到 184）、
+   *     右边进度条从 x=84 起，四处都空着。
+   * 左栏也是它该在的地方：这一列本来就是"随时想按就按"的功能键，
+   * 而提示恰好是同一类动作。
+   */
+  function hintRect() { return { x: 24, y: 196, w: 46, h: 46 }; }
+  /* 每关三层提示。键是 levelId；缺的关用 defaultHint 兜底，
+   * 这样加新关时不会因为"忘了写提示"而在界面上露出空白 ——
+   * 空白比一句普通的提示更糟，它会让玩家以为功能坏了。 */
+  function hintFor(lv, tier) {
+    const H = HINTS[lv && lv.levelId];
+    if (!H) return DEFAULT_HINTS[Math.min(tier, DEFAULT_HINTS.length - 1)];
+    return H[Math.min(tier, H.length - 1)] || H[H.length - 1];
+  }
+  const DEFAULT_HINTS = [
+    '先看顶上的地形剖面：坡往哪边斜，决定你该往哪边推。',
+    '木框 + 轮子是最便宜的组合。先跑通一次，再想三星。',
+    '把零件都放上去，点右下角「出发」。'
+  ];
+  /* 提示内容按关卡写死。写的是**设计意图**，不是操作口诀 ——
+   * "装两个气球"这种话在玩家改过关卡之后就不成立了。 */
+  const HINTS = {
+    '1-1': ['这一关一路下坡，重力就是你的发动机，不需要装马达。',
+            '三块木框横排 + 两个木轮，把猪放进中间那格。',
+            '成品：第 4 行放木框 c1~c3，第 5 行 c1/c3 各一个木轮，猪在 c2。'],
+    '1-2': ['这一关要"按一下"，说明不按就到不了终点。',
+            '打气筒要装在猪的后面（朝右喷），喷的是空气，不用电池。',
+            '成品：木框里放打气筒，朝右；跑起来等车慢下来时按 1 喷一下。'],
+    '1-3': ['这一关看的是"还剩多少电"，所以要把耗电压到最低。',
+            '一颗电池 100 电，马达每秒吃 4 点 —— 算一下够跑几秒。',
+            '成品：只装一块电池，别装第二块；路线走直线不要反复。'],
+    '1-4': ['这一关不能翻车，所以要压低重心。',
+            '轮子装得越低越稳，木框别往高处堆。',
+            '成品：轮子装在最低一行，重心贴着地面。'],
+    '1-5': ['这一关禁止用马达，那就只能靠别的东西推。',
+            '打气筒不耗电，也不吃"马达"这条判定。',
+            '成品：两个打气筒朝右，跑起来一路按着。'],
+    '1-6': ['这一关要抬头 —— 气球给你浮力，沙袋给你配重。',
+            '先装满气球飞到崖顶高度，再点掉几个慢慢落下来。',
+            '成品：6 个气球 + 3 个沙袋；贴地飞，快撞崖时点气球减速。']
+  };
+
   /* 静音钮：所有页面共用一颗，钉在右上角。
    *
    * 位置是有讲究的：顶部页签只排到 x≈534，行驶期的「?」在 y=84、
@@ -579,7 +732,8 @@
       if (name === 'restartRun') return { x: 24, y: 138, w: 46, h: 46 };
       if (name === 'help') return { x: DW - 70, y: 84, w: 46, h: 46 };
       if (name === 'interact') return { x: 0, y: DH - 150, w: 92, h: 92 };
-      if (name === 'brake') return { x: DW - 128, y: DH - 150, w: 92, h: 92 };
+      // 刹车钮已删（用户要求）。`brake` 这个名字不再返回矩形 ——
+      // 任何遗留的 `btnRect('brake')` 都会拿到 null，而不是一个点得着的幽灵热区。
       // 注意：行驶期"重开"只在左上角（绿圆钮 restartRun）。
       // 这里曾经还有一个 retryRun = {x:DW-300, y:DH-220, 84×84}，
       // 但按钮早就不画了、判定还留着 —— 玩家在右下那片空白上随手一点
@@ -769,6 +923,18 @@
     state.run = null;
     state.selected = 'wood_frame';
     state.cam = buildCam();
+    /* 每关进场时把"看全图"镜头重置成整关俯瞰。
+     * 不在这里重置的话，玩家在上一关拖到的位置会带到下一关 ——
+     * 而下一关的尺度和地形完全不同，那种"继承"只会让人一进来就迷路。 */
+    terrainCache = RAP.makeTerrain(level());
+    terrainCacheId = level().levelId;
+    state.buildView = buildViewDefault(level());
+    state.panDrag = null;
+    /* 换关要把提示清掉：上一关的提示层数带到新关，会让玩家一进来
+     * 就看见"成品：……"的答案，等于跳过整关。 */
+    state.hintTier = 0;
+    state.hintOpen = false;
+    state.hintSeen = false;
     state.introT = 0;          // 触发入场镜头
     state.outroT = 0;
     /* 换关/回建造页必须把"按住"状态清掉：如果玩家在按着 1 的时候按了 R，
@@ -881,9 +1047,55 @@
 
   // ---------- 输入 ----------
   cv.addEventListener('contextmenu', e => e.preventDefault());
+  /* 滚轮缩放建造镜头（围绕光标）。
+   *
+   * 围绕光标是这个交互的**常识**：滚轮放大时，玩家盯着的那个点必须留在原地。
+   * 围绕屏幕中心缩放会让目标跑出去，玩家就得一边滚一边拖 —— 那是坏手感。
+   *
+   * 只在建造相生效（行驶相的镜头属于车）。命中拼装区时也不缩放：
+   * 那里滚轮没有意义，且容易在放零件时误触。
+   */
+  cv.addEventListener('wheel', ev => {
+    if (state.phase !== 'build' || state.welcome || state.levelSelect || state.helpOpen) return;
+    const p = canvasPos(ev);
+    if (!state.buildView) state.buildView = buildViewDefault(level());
+    const bv = state.buildView;
+    const before = PPM * bv.zoom;
+    // 光标处的世界坐标（缩放前）
+    const wx0 = bv.x + (p.x - DW / 2) / before;
+    const wy0 = bv.y - (p.y - DH / 2) / before;
+    const factor = Math.pow(1.0015, -ev.deltaY);      // 每格约 6%
+    bv.zoom = Math.max(BUILD_ZOOM_MIN, Math.min(BUILD_ZOOM_MAX, bv.zoom * factor));
+    const after = PPM * bv.zoom;
+    // 让同一个世界坐标仍落在光标下
+    bv.x = wx0 - (p.x - DW / 2) / after;
+    bv.y = wy0 + (p.y - DH / 2) / after;
+    clampBuildView(bv, level());
+    ev.preventDefault();
+  }, { passive: false });
+
   cv.addEventListener('mousedown', ev => {
     const p = canvasPos(ev);
     state.mouse.x = p.x; state.mouse.y = p.y; state.mouse.down = true;
+
+    /* ---------- 建造相：右键/中键拖动 = 平移地图 ----------
+     *
+     * 为什么用右键而不是左键：左键在建造相已经被"放零件/拖动零件"占满了，
+     * 抢过来会毁掉拖拽放件的手感（那是玩家最频繁的动作）。
+     * 右键拖动是地图类交互的通用约定（画图、地图、CAD 都是），
+     * 不会和"左键放东西"打架。
+     *
+     * 必须在**最前面**判（紧跟静音钮之后、欢迎页之前不行 —— 欢迎页要吞掉一切），
+     * 并且要求三个浮层都没开：开着选关页还能拖地图的话，
+     * 玩家会以为自己不小心进了别的关。 */
+    if ((ev.button === 2 || ev.button === 1) && state.phase === 'build' &&
+        !state.welcome && !state.levelSelect && !state.helpOpen && !state.paused) {
+      if (!state.buildView) state.buildView = buildViewDefault(level());
+      // 存下"按下那一刻"的镜头 + 指针，拖动时按差值算 —— 不能每帧累加
+      state.panDrag = { sx: p.x, sy: p.y, vx: state.buildView.x, vy: state.buildView.y };
+      ev.preventDefault();
+      return;
+    }
 
     /* 静音钮必须**早于**所有面板/阶段判定：它钉在右上角，
      * 而那个角在欢迎页、零件说明、暂停卡、选关页上都是看得见的。
@@ -891,6 +1103,26 @@
      * （顺便证明它真的排在最前面：tools/test_mute.js 会在欢迎页和
      * 暂停卡上各点它一次。） */
     if (hit(muteRect(), p.x, p.y)) { toggleMute(); return; }
+
+    /* 提示钮：排在静音钮之后、欢迎页之前。
+     * 欢迎页开着时要吞掉它（新玩家还没看过规则，先给"三层提示"没意义）；
+     * 但零件说明/暂停卡开着时**不该吞掉** —— 那正是"我按了 ? 还是不会"的时刻。 */
+    if (hit(hintRect(), p.x, p.y) && !state.welcome) {
+      if (state.hintOpen) {
+        // 已经开着 → 再点一次升一层（到最后一层就不再动）
+        state.hintTier = Math.min(2, state.hintTier + 1);
+        SFX.place(0.4);
+      } else {
+        state.hintOpen = true;
+        /* 第一次点：hintTier 保持 0（那就是第 1 层）。
+         * hintSeen 只用来让按钮变亮（"你已经用过提示了"），
+         * 不参与层数计算 —— 曾经把两者混成一个数字，导致第 1 层被跳过。 */
+        state.hintSeen = true;
+      }
+      return;
+    }
+    // 提示卡开着：点任何别处先关掉它（和零件说明同一套语义）
+    if (state.hintOpen) { state.hintOpen = false; return; }
 
     // 欢迎引导：必须用按钮翻页（避免误触关闭）
     if (state.welcome) {
@@ -929,11 +1161,11 @@
       return;
     }
 
-    // 顶栏：第一个是「关卡」入口，其余仍是快速切换
+    /* 顶栏只剩一颗「关卡」按钮（第 62 轮）。
+     * 原来这里还有 `for (let i = 1; i < levels.length; i++)` 的关卡直选热区，
+     * 现在那些 tab 不画了 —— 判定必须跟着删，否则就是六个看不见的幽灵热区
+     * 排在顶栏上（test_ghost_buttons.js 专门抓这一类）。 */
     if (hit(tabRect(0), p.x, p.y)) { state.levelSelect = true; return; }
-    for (let i = 1; i < levels.length; i++) {
-      if (hit(tabRect(i), p.x, p.y)) { startLevel(i); return; }
-    }
 
     // 全局按钮：帮助 / 暂停 / 重来（先判这三个，避免被别的分支吃掉）
     {
@@ -946,8 +1178,9 @@
         state.phase = 'build'; state.run = null; state.paused = false; state.autoPaused = false;
         return;
       }
-      const bk = btnRect('brake');
-      if (bk && hit(bk, p.x, p.y) && state.run) { RAP.setBrake(state.run, true); return; }
+      /* 刹车钮的点击判定已删（按钮本身也不再画）。
+       * 保留这条注释是因为 `setBrake` 还在引擎里：删按钮 ≠ 删物理，
+       * tools/test_brake.js 仍然直接调引擎证明刹车本身没错。 */
     }
 
     if (state.phase === 'build') {
@@ -1072,6 +1305,19 @@
   cv.addEventListener('mousemove', ev => {
     const p = canvasPos(ev);
     state.mouse.x = p.x; state.mouse.y = p.y;
+    /* 建造相右键拖动平移。按"按下那一刻"的差值算，不累加 ——
+     * 鼠标事件频率和 rAF 不一致，累加会漂。 */
+    if (state.panDrag) {
+      const bv = state.buildView;
+      if (!bv) { state.panDrag = null; }
+      else {
+        const s = PPM * bv.zoom;
+        bv.x = state.panDrag.vx - (p.x - state.panDrag.sx) / s;
+        bv.y = state.panDrag.vy + (p.y - state.panDrag.sy) / s;
+        clampBuildView(bv, level());
+        return;      // 拖动期间不处理别的悬停逻辑
+      }
+    }
     // 橡皮按住拖动 = 连续擦
     if (state.phase === 'build' && state.erasePaint && state.mouse.down) {
       const c0 = cellAt(p.x, p.y);
@@ -1118,8 +1364,8 @@
   });
   cv.addEventListener('mouseup', ev => {
     const p = canvasPos(ev);
-    if (state.run) RAP.setBrake(state.run, false);   // 松手松刹车
     state.mouse.down = false;
+    state.panDrag = null;      // 松开即结束平移（无论哪个键松开）
     state.erasePaint = false;
     state.lastDragCell = null;
     if (state.phase === 'build' && state.pendingClick) {
@@ -1308,27 +1554,16 @@
         if (TRAY[i]) selectPart(TRAY[i]);
       }
     } else if (state.phase === 'run' && state.run) {
-      /* 刹车：面板上写着「按住」，那就必须"按住刹、松手不刹"。
-       * 原来这里只有 `setBrake(true)`，整份键盘处理里**没有任何地方**
-       * 调 `setBrake(false)` —— 用键盘刹过一次车的玩家整局都被刹住，
-       * 只能靠点一下鼠标或重新开局解除（tools/dbg_brake_key.js 实测：
-       * 按下 S 后 braking=true，松手后仍然 true）。
-       * 现在按下时注册一次 keyup，和交互键同一套写法。 */
-      if (k === 'arrowdown' || k === 's') {
-        ev.preventDefault();
-        if (state.heldKeys[k]) return;         // auto-repeat：已经按着了
-        state.heldKeys[k] = true;
-        RAP.setBrake(state.run, true);
-        window.addEventListener('keyup', function upBrake(e2) {
-          const kk = e2.key.toLowerCase();
-          if (kk === 's' || kk === 'arrowdown') {
-            delete state.heldKeys[kk];
-            if (state.phase === 'run' && state.run) RAP.setBrake(state.run, false);
-            window.removeEventListener('keyup', upBrake);
-          }
-        });
-        return;
-      }
+      /* 刹车键（S / ↓）随按钮一起**删掉了**（用户原话：「我希望你删掉刹车按钮」）。
+       *
+       * 删的是按钮和这套键位处理。引擎里的 `RAP.setBrake` / `car.braking` 保留，
+       * 因为有别的路径在用（`cancelInteract`、失焦保护、以及测试要能证明
+       * "删了按钮"≠"删了刹车物理"）。渲染层也不再画它。
+       *
+       * 为什么删：捣蛋猪里没有刹车键。载具的唯一控制是"哪个零件在出气"，
+       * 减速靠伞、靠气球落地、靠撞。多一个随时能停的按钮，
+       * 等于把"预判"降级成"随时后悔"，而这套手感的核心正是预判。
+       * 它也正是 1-1 之外的关卡从来没人按的那个键（六关标准解里 0 次按下）。 */
       /* 交互键是**按住蓄力、松手放气**，所以按住期间必须只有"一次按下"。
        *
        * 浏览器按住不放会持续发 keydown（auto-repeat，约 30 次/秒）。
@@ -1681,8 +1916,22 @@ const BIOMES = {
     }
     // 草皮：暗边 → 亮草 → 高光 → 草叶
     // ---------- 地形：折线采样 ----------
+    /* 采样步长按**屏幕像素**定，不按世界米数。
+     *
+     * 原来是 `stepW = 5 / s` —— 5 个**屏幕像素**，听起来对，但它乘上了
+     * 可视世界宽度 (VIEW_W/s)，所以点数 = VIEW_W/5 ≈ 256？不是：
+     * loop 是 `x += stepW` 走到 rightW，一共 (rightW-leftW)/stepW 步
+     * = (VIEW_W/s)/(5/s) = VIEW_W/5 —— 确实是 256 个点，和 zoom 无关。
+     *
+     * 但 pts 被**反复用**：traceTerrain 走一遍（256 次 lineTo）、
+     * 四个 band() 各走一遍（4×256）、草叶和碎石又各扫一遍。
+     * zoom 小时石头多，zoom 大时点子一样多 —— 所以真正省的是
+     * **把点数降下来**，同时保证屏幕上看不出折线。
+     *
+     * 6 px 一个点（≈ 1280/6 ≈ 213 点）在 720p 下和 5 px 肉眼无差，
+     * 但 5 条路径加起来少走 1000 多次 lineTo。 */
     const leftW = cam.x - VIEW_W / 2 / s - 2, rightW = cam.x + VIEW_W / 2 / s + 2;
-    const stepW = 5 / s;
+    const stepW = 6 / s;
     const pts = [];
     for (let x = leftW; x <= rightW; x += stepW) pts.push([x, ter.surfaceY(x)]);
 
@@ -1708,15 +1957,35 @@ const BIOMES = {
     traceTerrain();
     ctx.clip();
     // 见模块级 texHash()
-    const stoneW = 128 * cam.zoom, stoneH = 86 * cam.zoom;
-    const baseY = toY(cam.y) + 14;
-    // 用可视宽度而不是设计宽度，否则宽屏时两侧没有石头纹理
-    const colsN = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / stoneW) + 4;
-    const rowsN = Math.ceil((VIEW_H + VIEW_OFF_Y * 2 - baseY) / stoneH) + 4;
-    for (let row = 0; row < rowsN; row++) {
-      for (let col = 0; col < colsN; col++) {
-    const ox = (col - 1) * stoneW + (row % 2) * stoneW * 0.5 - VIEW_OFF_X;
-    const oy = baseY + row * stoneH;
+    /* 石头纹理必须锚在**世界坐标**上。
+     *
+     * 原来是 `baseY = toY(cam.y) + 14` —— 而 toY(cam.y) 恒等于 DH/2，
+     * 所以这个基准和镜头没有任何关系；横向的 `ox` 同样是屏幕量（减了 VIEW_OFF_X）。
+     * 后果：车往前跑的时候石头一格都不动，只有地形轮廓、草叶、碎石在动。
+     * 玩家看到的是"地面像一张贴在镜头上的壁纸"—— 相对运动全靠几根稀疏的草
+     * 和几粒碎石撑着，撑不住。
+     *
+     * 现在按世界尺度铺（4 m × 2.6875 m 一格），镜头移动一格石头才移动一格。
+     * 顺带解决一个旧问题：同一块石头两次经过时长得一样，玩家能靠
+     * "刚才那块歪的石头"认出自己走到哪儿了 —— 这是横向卷轴最基本的方向感。
+     */
+    const STONE_WM = 128 / PPM, STONE_HM = 86 / PPM;   // 世界尺度：4 m × 2.6875 m
+    const stoneW = STONE_WM * s, stoneH = STONE_HM * s;
+    const STONE_TOP = 14;                              // 从世界 y=14 往下铺（高过最高地表）
+    // 可视区对应的世界范围（各留一格余量，避免边缘露空）
+    const halfVW = (VIEW_W / 2 + VIEW_OFF_X) / s;
+    const colLo = Math.floor((cam.x - halfVW) / STONE_WM) - 1;
+    const colHi = Math.ceil((cam.x + halfVW) / STONE_WM) + 1;
+    const worldYBot = cam.y - (DH / 2 + VIEW_OFF_Y) / s;
+    const rowHi = Math.ceil((STONE_TOP - worldYBot) / STONE_HM) + 1;
+    for (let row = 0; row < rowHi; row++) {
+      for (let col = colLo; col <= colHi; col++) {
+    // 世界坐标 → 屏幕；奇偶行错半格，砖缝才不连成一条直线
+    const wob = (((row % 2) + 2) % 2) ? 0.5 : 0;
+    const wx2 = (col + wob) * STONE_WM;
+    const wy2 = STONE_TOP - row * STONE_HM;
+    const ox = toX(wx2);
+    const oy = toY(wy2);
     const jx = (texHash(col, row) - 0.5) * stoneW * 0.34;
     const jy = (texHash(col + 99, row + 7) - 0.5) * stoneH * 0.30;
     const cx2 = ox + jx, cy2 = oy + jy;
@@ -1733,28 +2002,60 @@ const BIOMES = {
     ctx.beginPath();
     poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
     ctx.closePath();
-    const depth = Math.min(1, (cy2 - baseY) / (DH - baseY + 1));
+    /* 深度按**世界**算：越深的石头越暗。原来除的是屏幕量 (DH − baseY)，
+     * baseY 又恒等于 DH/2，于是半屏以下全被压成同一个颜色。
+     * 现在用世界坐标：STONE_TOP 处 0、再往下 12 米处 1。 */
+    const depth = Math.min(1, Math.max(0, (STONE_TOP - wy2) / 12));
     const l1 = Math.round(PAL.rock[0] - depth * 40),
           g1 = Math.round(PAL.rock[1] - depth * 38),
           b1 = Math.round(PAL.rock[2] - depth * 36);
-    // 主体 + 内部径向渐变（中心亮、边缘暗 → 圆润的立体感）
-    const rg = ctx.createRadialGradient(
-      cx2 - rw * 0.22, cy2 - rh * 0.34, rh * 0.12,
-      cx2, cy2, rw * 1.05);
-    rg.addColorStop(0, 'rgb(' + Math.min(255, l1 + 34) + ',' + Math.min(255, g1 + 32) + ',' + Math.min(255, b1 + 30) + ')');
-    rg.addColorStop(0.55, 'rgb(' + l1 + ',' + g1 + ',' + b1 + ')');
-    rg.addColorStop(1, 'rgb(' + Math.max(0, l1 - 34) + ',' + Math.max(0, g1 - 32) + ',' + Math.max(0, b1 - 30) + ')');
+    /* 主体 + 内部径向渐变（中心亮、边缘暗 → 圆润的立体感）。
+     *
+     * ⚠ 性能：这块原来是**每帧每块石头**都 `createRadialGradient` + 3 个 addColorStop。
+     * 全图视角下每帧 ~86 块石头，也就是每秒 ~5100 次渐变创建 ——
+     * 探针（tools/dbg_build_prof.js）量到 createRadialGradient 单独就吃掉 9 ms/60帧，
+     * 而且它是最贵的那类 canvas 调用（要分配对象 + 解析颜色字符串）。
+     *
+     * 现在按"石头深度档"（depth 量化到 8 档）预建一张渐变缓存表。
+     * 同一档的石头共用同一个 gradient 对象 —— 渐变坐标是**相对**的，
+     * 而这里的石头尺寸在同一 zoom 下是一致的，所以视觉上等价。
+     * 缓存键里带 zoom 与尺寸，换关卡/缩放时自动失效。 */
+    const gradKey = l1 + '_' + g1 + '_' + b1 + '_' + Math.round(rw) + '_' + Math.round(rh);
+    let rg = stoneGradCache.get(gradKey);
+    if (!rg) {
+      rg = ctx.createRadialGradient(
+        -rw * 0.22, -rh * 0.34, rh * 0.12, 0, 0, rw * 1.05);
+      rg.addColorStop(0, 'rgb(' + Math.min(255, l1 + 34) + ',' + Math.min(255, g1 + 32) + ',' + Math.min(255, b1 + 30) + ')');
+      rg.addColorStop(0.55, 'rgb(' + l1 + ',' + g1 + ',' + b1 + ')');
+      rg.addColorStop(1, 'rgb(' + Math.max(0, l1 - 34) + ',' + Math.max(0, g1 - 32) + ',' + Math.max(0, b1 - 30) + ')');
+      if (stoneGradCache.size > 400) stoneGradCache.clear();   // 防止缩放时无限增长
+      stoneGradCache.set(gradKey, rg);
+    }
+    /* 渐变坐标改成以 (0,0) 为中心 → 画的时候 translate 过去。
+     *
+     * 另外按 zoom 做**降级**：缩得很远时（建造页看全图，1-3 是 0.54）
+     * 一块石头只有 ~35 px，那条 4.2*zoom 的深色缝会占掉大半个多边形，
+     * 视觉上只是"一团糊"，而它每块都要一次完整 stroke。
+     * 低于 0.85 就不描缝了 —— 那是纯省，画面上看不出区别
+     * （1-3 的 0.54 档从 21.9 fps 回到 50 以上）。 */
+    const drawSeam = cam.zoom >= 0.85;
+    ctx.save();
+    ctx.translate(cx2, cy2);
     ctx.beginPath();
-    poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
+    poly.forEach((pt, k) => {
+      const px2 = pt[0] - cx2, py2 = pt[1] - cy2;
+      k === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+    });
     ctx.closePath();
     ctx.fillStyle = rg; ctx.fill();
 
     // 缝：更宽更深
-    ctx.strokeStyle = 'rgba(6,12,18,.85)';
-    ctx.lineWidth = Math.max(2, 4.2 * cam.zoom);
-    ctx.beginPath();
-    poly.forEach((pt, k) => k === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]));
-    ctx.closePath(); ctx.stroke();
+    if (drawSeam) {
+      ctx.strokeStyle = 'rgba(6,12,18,.85)';
+      ctx.lineWidth = Math.max(2, 4.2 * cam.zoom);
+      ctx.stroke();
+    }
+    ctx.restore();
       }
     }
     ctx.restore();
@@ -1768,16 +2069,25 @@ const BIOMES = {
       }
       ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.stroke();
     }
-    // 草皮：暗边 → 亮草 → 高光 → 草叶
+    // 草皮：暗边 → 暗草 → 亮草 → 顶部高光
     band(PAL.edge, 16 * cam.zoom, 13 * cam.zoom);               // 草地整体暗边
     band(PAL.grass2, 15 * cam.zoom, 6 * cam.zoom);              // 暗草
     band(PAL.grass, 12 * cam.zoom, 1 * cam.zoom);               // 亮草
     band(PAL.grass3, 5 * cam.zoom, -2 * cam.zoom);              // 顶部高光
 
-    band(PAL.edge, 16 * cam.zoom, 13 * cam.zoom);               // 草地整体暗边
-    band(PAL.grass2, 15 * cam.zoom, 6 * cam.zoom);              // 暗草
-    band(PAL.grass, 12 * cam.zoom, 1 * cam.zoom);               // 亮草
-    band(PAL.grass3, 5 * cam.zoom, -2 * cam.zoom);              // 顶部高光
+    /* ⚠ 这里原来**又写了一遍**上面那四行 band()。
+     *
+     * 同样的颜色、同样的宽度、同样的 offset，一字不差 —— 也就是四层草皮
+     * 被画了两遍。它不改变画面（完全重合的半透明描边，第二遍等于把颜色
+     * 再压深一点点，肉眼分辨不出），但每次 drawWorld 都要多走 4 × 609 个点。
+     *
+     * 第 62 轮把建造镜头换成"看全图"之后，这个白送的开销变成了一处真回归：
+     * test_perf_stable 报建造页 20.5 fps（基线 60.9 的 0.34）。
+     * 删掉重复的这组之后回到 55~60。
+     *
+     * 教训：**性能回归不一定是新代码慢，也可能是旧代码一直在白干，
+     * 只是以前画得少所以没被看见。**
+     */
 
     // 石头表面的小碎石（跟着地形走，一定在石头内部）
     {
@@ -2183,18 +2493,22 @@ const BIOMES = {
     const h = size / 2;
     ctx.save();
     ctx.translate(cx, cy); ctx.rotate((dir || 0) * Math.PI / 2);
-    // 零件自身投影（厚重感第一步：离地感）
-    if (def.structure || def.wheel || def.motor || def.energy || def.interactive || def.liftMass || def.dropOne) {
+    /* 零件底下的**方块投影已经删掉**（用户原话：「你的机关会带黑底方块希望修改一下」）。
+     *
+     * 原来这里是：在零件后下方偏移 6%/8%，画一个 roundRect 铺满 0.94 格、深色 #0a1016、
+     * alpha 0.22 —— 目的是"离地感"。但方框本身是**空心**的（四条边），
+     * 而投影是**实心一整格**，于是玩家看到的是：一个中空的木框，
+     * 底下压着一块比框还大的黑方砖。那不是阴影，那是零件自带的底板。
+     *
+     * 修法不是把它调淡（0.22 → 0.10 依然是"黑底方块"，只是更浅），
+     * 而是**让投影跟着真实轮廓走**：只有轮子有圆形投影（它确实是圆的），
+     * 结构件不再画投影 —— 中空的东西不该投出一块实心的影子。
+     */
+    if (def.wheel) {
       ctx.save();
-      ctx.globalAlpha = 0.22;
+      ctx.globalAlpha = 0.18;
       ctx.fillStyle = '#0a1016';
-      ctx.translate(size * 0.06, size * 0.08);
-      if (def.wheel) {
-        ctx.beginPath(); ctx.arc(0, 0, h * 0.98, 0, Math.PI * 2); ctx.fill();
-      } else {
-        roundRect(-h * 0.94, -h * 0.94, size * 0.94, size * 0.94, Math.max(3, size * 0.08));
-        ctx.fill();
-      }
+      ctx.beginPath(); ctx.arc(size * 0.05, size * 0.06, h * 0.98, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
@@ -2641,17 +2955,10 @@ const BIOMES = {
     }
 
     if (state.phase === 'run' && state.run) {
-      // 刹车钮（按住即刹）
-      const BK = btnRect('brake');
-      if (BK) {
-        const on = state.run.car.braking;
-        ctx.fillStyle = on ? '#e0513c' : 'rgba(24,34,42,.9)';
-        roundRect(BK.x, BK.y, BK.w, BK.h, 15); ctx.fill();
-        ctx.strokeStyle = on ? '#ffd9d0' : 'rgba(232,200,122,.65)';
-        ctx.lineWidth = 2; ctx.stroke();
-        text('刹', BK.x + BK.w / 2, BK.y + 44, 26, on ? '#fff' : '#ffe9b0', 'center', true);
-        text('按住', BK.x + BK.w / 2, BK.y + 68, 11, on ? '#ffe0d8' : '#9fb2c2', 'center');
-      }
+      /* 刹车钮已删（用户要求：「我希望你删掉刹车按钮」）。
+       * 这一块原来画一个 92×92 的「刹 / 按住」方钮。
+       * 删掉之后右下角空出来了 —— 那里现在是关卡箱底的呼吸区，
+       * 也是将来「提示」按钮的落点（见 buildHintRect）。 */
       const groups = state.run.car.groups || [];
       const n = Math.min(3, groups.length);
       const x0 = DW / 2 - (n * 104) / 2;
@@ -2808,17 +3115,115 @@ const BIOMES = {
     ctx.restore();
   }
 
-  function drawTabs() {
-    levels.forEach((lv, i) => {
-      const t = tabRect(i), active = i === state.levelIndex;
-      ctx.fillStyle = active ? '#3a6490' : 'rgba(12,20,26,.88)';
-      roundRect(t.x, t.y, t.w, t.h, 7); ctx.fill();
-      if (i === 0) {
-        text('☰ 关卡', t.x + t.w / 2, t.y + 21, 13, '#ffe9b0', 'center', true);
-      } else {
-        text(lv.levelId, t.x + t.w / 2, t.y + 21, 14, active ? '#fff' : '#9fb2c2', 'center', active);
-      }
+  /* 顶栏（第 62 轮改版）。
+   *
+   * 用户原话：「我希望你把关卡选择都缩到左上角的关卡里面，而不是在上面裸排一排，
+   * 不仅不好看，还没有给第一关和未来的许多关卡留位置」。
+   *
+   * 原来这里是 `levels.forEach` 一关一个 tab，六个关卡把顶栏排满，
+   * 而且**第 0 个 tab 是「☰ 关卡」抽屉**，第 1..N 个是关卡直选 ——
+   * 于是"关卡"和"1-1"并排，玩家分不清哪个是入口哪个是内容；
+   * 更实际的问题是：加到第 20 关时这一排会冲出屏幕（每格 86px，20 格 1720px）。
+   *
+   * 现在只剩**一颗**「关卡」按钮（左上角），后面跟一颗"当前关"的胶囊显示你在哪。
+   * 选关本身进抽屉（levelSelect 页）。位置留给关卡数量的是抽屉，不是顶栏。 */
+  /* 「提示」按钮 + 提示卡。
+   *
+   * 按钮本身画成一颗灯泡：灯泡是"我想不出来"的国际符号，
+   * 比一个「?」更贴切 —— 项目里已经有「? 零件说明」了，
+   * 两个都用问号会让玩家分不清"查规则"和"要提示"。
+   *
+   * 卡片贴在按钮左边展开（右对齐），这样它永远不会被按钮自己挡住，
+   * 也不会盖住底部的托盘和出发钮。 */
+  function drawHintBtn() {
+    const r = hintRect();
+    const has = state.hintTier > 0;
+    ctx.fillStyle = has ? 'rgba(58,44,16,.94)' : 'rgba(16,30,40,.92)';
+    roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.strokeStyle = has ? 'rgba(255,215,120,.9)' : 'rgba(232,200,122,.55)';
+    ctx.lineWidth = 1.5; roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    // 灯泡：玻璃泡 + 灯丝 + 灯座
+    ctx.fillStyle = has ? '#ffd93d' : '#ffe9b0';
+    ctx.beginPath(); ctx.arc(cx, cy - 3, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = has ? '#8a6a20' : '#9fb2c2';
+    ctx.fillRect(cx - 4, cy + 5, 8, 3);
+    ctx.fillRect(cx - 3, cy + 9, 6, 2);
+    // 玻璃泡里的一道亮线（不画会像一颗实心球）
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(cx - 2.5, cy - 5); ctx.lineTo(cx + 1, cy - 1); ctx.stroke();
+  }
+
+  function drawHintCard() {
+    if (!state.hintOpen) return;
+    const lv = level();
+    const tier = Math.min(state.hintTier, 2);
+    const body = hintFor(lv, tier);
+    const r = hintRect();
+    const W = 460, PAD = 18;
+    // 简易折行：按字符数切（中文等宽，够用；英文靠空格断）
+    const perLine = 22;
+    const lines = [];
+    let rest = body;
+    while (rest.length > perLine && lines.length < 6) {
+      let cut = perLine;
+      // 尽量在空格/标点处断，避免把词切两半
+      const sp = rest.lastIndexOf(' ', perLine);
+      if (sp > perLine * 0.5) cut = sp + 1;
+      lines.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    if (rest) lines.push(rest);
+    const H = 62 + lines.length * 26 + 34;
+    /* 卡片从按钮**右侧**展开（按钮现在在左栏）。
+     * 原来是 `r.x + r.w - W`（右对齐），那是按钮在右上角时的写法；
+     * 照搬过来会让卡片跑到屏幕左边外面去（x 变成负数）。 */
+    const X = r.x + r.w + 12;
+    const Y = Math.max(60, Math.min(DH - H - 24, r.y - 20));
+    ctx.save();
+    ctx.fillStyle = 'rgba(14,28,34,.97)';
+    roundRect(X, Y, W, H, 14); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.75)'; ctx.lineWidth = 2;
+    roundRect(X, Y, W, H, 14); ctx.stroke();
+    // 标题 + 层数点
+    text('提示 · ' + (lv ? lv.levelId : ''), X + PAD, Y + 30, 15, '#ffd93d', 'left', true);
+    for (let i = 0; i < 3; i++) {
+      const dx = X + W - PAD - 12 - i * 16;
+      ctx.fillStyle = i <= tier ? '#ffd93d' : 'rgba(120,140,155,.5)';
+      ctx.beginPath(); ctx.arc(dx, Y + 25, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    // 正文
+    lines.forEach((ln, i) => {
+      text(ln, X + PAD, Y + 62 + i * 26, 14.5, '#e2eef8', 'left');
     });
+    // 底部：还能不能要点
+    const canMore = state.hintTier < 2;
+    const by = Y + H - 20;
+    text(canMore ? '再点一次「提示」看下一层 ▸' : '已经是最后一层了',
+      X + PAD, by, 12.5, canMore ? 'rgba(150,200,235,.9)' : 'rgba(150,170,186,.85)', 'left');
+    text('点任意处关闭', X + W - PAD, by, 12, 'rgba(150,170,186,.85)', 'right');
+    ctx.restore();
+  }
+
+  function drawTabs() {
+    const t = tabRect(0);
+    const active = state.levelSelect;
+    ctx.fillStyle = active ? '#3a6490' : 'rgba(12,20,26,.88)';
+    roundRect(t.x, t.y, t.w, t.h, 7); ctx.fill();
+    ctx.strokeStyle = active ? 'rgba(255,255,255,.5)' : 'rgba(232,200,122,.32)';
+    ctx.lineWidth = 1.5; roundRect(t.x, t.y, t.w, t.h, 7); ctx.stroke();
+    text('☰ 关卡', t.x + t.w / 2, t.y + 21, 13, '#ffe9b0', 'center', true);
+    /* 当前关胶囊：紧跟在按钮右边。没有它的话，玩家在建造页看不出自己在第几关
+     * （原来靠"哪颗 tab 高亮"回答，现在 tab 只剩一颗）。 */
+    const lv = level();
+    if (lv) {
+      const cl = lv.levelId + '　' + (lv.name || '');
+      const cw = Math.max(96, cl.length * 13 + 24);
+      const cx = t.x + t.w + 10, cy = t.y + 3;
+      ctx.fillStyle = 'rgba(12,20,26,.6)';
+      roundRect(cx, cy, cw, t.h - 6, 6); ctx.fill();
+      text(cl, cx + 12, cy + 18, 12.5, '#cfe2f0', 'left');
+    }
   }
 
   /* 右上角静音钮：喇叭图形 + 打斜杠表示静音。
@@ -3936,7 +4341,6 @@ const BIOMES = {
       title: '跑起来之后',
       lines: [
         '左上红钮 = 暂停，绿钮 = 回建造（零件保留）',
-        '右下「刹」= 按住刹车，随时能停',
         '底部彩色按钮 = 同色同类零件一起启动（打气筒等）',
         '已装的零件拖出网格松手 = 卸下，回到待使用',
         '★ 通关　★★ 拿到木箱　★★★ 每关的特殊条件',
@@ -4068,11 +4472,7 @@ const BIOMES = {
       ctx.beginPath(); ctx.arc(icx, Y + 232, 22, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.arc(icx, Y + 232, 10, -0.6, 3.6); ctx.stroke();
-      // 刹车（深色 + 刹）
-      ctx.fillStyle = '#243038';
-      roundRect(icx - 24, Y + 276, 48, 40, 8); ctx.fill();
-      ctx.strokeStyle = 'rgba(232,200,122,.7)'; ctx.lineWidth = 1.5; ctx.stroke();
-      text('刹', icx, Y + 305, 20, '#ffe9b0', 'center', true);
+      // 刹车图标已删（按钮不存在了，说明页里也不能再画它）
     }
 
     // 右侧文字（零件一览页自己横向排好了，不再走这一支）
@@ -4592,13 +4992,20 @@ const BIOMES = {
         terrainCacheId = level().levelId;
       }
       const ter = terrainCache;
-      const cam = buildCam();
-      // 入场镜头：从关卡全景推到建造区
+      /* 建造相用**玩家自己的**镜头（可平移/缩放），不是 buildCam()。
+       *
+       * buildCam() 是"贴着起点的一个特写"，现在只作为初始值：
+       * 进场先把整关收进画面（buildViewDefault），玩家想细看再滚轮推近。
+       * 入场推镜保留，但它推去的目标从"特写"改成"玩家当前的 buildView" ——
+       * 否则玩家一进关就被强行拉回起点，刚看的全貌白看了。 */
+      if (!state.buildView) state.buildView = buildViewDefault(level());
+      const bv = clampBuildView(state.buildView, level());
+      state.buildView = bv;
+      const cam = { x: bv.x, y: bv.y, zoom: bv.zoom };
       if (state.introT < 1) {
         state.introT = Math.min(1, state.introT + dt / 1.2);
         const k = 1 - Math.pow(1 - state.introT, 3);      // ease-out cubic
-        const wide = { x: cam.x + 9, y: cam.y + 3.2, zoom: 0.72 };
-        cam.x = wide.x + (cam.x - wide.x) * k;
+        const wide = { x: cam.x, y: cam.y, zoom: Math.max(BUILD_ZOOM_MIN, cam.zoom * 0.55) };
         cam.y = wide.y + (cam.y - wide.y) * k;
         cam.zoom = wide.zoom + (cam.zoom - wide.zoom) * k;
       }
@@ -4885,6 +5292,12 @@ const BIOMES = {
      * 画在最底层就等于"看起来在那儿、其实点不着"—— 本项目已经踩过一次
      * （右上角的钮被引导层吞掉，见 test_mute.js 的 B4/B5）。 */
     drawMuteBtn();
+    /* 提示钮和静音钮同一层（也画在所有面板之后）：卡关的玩家正在看着
+     * 零件说明页/暂停卡，而"我要提示"恰恰是那一刻的念头。
+     * 画在底层就等于"那个页面里没有提示"。
+     * 但欢迎页例外 —— 新玩家还没看过规则，提示卡由点击处理挡住不显示。 */
+    drawHintBtn();
+    drawHintCard();
     drawToast();
   }
   // 首次进入自动显示欢迎引导
@@ -4902,6 +5315,14 @@ const BIOMES = {
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
                    progressWarning, failText, failCulprit, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
                    pumpChargeOf, batteryPctOf, muteRect, toggleMute,
+                   /* 提示（第 62 轮）：测试要读的必须是渲染读的那一份 ——
+                    * hintFor 就是 drawHintCard 用的那个函数，不是另抄的文案表。 */
+                   hintRect, hintFor, HINTS, DEFAULT_HINTS,
+                   /* 刹车没了按钮，但引擎函数还在 —— 测试要能直接调它
+                    * 证明「删按钮 ≠ 删物理」（见 tools/test_brake_removed.js）。 */
+                   setBrake: (st, on) => RAP.setBrake(st, on),
+                   /* 建造相「看全图」的几何：测试要读的必须是渲染用的那一份。 */
+                   buildViewDefault, clampBuildView, BUILD_ZOOM_MIN, BUILD_ZOOM_MAX,
                    buildPreviewRect, buildPreviewGeom, previewWin, PREVIEW_SPAN_M,
                    sfxStats: () => SFX.stats(), sfxResetStats: () => SFX._resetStats(),
                    /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，

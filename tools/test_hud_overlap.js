@@ -50,8 +50,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const r=R.btnRect(n); if(r) add(n,r);
     });
     /* 静音钮（第 59 轮）钉右上角，任何页面都在场 —— 所以它必须进这张表，
-     * 否则"它压住了计时面板"这种事没有任何量具会发现。 */
+     * 否则"它压住了计时面板"这种事没有任何量具会发现。
+     * 提示钮（第 62 轮）同理：它第一次落地就压掉了行驶相「?」的金圈 8 px，
+     * 而当时没有任何判据守着 —— 金圈那条只在"点 ? 之后"才验。
+     * 进表之后，"提示钮和 ? 相交"会在这一层就被抓住。 */
     add('mute', R.muteRect());
+    add('hint', R.hintRect());
     if (s.phase==='run') { const t=R.runTimeRects(); add('timer',t.timer); add('box',t.box);
       // 第 45 轮新加的木框耐久条：它必须和上面两块、下面的挑战条都分开
       if (t.frame) add('frame',t.frame);

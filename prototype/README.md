@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：70 项（49 个脚本 + 21 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：74 项（51 个脚本 + 23 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```

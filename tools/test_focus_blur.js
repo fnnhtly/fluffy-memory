@@ -108,6 +108,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     braking:s.run?!!s.run.car.braking:null,
     pumpHeld:s.run?!!s.run.car.pumpHeld:null,
     pumpCharge:s.run?+(s.run.car.pumpCharge||0).toFixed(3):null,
+    // charge 是 pumpCharge 的别名，本文件下面几处断言写的是 .charge
+    charge:s.run?+(s.run.car.pumpCharge||0).toFixed(3):null,
     groupsOn:s.run?s.run.car.groups.map(g=>g.on):null,
     speed:s.run?+Math.hypot(s.run.car.vx,s.run.car.vy).toFixed(2):null,
     pumpPress:s.run?s.run.pumpPress:null,
@@ -135,10 +137,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('恢复机制成立：show 会真的把页面拉回可见（否则后面全是假红）',
     vBack.hidden === false && vBack.log.some(x => x === 'vis:visible'), JSON.stringify(vBack));
 
-  /* ---------- A. 按住 S 刹车时切走 ---------- */
+  /* ---------- A. 按住交互键（打气筒蓄力）时切走 ----------
+   *
+   * 这一段原来用的是 S（刹车）。第 62 轮**删掉了刹车键位**（用户要求删刹车按钮），
+   * 于是 `按 S 真的刹上了` 和 `继续以后再按 S 仍然能刹` 两条必然红。
+   *
+   * 但它们要验的机制没变、也不能被删掉：**"按住某键时切走窗口，
+   * keyup 落到别的窗口上 → 按住状态永远留着 → 回来以后那个键失灵"**。
+   * 这是真实的、玩家会遇到的事故，只是换一个键来承载。
+   *
+   * 现在改用 1（打气筒）。它比刹车更适合验这条：刹车只是"一直刹着"，
+   * 而交互键按住会**持续蓄力**（pumpCharge 一路涨到 0.8），
+   * 所以"切走后还在偷偷蓄力"是能被读数抓到的、比标志位更硬的证据。 */
   await ev(`(()=>{const s=window.__rap.state, R=window.__rap.RAP;
-    window.__rap.startLevel(0); s.welcome=0; s.introT=1;
-    R.applySpec(window.__rap.levels[0], s.build, R.SPECS['1-1']);
+    window.__rap.startLevel(1); s.welcome=0; s.introT=1;
+    R.applySpec(window.__rap.levels[1], s.build, R.SPECS['1-2']);
     window.__rap.launch();
     return true;})()`);
   await sleep(300);
@@ -153,11 +166,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       type, code, key: m.key, windowsVirtualKeyCode: m.vk, nativeVirtualKeyCode: m.vk,
     });
   };
-  await keyEv('rawKeyDown', 'KeyS');
+  await keyEv('rawKeyDown', 'Digit1');
   await sleep(250);
   const heldBefore = await snap();
-  A.log('按住 S 之后：' + JSON.stringify(heldBefore));
-  A.chk('按住 S 真的刹上了（量具的前提）', heldBefore.braking === true, 'braking=' + heldBefore.braking);
+  A.log('按住 1 之后：' + JSON.stringify(heldBefore));
+  A.chk('按住 1 真的开始蓄力了（量具的前提）',
+    heldBefore.pumpHeld === true && heldBefore.charge > 0.05,
+    'pumpHeld=' + heldBefore.pumpHeld + ' charge=' + heldBefore.charge);
 
   /* 切走。**不送 keyup** —— 真实的 alt-tab 就是这样。 */
   await hide(); await sleep(500);
@@ -167,11 +182,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const backS = await snap();
   A.log('切回来：' + JSON.stringify(backS));
 
-  A.chk('切走时刹车被松开（不是"按着"混过一整个后台）', goneS.braking === false,
-    'braking=' + goneS.braking);
-  A.chk('切走时按住状态被清空（否则回来按 S 会被自己挡掉）',
+  A.chk('切走时蓄力被取消（不是"按着"混过一整个后台）', goneS.pumpHeld === false,
+    'pumpHeld=' + goneS.pumpHeld);
+  A.chk('切走时蓄力进度被清零（没有偷偷攒满）', goneS.charge < 0.05,
+    'charge=' + goneS.charge);
+  A.chk('切走时按住状态被清空（否则回来按 1 会被自己挡掉）',
     goneS.held.length === 0, 'held=' + JSON.stringify(goneS.held));
-  A.chk('切回来刹车没有复活', backS.braking === false, 'braking=' + backS.braking);
+  A.chk('切回来蓄力没有复活', backS.pumpHeld === false, 'pumpHeld=' + backS.pumpHeld);
   A.chk('切回来按住集合仍然是空的', backS.held.length === 0, JSON.stringify(backS.held));
   A.chk('切走会自动暂停（回来时能看清局面，而不是迎面撞一局已结束的比赛）',
     goneS.paused === true, 'paused=' + goneS.paused);
@@ -182,7 +199,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   /* 空格把这一局继续开。
    *
-   * 顺序很重要：**先继续，再验键盘**。第一次把"回来再按 S 还能刹"写在暂停状态里，
+   * 顺序很重要：**先继续，再验键盘**。第一次把"回来再按 1 还能蓄力"写在暂停状态里，
    * 而暂停分支（`if (state.paused && state.phase==='run')`）本来就会吞掉所有键 ——
    * 那条红是测试自己的错，不是键盘失灵。 */
   await keyEv('rawKeyDown', 'Space');
@@ -196,12 +213,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     goneS.t + ' → ' + resumed.t);
 
   /* 继续以后按同一个键，必须还能起效 —— 这才是玩家真正的感受 */
-  await keyEv('rawKeyDown', 'KeyS');
+  await keyEv('rawKeyDown', 'Digit1');
   await sleep(250);
   const again = await snap();
-  A.chk('继续以后再按 S 仍然能刹（键盘没有"失灵"）', again.braking === true,
-    'braking=' + again.braking + ' held=' + JSON.stringify(again.held));
-  await keyEv('keyUp', 'KeyS');
+  A.chk('继续以后再按 1 仍然能蓄力（键盘没有"失灵"）',
+    again.pumpHeld === true && again.charge > 0.05,
+    'pumpHeld=' + again.pumpHeld + ' charge=' + again.charge + ' held=' +
+    JSON.stringify(again.held));
+  await keyEv('keyUp', 'Digit1');
   await sleep(150);
 
   /* ---------- B. 按住交互键（打气筒）时切走 ---------- */
