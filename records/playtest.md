@@ -3108,6 +3108,96 @@ v3 的结论（每关只有 1~3 个赢局，看"是否自动满足"意义有限�
   `chapterDone()` 之后除了那句「整章通关」和「章节总览」入口，游戏没有任何新内容。
   垂直切片到这里就到头了 —— 这是切片的定义，不是遗漏。
 
+## 第 56 轮 · 第四张假旋钮表：`levels/*.json` 里 9 个字段有 6 个在说假话（runtime=html，执行者：Agent）
+
+### 起因：前三张表都查完了，剩下那张是我自己天天在改的
+
+第 53 轮查出 `PARTS` 里 4 个死字段，第 55 轮查出 `DEFAULTS` 23 个旋钮全部有读者。
+第三张表（`state.X`）在第 50–53 轮就查过了。剩下 `levels/*.json` —— 它是我调关卡时
+**唯一的入口**，里面每个字段看起来都像"改了会有效果"。所以这一轮把同一把尺子架上去。
+
+### 结果：13 个字段，9 个没人读
+
+`tools/audit_level_fields.js` 的第一版就数出六个"读者 0 次"的键，逐个查下去发现是整族：
+
+| 字段 | 谁写的 | 谁读的 | 真正的值在哪 |
+|---|---|---|---|
+| `physics`（4 个子键） | 六份 JSON 全有 | **没有人** | `Params.gravity / subSteps`、`ter.frictionAt()` 里写死的 0.05/0.45/0.6 |
+| `buildArea` | 六份 JSON 全有 | **没有人** | `game.js` 的 `BUILD_COLS = 6, BUILD_ROWS = 8` |
+| `grid.cell` / `grid.px` | 六份 JSON 全有 | **没有人** | `game.js` 的 `CELL = 1.0`、`index.html` 的 `PPM = 32` |
+| `start.row` / `goal.row` | 六份 JSON 全有 | **没有人** | 引擎只用 `start.col` / `goal.col`（`car.x >= goal.col` 判到点） |
+| `materials[].surfaceRow` | 十段材质全有 | **没有人** | `makeTerrain` 从 `mapRows` 数每列第一个实体字符 |
+| `chapter` | 六份 JSON 全有 | **没有人** | `chapterDone()` 判的是"六关都到过终点"，从不看章节号 |
+| `note` | 只有 1-6 有 | **没有人** | 它是**给设计者看的标准解说明**，没有任何界面画过它（`docs/gdd.md` §1-6 已有同一段） |
+
+`surfaceRow` 是这批里唯一**不是单纯多余**的一个：它会说谎。
+
+### 第十五个坑：一句没人读的注释，2/3 的场合是错的
+
+删之前先量了它说的对不对（`tools/probe_surface_row_truth.js`）：
+
+```
+1-1 mud cols[0,39]  声明 surfaceRow=8，实际 [5,6,7,8]     ← 坡路开局，地表从 col5 一路抬到 col8
+1-2 mud cols[0,19]  声明 8，实际 [5,6,7,8]
+1-3 stone cols[63,65] 声明 7，实际 [8,7]
+1-4 ice cols[0,40]  声明 8，实际 [8,7,6,5]                ← 冰面台地本身是抬高的
+1-5 mud cols[0,47]  声明 8，实际 [5,6,7,8,9]
+1-6 mud cols[0,11]  声明 12，实际 [9,10,11,12]            ← 崖前那段是台阶
+说对了 4 段，说错 6 段
+```
+
+9 段（删前是 10 段，含 1-6 的两段）里 **6 段是假的**。这不是"多余的备忘"，
+是**主动骗人的文档**：以后谁按 `surfaceRow: 8` 去改地形，会以为整片地是平的。
+
+（同一轮里这个量具自己还坏过一次：删完字段再跑，它照着"声明 vs 实际"比，
+`surfaceRow` 变成 `undefined`，于是打印出"说错 10 段"—— 数据已经干净了，量具还在报。
+删掉是对的，但**量具在数据被修好之后必须能说出"没东西可量"**，这才是它可信的前提。
+所以最终没有把它留在 `verify.mjs` 里：它守的是一个已经不存在的东西。）
+
+### 修法：删字段，然后**把校验装在唯一出口上**
+
+- 9 个字段按"文本删块"从六份 JSON 里删掉，不用 `JSON.stringify` 重写 ——
+  六份里有五份的缩进和 `stringify(obj,null,1)` 不一致（先量过，`tools/_chk_json_roundtrip.js`：
+  只有 06.json 逐字节一致），重写会把整份文件都算成改动。删块的脚本逐个断言
+  **"除被删字段外逐项一致"**，不一致就不写回。
+- 出口 `tools/build_levels_js.js` 现在带 schema 校验（`tools/lib/level_schema.js`）：
+  出现未登记字段、必填字段缺失、或出现任何一个"第二份真相"，直接失败、不生成 `levels.js`。
+  校验放在**出口而不是进口**：`levels/*.json` 有多个写入者（`make_levels.py`、
+  `gen_level_06.js`、几个 `tune_1_6_*.js`、手工 edit），其中好几个早就过期了
+  （`make_levels.py` 生成的 1-2 终点是 col 12，实际的 1-2 是 col 14）；出口只有一个。
+- 过期的生产者顺手对齐：`make_levels.py` 写盘前统一剥掉这些字段（并在文件头
+  写明"这是历史脚本，不是关卡数据的真相"）；`gen_level_06.js` 只输出登记过的字段。
+
+`tools/test_level_schema.js` **20/20**，其中 13 条是**喂脏数据**：
+加 `physics` / 加 `buildArea` / 加 `grid.px` / 加 `start.row` / 加 `materials[1].surfaceRow` /
+拼错一个新字段名 / 删掉必填字段 —— 每一条都必须被拦下；
+另有一条反向自证：**只改值（改 `timeLimit`、改 `goal.col`）必须仍然通过**，
+否则校验就退化成"任何改动都拒绝"。
+
+`tools/audit_level_fields.js` 重写成 **18/18**：A 组查每个字段的读者、
+B 组查"没有第二份真相"（并反过来确认 `BUILD_COLS/BUILD_ROWS/CELL/PPM` 这四个常量
+仍然活在代码里 —— 否则建造区就变成"数据里删了、代码里也没有"）、
+C 组查 `BIOMES` 的 11 个视觉参数、D 组五条量具自证。
+
+### 第十六个坑：量具的别名表不全，会把 9 个活字段全判成死的
+
+`BIOMES` 那组的第一版只数了 `bm.X` 和 `b.X` 两种写法，于是 9 个颜色键全部"读取 0 次"。
+真相是三处代码用了**三个不同的别名**读它：`drawWorld` 里叫 `PAL`、
+选关缩略图里叫 `bh`、建造期压暗层里叫 `bm`。
+
+这和第 52 轮 `state.X` 那次是同一类错误：**量具不认识代码的写法**。
+修法是别名表写死进审计（`ALIASES = ['PAL','bh','bm']`）并加一条自证
+（`PAL.rock` 必须计 1），新增别名时必须同步加表 —— 不加就会静默放过真死字段。
+
+### 结果
+
+- 六份关卡数据从 `keys = levelId name chapter biome grid buildArea start goal physics partsBox mapRows materials boxes challenge timeLimit`（15 个）
+  变成 `levelId name biome grid start goal partsBox mapRows materials boxes challenge timeLimit`（12 个，1-6 多一个 `hardCols`）。
+- `prototype/levels.js` 从六份 JSON 重新生成，六关标准解照旧全通（`check_html_logic.js` **39/39**，
+  `verify.mjs` 全套 **67 项全绿**，含 47 个真实浏览器脚本）。
+- 关卡数据本身**一个像素都没变**：`mapRows` 逐行相同、`partsBox` 相同、`challenge` 相同、
+  `timeLimit` 相同 —— 这轮删的全是没人读的东西。
+
 ## 待用户试玩（runtime=html）
 
 - 浏览器这一项由用户打开 `prototype/index.html` 验证；AI 侧只做了 `node --check` 语法检查与数值校核，

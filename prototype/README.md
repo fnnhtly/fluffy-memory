@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：65 项（47 个脚本 + 18 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：67 项（47 个脚本 + 20 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -76,6 +76,8 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_time_limit.js` | 限时归谁：关卡 `timeLimit` 真的生效（不是死字段），没写时才回落 `Params.demoTimeLimit`（纯 Node） |
 | `audit_params.js` | 可调参数对账：`DEFAULTS` 里每个"旋钮"在 game.js 里都真的有人读它（纯 Node） |
 | `test_touch_ladder.js` | 触地四级档位铺在真实量程：六关标准解 0 条 lvl3+、0 伤害，但合计有 lvl2（落地有尘土轻震）；猛车仍能进 lvl4 |
+| `audit_level_fields.js` | 关卡数据对账（第四张假旋钮表）：`levels/*.json` 的每个字段都得有读者，且不许出现"第二份真相"；顺带守 `BIOMES` 的 11 个视觉参数（纯 Node） |
+| `test_level_schema.js` | schema 校验自身必须能失败：喂 13 份故意弄脏的关卡（加 `physics`、`grid.px`、`materials[].surfaceRow`、拼错字段名…），逐个证明被拦下；只改值不改变字段集时仍要通过 |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 
@@ -101,3 +103,4 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 7. **已知弱点**：1-5 的 ★★（拿沟底木箱）和 ★★★（不用马达）在实际物理下**可以一次拿全**——文档要求二者必须冲突，这条在切片里偏软，留到 2-5《悬崖快递》（气球/伞）再体现。
 8. **1-6 的解法是一条时间轴，不是纯摆件**：气球升速固定在 2.5 m/s、水平 1.8–2.2 m/s，斜率的倒数约 1.4:1 —— "飞多远"实际是"要升多高"。所以 1-6 的地形是按这条斜率倒推画的：先扔沙袋减重起飞，途中扎掉 1 个气球降低浮力才能不被吹过头。
 9. **终点有一个高度门槛（2.2 m）**：不然气球会把车直接飘过终点而不算到达。2.2 m 是六关静止车高的最大值（1-6 = 2.18 m），再高就有关卡会误判。
+10. **关卡数据里的 9 个字段被删了**（第 56 轮）：`physics`（整块 4 个子键）、`buildArea`、`grid.cell`、`grid.px`、`start.row`、`goal.row`、`materials[].surfaceRow`、`chapter`、`note`。它们全都**有人写、没人读** —— 而 `surfaceRow` 更糟：9 段材质声明里 6 段说的是假的（1-1 声明地表在第 8 行，实际是 5~8 行的缓坡）。现在 `mapRows` 是地形的唯一真相，`game.js` 的 `BUILD_COLS/BUILD_ROWS/CELL` 与 `index.html` 的 `PPM` 是尺寸的唯一真相，出口 `tools/build_levels_js.js` 会拒绝任何一份带这些字段的 JSON。

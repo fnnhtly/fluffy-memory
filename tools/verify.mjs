@@ -122,6 +122,14 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
 }
 
+// 1e) 关卡数据 schema（脏数据必须被出口拦住，干净数据必须通过）
+{
+  const r = run(process.execPath, [path.join('tools', 'test_level_schema.js')], '关卡数据 schema');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
 // 2) 内联脚本语法
 {
   const r = run(process.execPath, [path.join('tools', 'check_inline_js.js')], '内联脚本语法');
@@ -195,6 +203,14 @@ const results = [];
 // 3j) 触地档位（四级反馈必须铺在玩家真的到得了的速度区间）
 {
   const r = run(process.execPath, [path.join('tools', 'test_touch_ladder.js')], '触地档位');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
+// 3k) 关卡数据对账（第四张表：数据里每个字段都得有读者 + 不许有第二份真相）
+{
+  const r = run(process.execPath, [path.join('tools', 'audit_level_fields.js')], '关卡数据对账');
   const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
   const pass = !!(m && m[1] === m[2] && r.ok);
   results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });

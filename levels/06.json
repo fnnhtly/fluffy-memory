@@ -1,42 +1,22 @@
 {
  "levelId": "1-6",
  "name": "抬个头",
- "chapter": 1,
  "biome": "dusk",
- "note": "沙袋压住跑下坡 → 崖口扔沙袋升起来 → 爬上高台 → 扎一个气球稳稳落下去。",
  "grid": {
   "cols": 44,
-  "rows": 18,
-  "cell": 1,
-  "px": 32
- },
- "buildArea": {
-  "cols": 6,
-  "rows": 8
+  "rows": 18
  },
  "start": {
-  "col": 1,
-  "row": 4
+  "col": 1
  },
  "goal": {
-  "col": 15,
-  "row": 7
+  "col": 15
  },
  "hardCols": [
   11,
   12,
   13
  ],
- "physics": {
-  "gravity": 16,
-  "stepHz": 60,
-  "subSteps": 4,
-  "friction": {
-   "mud": 0.6,
-   "stone": 0.45,
-   "ice": 0.05
-  }
- },
  "partsBox": {
   "wood_frame": 3,
   "wood_wheel": 2,
@@ -66,7 +46,6 @@
  ],
  "materials": [
   {
-   "surfaceRow": 12,
    "cols": [
     0,
     11
@@ -74,7 +53,6 @@
    "type": "mud"
   },
   {
-   "surfaceRow": 8,
    "cols": [
     13,
     22

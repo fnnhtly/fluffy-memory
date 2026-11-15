@@ -1,8 +1,21 @@
-"""按 v1.0 附录 B 的 schema 生成垂直切片 5 张关卡：levels/01.json .. 05.json
+"""【历史脚本 · 不是关卡数据的真相】第一天用来"起个底稿"的生成器。
+
+真正的关卡数据是 `levels/*.json`，它是被反复手工/半自动调过之后的样子：
+本脚本现在跑出来的 1-2 终点是 col 12、抬坡在 col 8，而**实际的 1-2**
+终点是 col 14、抬坡在 col 10 —— 两者早就不是一个东西了。
+1-6 由 `tools/gen_level_06.js` 出，本脚本根本不产它。
+
+所以：**不要用它覆盖 levels/**。它保留下来只因为那些一次性的
+`tools/round*.py` / `tools/fix*.py` 都按"改这个文件再跑"写的。
+
+第 56 轮顺手让它写出的 JSON 也符合 schema（`tools/lib/level_schema.js`）：
+在写盘前统一删掉 buildArea / physics / chapter / start.row / goal.row /
+materials[].surfaceRow —— 这些字段没人读，其中 surfaceRow 更是在 2/3 的
+场合说着假话（见 tools/strip_level_surface_row.js）。这样即使哪天误跑，
+也不会把 `tools/build_levels_js.js` 毒成"校验失败"。
 
 地图符号：# 实体 / . 空气 / S 起点 / E 终点 / B 木箱 / / 斜坡 / = 冰面 / ~ 熔岩
 坐标：原点左上，col 向右、row 向下，1 格 = 1 m = 32 px。
-生成后会做自洽校验（S/E/B 位置、地板连续性、建造区尺寸）。
 """
 import json
 import pathlib
@@ -229,8 +242,19 @@ for lv in levels:
         problems.append(f"{lv['levelId']}: 起点下方不是实体（{rows[sr + 1][sc]}）")
 
 for i, lv in enumerate(levels, 1):
+    # 只保留 schema 登记的字段（见文件头注释：其余全是没人读的第二份真相）
+    lv.pop("buildArea", None)
+    lv.pop("physics", None)
+    lv.pop("chapter", None)
+    lv.pop("note", None)
+    if not lv.get("hardCols"):
+        lv.pop("hardCols", None)
+    lv["start"] = {"col": lv["start"]["col"]}
+    lv["goal"] = {"col": lv["goal"]["col"]}
+    lv["grid"] = {"cols": lv["grid"]["cols"], "rows": lv["grid"]["rows"]}
+    lv["materials"] = [{"cols": m["cols"], "type": m["type"]} for m in lv["materials"]]
     path = OUT / f"{i:02d}.json"
-    path.write_text(json.dumps(lv, ensure_ascii=False, indent=1), encoding="utf-8")
+    path.write_text(json.dumps(lv, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 print(f"wrote {len(levels)} levels")
 for lv in levels:

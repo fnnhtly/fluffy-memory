@@ -11,6 +11,11 @@
  *   跨 8 格沟要升 10 米（车飘出画面、窗口塌到 0.1 秒）；
  *   爬 3.3 米墙只要升 2.4 秒、横移 3 米，窗口 ±0.8 秒。
  *   而垂直立面又是"不升空绝对过不去"的硬保证（轮子半径 0.34 米）。
+ *
+ * 这个脚本**只写 schema 里登记过的字段**（tools/lib/level_schema.js）。
+ * 以前它还输出 buildArea / physics / chapter / note / start.row / goal.row /
+ * materials[].surfaceRow —— 那些全是"有人写没人读"，删掉之后
+ * tools/build_levels_js.js 会把它们当脏数据拒收，这个生产者也必须同步。
  */
 const fs = require('fs');
 const path = require('path');
@@ -26,32 +31,31 @@ lv.boxes = [{ col: lv.goal.col + 3, row: lv.goal.row }];
 const out = {
   levelId: '1-6',
   name: '抬个头',
-  chapter: 1,
   biome: 'dusk',
-  note: '沙袋压住跑下坡 → 崖口扔沙袋升起来 → 爬上高台 → 扎一个气球稳稳落下去。',
-  grid: lv.grid,
-  buildArea: lv.buildArea,
-  start: lv.start,
-  goal: lv.goal,
+  grid: { cols: lv.grid.cols, rows: lv.grid.rows },
+  start: { col: lv.start.col },
+  goal: { col: lv.goal.col },
   hardCols: lv.hardCols,
-  physics: lv.physics,
   partsBox: lv.partsBox,
   mapRows: lv.mapRows,
-  materials: lv.materials,
+  materials: lv.materials.map(m => ({ cols: m.cols, type: m.type })),
   boxes: lv.boxes,
   challenge: { type: 'allSandbags' },
   timeLimit: 120
 };
 
+/* 打标记（S / B / E）要用**行号**，而 schema 里 start/goal 只留 col。
+ * 行号从 tune_1_6_wall.js 的原始结果里取（lv.start.row / lv.goal.row）——
+ * 那是生成器内部的中间量，不进关卡数据。 */
 const rows = out.mapRows.map(s => s.split(''));
 function put(r, c, ch) {
   if (r < 0 || r >= rows.length || c < 0 || c >= rows[0].length) throw new Error('marker oob ' + r + ',' + c);
   if (rows[r][c] === '#') throw new Error('marker 落在实体里 ' + r + ',' + c);
   rows[r][c] = ch;
 }
-put(out.start.row, out.start.col, 'S');
-out.boxes.forEach(b => put(b.row, b.col, 'B'));
-put(out.goal.row, out.goal.col, 'E');
+put(lv.start.row, out.start.col, 'S');
+out.boxes.forEach(b => put(lv.goal.row, b.col, 'B'));
+put(lv.goal.row, out.goal.col, 'E');
 out.mapRows = rows.map(r => r.join(''));
 out.mapRows.forEach((s, i) => { if (s.length !== out.grid.cols) throw new Error('row ' + i + ' len ' + s.length); });
 

@@ -1,36 +1,14 @@
 {
  "levelId": "1-1",
  "name": "放个轮子",
- "chapter": 1,
  "biome": "field",
  "grid": {
   "cols": 40,
-  "rows": 14,
-  "cell": 1.0,
-  "px": 32
- },
- "buildArea": {
-  "cols": 6,
-  "rows": 8
- },
- "start": {
-  "col": 1,
-  "row": 4
- },
+  "rows": 14},
+"start": {
+  "col": 1},
  "goal": {
-  "col": 25,
-  "row": 7
- },
- "physics": {
-  "gravity": 16.0,
-  "stepHz": 60,
-  "subSteps": 4,
-  "friction": {
-   "mud": 0.6,
-   "stone": 0.45,
-   "ice": 0.05
-  }
- },
+  "col": 25},
  "partsBox": {
   "wood_frame": 3,
   "wood_wheel": 2,
@@ -54,7 +32,6 @@
  ],
  "materials": [
   {
-   "surfaceRow": 8,
    "cols": [
     0,
     39

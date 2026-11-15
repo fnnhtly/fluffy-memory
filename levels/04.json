@@ -1,36 +1,14 @@
 {
  "levelId": "1-4",
  "name": "冰面",
- "chapter": 1,
  "biome": "ice",
  "grid": {
   "cols": 60,
-  "rows": 14,
-  "cell": 1.0,
-  "px": 32
- },
- "buildArea": {
-  "cols": 6,
-  "rows": 8
- },
- "start": {
-  "col": 1,
-  "row": 7
- },
+  "rows": 14},
+"start": {
+  "col": 1},
  "goal": {
-  "col": 30,
-  "row": 4
- },
- "physics": {
-  "gravity": 16.0,
-  "stepHz": 60,
-  "subSteps": 4,
-  "friction": {
-   "mud": 0.6,
-   "stone": 0.45,
-   "ice": 0.05
-  }
- },
+  "col": 30},
  "partsBox": {
   "wood_frame": 4,
   "wood_wheel": 2,
@@ -57,7 +35,6 @@
  ],
  "materials": [
   {
-   "surfaceRow": 8,
    "cols": [
     0,
     40
@@ -65,7 +42,6 @@
    "type": "ice"
   },
   {
-   "surfaceRow": 8,
    "cols": [
     41,
     59
