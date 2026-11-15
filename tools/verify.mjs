@@ -73,7 +73,8 @@ const SCRIPTS = [
   'test_motor_out.js',
   'test_perf_stable.js',
   'test_focus_blur.js',
-  'test_mute.js'
+  'test_mute.js',
+  'test_build_preview.js'
 ];
 
 function run(cmd, args, label, timeoutMs = 180000) {

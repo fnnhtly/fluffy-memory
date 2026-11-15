@@ -62,6 +62,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       add('infoBar',{x:84,y:90,w:700,h:30});
       add('infoLines',{x:84,y:128,w:640,h:58});
       add('statCard',{x:1280-232,y:148,w:200,h:188});
+      /* 第 60 轮的地形预览条：横跨整幅、贴着顶部，最容易压到页签和静音钮。
+       * 它必须进这张表，否则"预览条把静音钮吃掉"这种事没有任何量具会发现。 */
+      add('preview', R.buildPreviewRect());
       const o=R.buildOrigin(); add('buildGrid',{x:o.x,y:o.y,w:R.RAP.BUILD_COLS*R.BUILD_PX,h:R.RAP.BUILD_ROWS*R.BUILD_PX});
       for(let i=0;i<R.TRAY.length;i++) add('tray'+i, R.trayRect(i));
       add('tip',{x:1280/2-330,y:720-136,w:660,h:20});

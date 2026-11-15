@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：70 项（49 个脚本 + 21 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：71 项（50 个脚本 + 21 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -73,6 +73,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_motor_out.js` | 电池用光时 HUD 弹提示、能量栏改写「用光」、失败归因点名电池；一次断电只写一条 `motor_out` |
 | `test_focus_blur.js` | 切走窗口（alt-tab / 切标签页 / 锁屏）之后回来这一局怎么样：按住的键必须松开、不许"回来再按同一键被自己挡掉"、这一局必须自动暂停、建造期的拖拽手势必须复位、结算页不许被改成暂停卡。用 `setFocusEmulationEnabled:false` + `setWebLifecycleState:frozen` 造真实失焦（无头环境下只有这一对能送得到事件，见 `tools/probe_focus_combo.js`） |
 | `test_mute.js` | 静音开关：静音时**一个发声节点都不建**（不是"建了再把音量拧到 0"；无头里增益读不准，见 `tools/probe_audio_env.js`）、那颗钮在欢迎页/暂停卡/行驶中都点得动、键盘 M 也能切、关掉页面再进状态还在、钮上的红斜杠/<wbr>金喇叭像素随状态翻转、钮不与任何固定面板重叠 |
+| `test_build_preview.js` | 建造页顶部那条地形预览。六关共用**同一个竖向比例尺**（满量程 10 m = 1-6 的崖），所以 1-3 在条上真的只有 1.9 px 高差 —— 判据核对的是「这一帧真的交给 `lineTo` 的坐标」（`state.previewProfile`）而不是另算一遍同名公式；终点旗的红像素必须全部落在终点列（用 `fillRect` 盖住旗后必须扫不到，让这条像素量具自证能失败）；行驶期不许画；另有「六关落差 ≤ 满量程」的护栏，将来加关时先红而不是把崖顶截平 |
 | `audit_state_fields.js` | 静态对账：引擎写的字段渲染层读没读、渲染层读的 `def.__X` 有没有人写、事件标签有没有人听（纯 Node） |
 | `audit_dead_reads.js` | 反向静态对账：渲染层读的 run 状态字段**引擎到底写过没有**。第 57 轮靠它查出 `lastImpactAt` / `lastBoxAt` 从来没被写过 —— 猪的 dizzy 表情和"吃到木箱就笑"两个分支从写下的那天起就是死的（`undefined \|\| -9` 恒为 -9，把"字段不存在"伪装成"条件不成立"） |
 | `audit_parts_spec.js` | 零件表对账：`PARTS` 里每个字段都得有人读；说明文字里的每个数字都得和引擎常数一致（纯 Node） |
@@ -117,3 +118,9 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
     修法是先进一条总线（`bus(a)`，懒建的 `master` 增益节点），再在每个发声函数开头判 `if (muted) return;` —— 也就是**静音时根本不创建振荡器**，而不是"建完把音量拧到 0"。这不是为了省那几微秒，是为了让这件事在无头环境里**可以断言**：`AudioContext` 在那里永远是 `suspended`、`currentTime` 永远是 `0`、`setTargetAtTime` 永远到不了目标值（`tools/probe_audio_env.js` 量过；`resume()` 的 promise 更是永远不 settle，`probe_audio_resume.js` 因此挂死过），所以"读一下 master 增益是不是 0"会是一条永远为真的空断言。改成数**真的建了几个发声节点**（`SFX.stats()`）之后，这条判据可以真的变红 —— `tools/test_mute.js` 里有一条自证：把 `if (muted) return;` 全部短路掉，`osc` 立刻从 0 变成 5。
 
     入口做了三个，因为一个入口不够：右上角一颗钉住的钮（`muteRect()`，画在**所有面板之后**，所以在欢迎页/选关页/零件说明/暂停卡上都看得见点得着）、键盘 **M**（键盘玩家够不到那个角）、以及 `localStorage` 持久化（否则每次开页面都要重按一次，而这种开关玩家只会按一次）。钮本身不用 emoji（不同机器字形差别大、可能缺字），用两条 path 画喇叭和斜杠。
+
+15. **建造页看不见自己要跑的地形**（第 60 轮）：这一条不是设计判断，是量出来的 —— `tools/probe_build_view.js` 把 `buildCam()` 的取景框算了一遍，它只覆盖起点前后 **±9.52 米**，六关的终点旗**全部**在画面之外（6/6）。于是"装轮子还是装气球、要不要留刹车、木箱在哪"，玩家只能靠反复发射去试；这不是难度，是信息缺失。
+
+    修法是顶部加一条地形预览（`drawBuildPreview()`，`y=50..86`，横跨 1232px —— 这个位置是 `tools/probe_build_space.js` 扫出来的唯一空档：页签占 18..48、静音钮占 16..46、顶部信息条从 90 起）。四条刻意的取舍都写在 `buildPreviewRect()` 上方的注释里，最要紧的是**竖向共用同一个比例尺**：满量程 10 m 取的是最陡的 1-6，于是 1-3（落差 0.70 m）在条上只有 **1.9 px** 高差 —— 它就是这么平。按关卡自动归一化会把 1-3 画成一整条山，等于骗玩家去准备一个不存在的地形；`tools/test_build_preview.js` 里有一条自证量出这两种画法在 1-3 上相差 **14.4 倍**。
+
+    横向窗口裁到 `[起点列, 终点列+2]`，但**必须把木箱列也圈进来**（1-6 的木箱在 18 列、终点在 15 列，只裁到 goal+2 的话箱子正好在条外，那正是第二颗星要玩家去找的东西）。曲线数据来自 `RAP.makeTerrain` 的真 `surfaceY`，逐 2 像素采样（1-3 有 64 列，逐列采会漏掉平缓段），并同时把交给 `lineTo` 的坐标记进 `state.previewProfile` —— 判据核对的是"画出来的那条线"，不是另算一遍同名公式。

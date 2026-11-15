@@ -44,7 +44,7 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（出口 `tools/build_levels_js.js`） | ✅ schema 校验通过（出口会拒绝任何脏数据） |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**70 项自检全绿**（49 个脚本 + 21 项静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**71 项自检全绿**（50 个脚本 + 21 项静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 39/39 |
 | 木框耐久可见性 | `tools/test_frame_damage.js` + `tools/probe_damage_tiers.js` | ✅ 15/15（三档像素读数：绿/金/红；掉耐久有音效与轻抖；碎后整块隐去） |
 | 撞击演出去重 | `tools/test_impact_dedupe.js` + `tools/probe_impact_spam.js` | ✅ 8/8（旧版一次硬着陆写 34 条 `impact` → 慢放/白闪反复重置；现在 22 个接触收敛成 1 条） |
@@ -71,6 +71,7 @@
 | 拖出网格=卸下 | `tools/test_drag_unequip.js` | ✅ 19/19（待使用 +n / 叠放 n 不许丢 / 被占格弹回不卸下 / 出网格才提示） |
 | 撤销语义 | `tools/test_undo.js` | ✅ 21/21（回到上一步整张图纸；卸下/擦除/放置/换向都算一步；一笔擦除只记一步） |
 | 静音开关 | `tools/test_mute.js` + `tools/probe_audio_env.js` | ✅ 22/22（第 59 轮：全作原先**一个静音/音量控件都没有**，且 `SFX` 三个发声点各自直连 `a.destination`，没有总增益可挂。现在先过一条 `master` 总线，再在每个发声函数开头判 `if (muted) return;` —— 静音时**根本不建振荡器**。这个改法不只为省开销：无头里 `AudioContext` 永远 `suspended`、`currentTime` 永远 0、`setTargetAtTime` 永远到不了目标值（`resume()` 的 promise 更是永不 settle，`probe_audio_resume.js` 因此挂死），所以"读增益是不是 0"会是一条永远为真的空断言；改成数**建了几个发声节点**之后，这条判据可以真的变红（短路掉那 4 处 `if (muted) return;`，`osc` 立刻 0→5）。入口三个：右上角钉住的钮（画在所有面板之后，欢迎页/选关页/暂停卡上都点得着）、键盘 M、`localStorage` 持久化） |
+| 建造用地形预览条 | `tools/test_build_preview.js` + `tools/probe_build_view.js` + `tools/probe_build_space.js` | ✅ 41/41（第 60 轮：`buildCam()` 只覆盖起点前后 ±9.52 米，**六关终点旗全都在画面外**（6/6，`probe_build_view.js` 量的），玩家看不见自己要跑的地形。修法是顶部一条 `y=50..86` 的剖面（位置由 `probe_build_space.js` 扫出的唯一空档决定）。竖向**共用同一个比例尺**（满量程 10 m = 1-6 的崖），所以 1-3 只剩 1.9 px 高差 —— 按关卡自动归一化会把 1-3 画成一整条山，两种画法在同一关相差 14.4 倍，测试里自证了这一条。曲线来自 `RAP.makeTerrain` 的真 `surfaceY`，逐 2 px 采样，并把交给 `lineTo` 的坐标记进 `state.previewProfile` —— 判据核对画出来的那条线，不另算同名公式） |
 | 气球沙袋的可见链路 | `tools/test_lift_ui.js` | ✅ 25/25（真鼠标点车身 / 徽标像素对照 / 终点高度提示） |
 | 美术方案 | `docs/art-bible.md`（四层景深 + 6 个 3D 手段 + 调色板 + 零件语言） | ✅ |
 | 官方素材目录 | `docs/art-catalog.md` + `docs/art/imageid-probe-{1,2}.png` | ✅ 实测：无场景素材，UI 图标可用 |

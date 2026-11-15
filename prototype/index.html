@@ -463,6 +463,55 @@
     return { x: level().start.col + 3.2, y: sy + 1.55, zoom: 2.1 };
   }
 
+  /* ---------- 关卡地形预览条（第 60 轮） ----------
+   *
+   * 为什么要有：建造镜头只框住起点前后 ±9.5 米（probe_build_view.js 逐关量过），
+   * 六关的终点旗**全都**落在画面之外。也就是说玩家在拼装区看不到自己要跑的那段地形，
+   * "装轮子还是装气球、要不要留刹车"只能靠反复发射去试 —— 这不是难度，是信息缺失。
+   *
+   * 三条刻意的取舍：
+   *
+   * 1) 竖向**统一比例尺**，不按关卡自动拉伸。六关里最陡的是 1-6 的崖（落差 10 米），
+   *    拿它当满量程：条内高 28px / 10m = 2.8 px/m。于是 1-3 的地形（0.70 米）
+   *    在条上真的几乎是一条直线 —— 那是实话，它就是这么平。
+   *    自动归一化会把它画成山，等于骗玩家去为一个不存在的地形准备。
+   *
+   * 2) 竖向按**世界高度**贴：地表 0 米贴条底、10 米贴条顶。
+   *    不按每关自己的最高点对齐，所以 1-1 整条浮在中上部、1-6 的崖顶真的顶到条顶。
+   *    玩家换关时能看出"这关比上一关高出一截"，而不是每关都被拉成一样高。
+   *
+   * 3) 横向裁到 [起点列, 终点列 + 2]，并且**必须把木箱列也圈进来**。
+   *    全剖面 40~66 列里有一半是跑不到的远景，压进去会把终点旗缩成一个点
+   *    （1-3 按全 66 列算每列只剩 14px）。1-6 的木箱在 18 列、终点在 15 列，
+   *    只裁到 goal+2=17 的话木箱就在条外，那正好是这颗星要玩家去找的东西。
+   *
+   * 已知边界：将来若有关卡落差超过 PREVIEW_SPAN_M，曲线会在条顶被截平。
+   * 这不该靠"看起来还行"来发现 —— tools/test_build_preview.js 里有一条
+   * 断言六关最大落差 ≤ PREVIEW_SPAN_M，加关时它会先红。
+   */
+  const PREVIEW_SPAN_M = 10.0;
+  function buildPreviewRect() { return { x: 24, y: 50, w: 1232, h: 36 }; }
+  function previewWin(lv) {
+    const cols = lv.grid.cols;
+    let c1 = lv.goal.col + 2;
+    (lv.boxes || []).forEach(b => { c1 = Math.max(c1, b.col + 1); });
+    return { c0: lv.start.col, c1: Math.min(cols - 1, c1) };
+  }
+  /* 几何与绘制共用一份：测试要核对的 xOf/yOf 必须是屏幕上真正用的那一个，
+   * 各算一遍是这个项目反复踩过的坑（第三颗星名字、关卡卡片、零件行数）。 */
+  function buildPreviewGeom(lv) {
+    const R = buildPreviewRect(), w = previewWin(lv);
+    const padX = 8, padY = 4;
+    const innerW = R.w - padX * 2, innerH = R.h - padY * 2;
+    const pxPerM = innerH / PREVIEW_SPAN_M;
+    const span = Math.max(1e-6, w.c1 - w.c0);
+    const xOf = c => R.x + padX + (c - w.c0) / span * innerW;
+    const yOf = s => R.y + R.h - padY - s * pxPerM;
+    return { R: R, c0: w.c0, c1: w.c1, padX: padX, padY: padY,
+             innerW: innerW, innerH: innerH, pxPerM: pxPerM,
+             yTop: R.y + padY, yBot: R.y + R.h - padY, xOf: xOf, yOf: yOf };
+  }
+
   // ---------- 交互 ----------
   function canvasPos(ev) {
     const r = cv.getBoundingClientRect();
@@ -2649,6 +2698,109 @@ const BIOMES = {
     }
   }
 
+  /* 把预览条画出来。只读：不动 state.build、不动镜头。
+   * 数据全部来自真地形（RAP.makeTerrain 的 surfaceY / matAt），
+   * 画的不是 mapRows 的近似 —— 玩家看到的曲线必须就是他待会儿真要跑的那条曲线，
+   * 否则"照着预览装轮子"会被地形打脸。 */
+  function drawBuildPreview(ter) {
+    if (state.phase !== 'build') return;
+    /* 每帧一个标记，和 arrowDrawN 同型：测试靠它确认"这一帧真的画了"。
+     * 只有几何函数存在、却从来没被调用，是另一种假绿 —— 所以这个数必须由
+     * 绘制函数自己写，测试再从 state 上读回来。 */
+    state.previewDrawN = 1;
+    const lv = level();
+    const G = buildPreviewGeom(lv);
+    const R = G.R;
+    const bm = BIOMES[lv.biome] || BIOMES.field;
+
+    ctx.save();
+    // 底板：和统计卡同一套夜间面板
+    ctx.fillStyle = 'rgba(10,18,24,.74)';
+    roundRect(R.x, R.y, R.w, R.h, 8); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.32)'; ctx.lineWidth = 1;
+    roundRect(R.x, R.y, R.w, R.h, 8); ctx.stroke();
+    // 裁到条内：地形曲线、旗杆都不许跑出条外（1-6 的崖顶正好贴到条顶）
+    ctx.beginPath(); ctx.rect(R.x + 1, R.y + 1, R.w - 2, R.h - 2); ctx.clip();
+
+    // 天空：一条极淡的渐变，让"上方"有方向感（洞穴关更暗）
+    const sky = ctx.createLinearGradient(0, G.yTop, 0, G.yBot);
+    sky.addColorStop(0, 'rgba(' + (bm.cave ? '28,48,60' : '120,170,200') + ',.20)');
+    sky.addColorStop(1, 'rgba(8,14,20,.0)');
+    ctx.fillStyle = sky; ctx.fillRect(R.x, G.yTop, R.w, G.innerH);
+
+    // 岩体：沿地表线填到底部
+    /* 逐 2 像素采样：1-3 有 64 列而条宽只有约 1230px，逐列采样会漏掉平缓段。
+     * 同时把**真正交给 lineTo 的坐标**记进 state.previewProfile ——
+     * 测试要核对的是"画出来的那条线"，不是另算一遍的同名公式
+     * （本项目踩过三次"量具读的是另一个对象"）。 */
+    const pvPts = [];
+    const STEP_X = 2;
+    const x0g = G.xOf(G.c0), x1g = G.xOf(G.c1);
+    const dxg = Math.max(1e-6, x1g - x0g);
+    const wcOf = x => G.c0 + (x - x0g) / dxg * (G.c1 - G.c0);
+    ctx.beginPath();
+    ctx.moveTo(x0g, G.yBot);
+    for (let x = x0g; x <= x1g; x += STEP_X) {
+      const y = G.yOf(ter.surfaceY(wcOf(x)));
+      ctx.lineTo(x, y);
+      pvPts.push(x, y);
+    }
+    ctx.lineTo(x1g, G.yBot);
+    ctx.closePath();
+    ctx.fillStyle = 'rgb(' + bm.rock.join(',') + ')';
+    ctx.fill();
+    state.previewProfile = pvPts;
+
+    /* 地表线按材质分段上色 —— 冰面/石头/泥地在这关是**玩法差别**（冰面摩擦力 0.05、
+     * 石头 0.45、泥地 0.6），不区分的话这条条只回答"陡不陡"，回答不了"滑不滑"。
+     * 逐列画而不是逐像素：材质本来就是按列定义的（ter.matAt 也是向下取整到列）。 */
+    const MATC = { ice: '#9FE3F2', stone: '#94A3AE', mud: '#B0A070' };
+    for (let c = G.c0; c < G.c1; c++) {
+      const x0 = G.xOf(c), x1 = G.xOf(c + 1);
+      const m = ter.matAt(c + 0.5);
+      ctx.beginPath();
+      ctx.moveTo(x0, G.yOf(ter.surfaceY(c)));
+      ctx.lineTo(x1, G.yOf(ter.surfaceY(c + 1)));
+      ctx.strokeStyle = MATC[m] || '#B0A070';
+      ctx.lineWidth = m === 'ice' ? 2.6 : 2.0;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    // 起点：绿点（和场上起点一致）
+    {
+      const sx = G.xOf(lv.start.col), sy = G.yOf(ter.surfaceY(lv.start.col + 0.5));
+      ctx.fillStyle = '#63d97e';
+      ctx.beginPath(); ctx.arc(sx, Math.max(G.yTop + 2, sy - 2), 3, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 木箱：金色小方块，贴在地表线上 —— 玩家靠它判断"要不要绕一趟"
+    (lv.boxes || []).forEach(b => {
+      if (b.col < G.c0 || b.col > G.c1) return;
+      const bx = G.xOf(b.col), by = Math.max(G.yTop + 3, G.yOf(ter.surfaceY(b.col + 0.5)) - 3);
+      ctx.fillStyle = '#d9a441';
+      roundRect(bx - 3, by - 6, 6, 6, 1.5); ctx.fill();
+      ctx.strokeStyle = 'rgba(120,80,20,.9)'; ctx.lineWidth = 1;
+      roundRect(bx - 3, by - 6, 6, 6, 1.5); ctx.stroke();
+    });
+
+    // 终点旗：和场上同一个颜色，位置就是终点列
+    {
+      const gx = G.xOf(lv.goal.col), gy = G.yOf(ter.surfaceY(lv.goal.col + 0.5));
+      ctx.strokeStyle = '#e8f0e0'; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(gx, Math.max(G.yTop + 2, gy - 1));
+      ctx.lineTo(gx, Math.max(G.yTop + 2, gy - 15));
+      ctx.stroke();
+      const top = Math.max(G.yTop + 2, gy - 15);
+      ctx.fillStyle = COL.flag;
+      ctx.beginPath();
+      ctx.moveTo(gx, top); ctx.lineTo(gx + 9, top + 3.5); ctx.lineTo(gx, top + 7);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawTabs() {
     levels.forEach((lv, i) => {
       const t = tabRect(i), active = i === state.levelIndex;
@@ -4412,6 +4564,11 @@ const BIOMES = {
     if (state.toastT > 0) state.toastT -= dt;
     if (state.runBanner > 0) state.runBanner = Math.max(0, state.runBanner - dt);
     state.arrowDrawN = 0;      // 每帧重置：方向箭头只在建造期画，测试靠它确认
+    /* 地形预览条同理：每帧重置后由 drawBuildPreview 重新填。
+     * 行驶期这两项必须保持 0/null —— 那时玩家已经在跑真地形了，
+     * 再挂一条缩略图是噪音（test_build_preview.js 会验这一条）。 */
+    state.previewDrawN = 0;
+    state.previewProfile = null;
 
     ctx.clearRect(-VIEW_OFF_X - 2, -VIEW_OFF_Y - 2, VIEW_W + 4, VIEW_H + 4);
     if (state.phase === 'build') {
@@ -4470,6 +4627,9 @@ const BIOMES = {
       drawTray();
       drawButtons();
       drawTabs();
+      /* 地形预览条必须用这一帧的 ter（可能刚重建过），并且只画在建造期：
+       * 行驶期玩家已经在跑那段地形了，再挂一条缩略图只是噪音。 */
+      drawBuildPreview(ter);
       drawHud();
       if (uiAlpha < 1) ctx.globalAlpha = 1;
       ctx.restore();
@@ -4731,6 +4891,7 @@ const BIOMES = {
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
                    progressWarning, failText, failCulprit, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
                    pumpChargeOf, batteryPctOf, muteRect, toggleMute,
+                   buildPreviewRect, buildPreviewGeom, previewWin, PREVIEW_SPAN_M,
                    sfxStats: () => SFX.stats(), sfxResetStats: () => SFX._resetStats(),
                    /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，
                     * 靠它才能断言"碎框走的是 structBreak 这一支"而不是靠人耳。 */
