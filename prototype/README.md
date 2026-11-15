@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：60 项（47 个脚本 + 静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：61 项（47 个脚本 + 静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -71,6 +71,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_pump_charge_ring.js` | 打气筒的蓄力环：没按不长环、半蓄力是蓝弧且未闭合、满蓄力转金；读数与渲染同源 |
 | `test_battery_icon.js` | 1-3 车上的电池电量条随电量变短（曾因读一个从没被写过的 `def.__pct` 而永远满格） |
 | `test_motor_out.js` | 电池用光时 HUD 弹提示、能量栏改写「用光」、失败归因点名电池；一次断电只写一条 `motor_out` |
+| `audit_state_fields.js` | 静态对账：引擎写的字段渲染层读没读、渲染层读的 `def.__X` 有没有人写、事件标签有没有人听（纯 Node） |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 

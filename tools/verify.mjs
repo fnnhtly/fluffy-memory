@@ -160,6 +160,14 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `PASS ${m[1]} / FAIL ${m[2]}` : '无法解析' });
 }
 
+// 3g) 引擎↔渲染层静态对账（写的有人读吗 / 读的有人写吗 / 事件有人听吗）
+{
+  const r = run(process.execPath, [path.join('tools', 'audit_state_fields.js')], '状态字段对账');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
 // 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字 / 出卡）
 if (!fast) {
   const r = run(process.execPath, [path.join('tools', 'test_layout_audit.js')], '排版审计');
