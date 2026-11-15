@@ -6,13 +6,33 @@
   'use strict';
 
   // ---------------- 零件表 ----------------
+  /* ── 这张表里**只许有真被读的字段** ──
+   *
+   * 第 53 轮做了一次静态对账（tools/audit_parts_spec.js），发现表里躺着
+   * 四个"写了没人读"的字段：`dark`、`rim`、`thrust`、`popOnGround`。
+   * 它们本身不致命，但每一个都是一份**假的规格**：
+   *   · `pump.thrust = 6.0` 旁边，引擎真正用的是 `Params.pumpImpulse = 6.0`。
+   *     两个 6 看起来一致，却是两套旋钮 —— 调参面板改 Params 立刻生效，
+   *     改表里这个毫无反应。哪天一调参，两者就分叉，而没人会知道。
+   *   · `balloon.popOnGround = true` 像是"落地才破"的开关，但
+   *     game.js 的碰地判定读的是 `def.liftMass`，这个 flag 从来没参与过。
+   *   · `dark` / `rim` 是给渲染层准备的颜色，而 drawPartShape 用的是
+   *     自己那套更细的分层色（外胎/轮圈/辐条/高光各一层）。留着它们，
+   *     下一个改颜色的人会先改这里，然后发现画面不变。
+   *
+   * 所以四个字段全部删掉。要加回来，请同时加一个读它的人 ——
+   * `audit_parts_spec.js` 会盯着。
+   */
   var PARTS = {
-    wood_frame: { label: '木框', mass: 1.2, hp: 3, maxHp: 3, structure: true, color: '#c08a4a', dark: '#8a5f30' , desc: '中空结构件。四边都能挂东西，中间能塞一件（小猪/电池）。耐久 3 段：完好→裂纹→破损→碎。'},
-    wood_wheel: { label: '木轮', mass: 0.6, wheel: true, radius: 0.34, grip: 1.0, iceGrip: 0.15, color: '#3a4048', rim: '#8a6a3a' , desc: '木轮，便宜。泥地抓地正常，冰面几乎打滑（0.15），冰坡上不去。'},
-    iron_wheel: { label: '铁轮', mass: 0.9, wheel: true, radius: 0.30, grip: 0.9, iceGrip: 0.8, color: '#5a6672', rim: '#c8d2dc' , desc: '铁轮，重 0.3 kg。冰面抓地 0.8，是过冰坡的唯一办法。'},
+    wood_frame: { label: '木框', mass: 1.2, hp: 3, maxHp: 3, structure: true, color: '#c08a4a', desc: '中空结构件。四边都能挂东西，中间能塞一件（小猪/电池）。耐久 3 段：完好→裂纹→破损→碎。'},
+    wood_wheel: { label: '木轮', mass: 0.6, wheel: true, radius: 0.34, grip: 1.0, iceGrip: 0.15, color: '#3a4048', desc: '木轮，便宜。泥地抓地正常，冰面几乎打滑（0.15），冰坡上不去。'},
+    iron_wheel: { label: '铁轮', mass: 0.9, wheel: true, radius: 0.30, grip: 0.9, iceGrip: 0.8, color: '#5a6672', desc: '铁轮，重 0.9 kg（比木轮重一半）。冰面抓地 0.8，是过冰坡的唯一办法。'},
     motor: { label: '马达', mass: 1.8, motor: true, color: '#e06a4a' , desc: '持续驱动力（6 m/s²），耗能 4/秒，自带 12 电量；没电池只能跑约 3 秒。'},
     battery: { label: '电池', mass: 1.0, energy: 100, inner: true, color: '#8fd66a' , desc: '只能放进木框里。+100 能量，供马达使用。'},
-    pump: { label: '打气筒', mass: 0.8, interactive: true, dir: true, thrust: 6.0, color: '#4f8fb0' , desc: '手动交互件。按住蓄力、松开喷出冲量；喷气方向 = 组装时箭头的方向。同色同类零件算一组，按一下整组一起喷。'},
+    /* 打气筒的冲量**不在**这张表里 —— 它是 `Params.pumpImpulse`，
+     * 因为那是玩家能在调参面板里改的运行时旋钮。表里只留"是不是交互件、
+     * 有没有方向"这类**结构性**事实。 */
+    pump: { label: '打气筒', mass: 0.8, interactive: true, dir: true, color: '#4f8fb0' , desc: '手动交互件。按住蓄力、松开喷出冲量；喷气方向 = 组装时箭头的方向。同色同类零件算一组，按一下整组一起喷。'},
     /* 气球与沙袋是参考里最漂亮的一对：气球给浮力、沙袋给配重，
      * 玩家靠"什么时候抛沙袋、什么时候扎气球"控制高度。
      *
@@ -28,9 +48,13 @@
      *
      * **操作方式是"行驶中点车身"，不是面板按钮**（`tapOnBody`）——
      * 面板那三个键位要留给打气筒/风扇这些真正的驱动件。文案必须照实说，
-     * 这里曾经写"按按钮主动扎"，和实现对不上，玩家会一直找那个不存在的按钮。 */
+     * 这里曾经写"按按钮主动扎"，和实现对不上，玩家会一直找那个不存在的按钮。
+     *
+     * 碰地自破的判定在 game.js 里是按 `def.liftMass` 走的（凡是给浮力的
+     * 都会在接地时泄掉），所以这张表里没有 `popOnGround` 这个开关 ——
+     * 有它的时候它是个幌子，改了不生效。 */
     balloon: { label: '气球', stack: true, maxStack: 3, liftMass: 1.2, mass: 0.05,
-               interactive: true, tapOnBody: true, popOnGround: true, color: '#e0708f',
+               interactive: true, tapOnBody: true, color: '#e0708f',
                desc: '每格最多 3 个（再点一次同一格 → +1，到 3 换回 1）。每个能把 1.2 kg 举起来。行驶中点车身就能扎破一个；碰地也会自己破。' },
     sandbag: { label: '沙袋', stack: true, maxStack: 3, mass: 0.8,
                interactive: true, tapOnBody: true, dropOne: true, color: '#b79b6a',
@@ -1289,7 +1313,22 @@
     }
     state.noGainFor = state.time - (state.progLastGainT || 0);
     if (state.noGainFor >= Params.progressWindow) { resolve(state, 'no_progress'); return; }
-    if (state.time > Params.demoTimeLimit) { resolve(state, 'timeout'); return; }
+    /* 限时**以关卡为准**，全局值只做兜底。
+     *
+     * 在这之前这里写死 `Params.demoTimeLimit`（60 秒），而每个关卡 JSON 里
+     * 都写着 `timeLimit: 120` —— 那个字段**一次都没被读过**，是个假旋钮：
+     * 策划改了它，游戏毫无反应（`probe_time_cap.js` 量出来的）。
+     *
+     * 为什么是 120 而不是 60：`probe_slow_legal.js` 把马达加速度一路压到
+     * 1.2 m/s²，最慢的**合法通关**是 22.13 秒；`probe_timeout_reach.js` 跑
+     * 1440 个随机造法，60 秒上限一次都没触发。也就是说 60 秒对真实玩家
+     * 是条看不见的线 —— 秒表只涨不封、看门狗只警告"8 秒没进展"，
+     * 真撞上去时失败卡写「超时」，玩家只会觉得"我明明一直在前进"。
+     * 120 秒给到 5 倍余量，它退回它该有的角色：**兜底**，不是规则。 */
+    var limit = (state.level && state.level.timeLimit !== undefined &&
+                 state.level.timeLimit !== null)
+      ? state.level.timeLimit : Params.demoTimeLimit;
+    if (state.time > limit) { resolve(state, 'timeout'); return; }
 
     // 回放缓冲（3 秒）
     if (state.replay.length === 0 || state.time - state.replay[state.replay.length - 1].t > 1 / 20) {

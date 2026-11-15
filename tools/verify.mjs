@@ -114,6 +114,14 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
 }
 
+// 1d) 限时归谁（关卡 timeLimit 是活字段，不是死旋钮）
+{
+  const r = run(process.execPath, [path.join('tools', 'test_time_limit.js')], '限时归属');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
 // 2) 内联脚本语法
 {
   const r = run(process.execPath, [path.join('tools', 'check_inline_js.js')], '内联脚本语法');
@@ -163,6 +171,14 @@ const results = [];
 // 3g) 引擎↔渲染层静态对账（写的有人读吗 / 读的有人写吗 / 事件有人听吗）
 {
   const r = run(process.execPath, [path.join('tools', 'audit_state_fields.js')], '状态字段对账');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
+// 3h) 零件表对账（表里每个字段都得有人读；说明文字里的数字不能撒谎）
+{
+  const r = run(process.execPath, [path.join('tools', 'audit_parts_spec.js')], '零件表对账');
   const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
   const pass = !!(m && m[1] === m[2] && r.ok);
   results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });

@@ -3219,6 +3219,14 @@ const BIOMES = {
   }
 
   function failText(reason) {
+    /* 「超时」必须把限时数字带上。
+     * 这条失败原因极其罕见（`probe_timeout_reach.js` 跑 1440 局一次都没触发，
+     * 最慢的合法通关只有 22 秒），所以玩家几乎不会见到它 —— 也正因如此，
+     * 见到时他只写「超时」三个字，等于什么也没说：他不知道限的是多久、
+     * 也不知道自己差了多少。写成 `超时（限时 120 秒）` 才是一句能读懂的话。
+     * 数字来自关卡文件（引擎用的是同一个字段），不是在这里再写一遍常量。 */
+    const limit = (level() && level().timeLimit !== undefined && level().timeLimit !== null)
+      ? level().timeLimit : RAP.Params.demoTimeLimit;
     return ({ pig_dead: '猪受伤过重', pig_lost: '小猪掉队了', out_of_bounds: '掉出地图',
               flew_away: '飘得太高，飞出地图了',
               /* 「卡住」和「没进展」必须分开写 —— 玩家对这两种局面的反应完全不同：
@@ -3228,7 +3236,7 @@ const BIOMES = {
                * 玩家会以为游戏判定出错。 */
               stuck: '卡住了：动力或重心不对',
               no_progress: '一直在原地打转：8 秒没能更靠近终点',
-              timeout: '超时', empty: '没放零件' })[reason] || reason;
+              timeout: '超时（限时 ' + limit + ' 秒）', empty: '没放零件' })[reason] || reason;
   }
 
   function badge(cx, cy, r, ring, fill) {

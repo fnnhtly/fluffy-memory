@@ -122,6 +122,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('每种失败原因都有文案（不会把内部 id 漏给玩家）',
     !/^[a-z_]+$/.test(texts.np) && !/^[a-z_]+$/.test(texts.tout),
     `${texts.np} / ${texts.tout}`);
+  /* 「超时」必须带上限时数字。
+   * 这条失败原因**几乎不会触发**（1440 个随机造法里一次都没有，最慢的
+   * 合法通关 22 秒而限时 120 秒），所以玩家见到它时只会更莫名其妙 ——
+   * 光写「超时」三个字，他既不知道限的是多久，也不知道自己差了多少。
+   * 数字必须来自关卡文件（引擎和渲染读同一个字段），不能在这里另写常量。 */
+  const lvLimit = JSON.parse(await ev(`(()=>{const R=window.__rap;
+    const lv=R.levels[R.state.levelIndex];
+    return JSON.stringify(lv.timeLimit !== undefined ? lv.timeLimit : R.RAP.Params.demoTimeLimit);})()`));
+  A.chk('「超时」文案带上关卡自己的限时数字',
+    texts.tout.indexOf(String(lvLimit)) >= 0, texts.tout + '（关卡 timeLimit=' + lvLimit + '）');
 
   A.finish(ws, child, errs);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });
