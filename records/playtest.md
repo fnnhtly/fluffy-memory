@@ -3204,7 +3204,9 @@ C 组查 `BIOMES` 的 11 个视觉参数、D 组五条量具自证。
 
 这一轮从"猪有三条命"这条代码线索出发，最后抓到的是**完全另一件事**。
 
-## 出发点：`pigHP` 是不是又一个死机制
+## 第 57 轮 · 渲染层一直在读两个引擎从没写过的字段（runtime=html，执行者：Agent）
+
+### 出发点：`pigHP` 是不是又一个死机制
 
 `damageCar` 里有：
 
@@ -3377,6 +3379,104 @@ state.car.parts.forEach(...)   // TypeError: Cannot read properties of null
   引擎写了 `lastImpactAt` / `lastBoxAt`、以及玩家真的看到了 dizzy / happy
 - `verify.mjs` 全套 **68 项全绿**（47 个脚本 + 21 项静态/度量尺自检）
 - 六关标准解、三星判定、金币、结算卡全部未变（这轮只补写了两个时间戳）
+
+## 第 58 轮 —— 切走窗口（alt-tab / 切标签页 / 锁屏）
+
+### 起点：页面里一条失焦监听都没有
+
+上一轮刚把"渲染层读了、引擎没写"的两个死分支补齐，顺手做了同一个形状的普查：
+谁在乎"玩家还在不在这个窗口前面"？
+
+```
+grep -c "addEventListener('blur'|'visibilitychange'|'focus')" prototype/index.html  →  0
+```
+
+`state.heldKeys` / `state.heldBtn` 只在 `startLevel` 和 `launch` 里被清空 ——
+也就是只在**玩家自己按了 R 或按了发射**的时候清。切窗口不在这个名单里。
+
+这条和第 43 轮（auto-repeat 把 `pumpPress` 刷到 17）、第 44 轮（手指滑出按钮
+松不开）是**同一个形状**：那两次都只防了"同一个窗口里的意外松手"，
+没有防"整个窗口没了"。而后者更狠——`keyup` 落在别的窗口上，
+页面上**永远**收不到那一下。
+
+### 三个真实的坏结局
+
+1. **按住的键永远松不开**。回来以后刹车还踩着；更要命的是下一次按 S 会被
+   `if (state.heldKeys[k]) return` 直接挡掉 —— 玩家会认为键盘坏了。
+2. **`heldBtn` 卡在 1**。下一次 mouseup 去释放一个早已不存在的组
+   （`releaseInteract` 找不到组就返回 false，静默无事，所以从来不报错）。
+3. **物理推进没有任何可见性判断**。`frameBody` 的条件一直是
+   `run && run.phase==='run' && !paused`。主流浏览器会冻结后台标签页的 rAF，
+   所以多数情况下侥幸没事 —— 但那是巧合不是设计：一个被节流到 1 fps 的标签页
+   会用 60 倍的时间步长飙车。
+
+### 修法：`loseFocus()`
+
+```
+document.addEventListener('visibilitychange', () => { if (document.hidden) loseFocus('hidden'); });
+window.addEventListener('blur', () => loseFocus('blur'));
+```
+
+两个都挂，因为它们对应两种不同的真实情形（见下面量具那一节）。`loseFocus` 做四件事：
+
+- `RAP.cancelInteract(state.run)` + `RAP.setBrake(state.run, false)`：清引擎侧的按住状态；
+- `state.heldKeys = {}` / `state.heldBtn = 0`：清输入层的按住状态；
+- 复位拖拽手势（`mouse.down` / `dragPart` / `dragMove` / `pendingClick` / `erasePaint`）——
+  mouseup 同样不会来了，不复位的话回来光标一动就还在"拖着零件"或"一路擦格子"；
+- 若这一局真的在跑，`state.paused = true` 并置 `state.autoPaused`。
+
+**"取消交互"不等于"松开交互"。** `releaseInteract` 会按朝向给车一个冲量 ——
+也就是说切个窗口回来，车被凭空推出去一段。玩家没有做这个决定。
+所以 `cancelInteract` 只清状态：`groups[].on = false`、`pumpHeld = false`、`pumpCharge = 0`，
+**不写 `pump_release` 事件、不加任何速度**，`pumpPress` 也不动（那一次按下确实发生过）。
+代价是"这次蓄力白蓄了"，比"一局里凭空多出一次冲量"好得多。
+
+暂停卡上也要写清是谁按的暂停：`state.autoPaused` 为真时那行说明改成
+**"窗口切走了，已经替你暂停"**（原来是"时间已停住，可以慢慢想"）。
+玩家自己按 Esc 看见这张卡、和切了个窗口回来迎面撞上这张卡，是完全不同的两件事 ——
+不说清楚会被当成游戏卡死。`autoPaused` 在继续/回建造/换关/发射时都要清掉。
+
+### 量具：无头环境里哪一种"失焦"真的送得到事件
+
+这是这轮最花时间的地方，因为三种候选机制**只有一种可用**：
+
+| 机制 | 送到事件的吗 | 能恢复吗 | 能用吗 |
+|---|---|---|---|
+| `Page.setWebLifecycleState: frozen` | ✅ `vis:hidden`（有时 `blur`），rAF 立刻停 | ❌ `active` 收不回来（hidden 一直 true、帧数一直 0） | 半 |
+| `Emulation.setFocusEmulationEnabled: true/false` | 只送 `blur`/`focus`，`document.hidden` 一直是 false | ✅ | 半 |
+| 两者组合：切走先关焦点模拟再 frozen，切回先 active 再开焦点模拟 | ✅ `vis:hidden`（第 2 轮起还带 `blur`） | ✅ `vis:visible` + `focus` + rAF 重启 | **全** |
+| 开第二个标签页 + `Target.activateTarget` | ❌ 一次都不送（无头不派发） | — | 不能用 |
+
+`tools/probe_focus_combo.js` 连做 3 轮验过组合那一行；`tools/probe_focus_switch.js`
+证明焦点模拟只模拟"丢键盘焦点"、不模拟"标签页被藏起来"（这正是为什么游戏里两个监听都要挂）。
+
+### 第 58 轮踩的坑（三条都是测试自己的错，功能本身一次就写对了）
+
+**第二十个坑：把 code 当 key 送。** 游戏里写的是 `ev.key.toLowerCase()`，
+而 CDP 的 `key` 必须**是那个字符**（`'s'` / `'1'` / `' '`），不能是 `'KeyS'` / `'Digit1'`。
+第一版直接拿 code 当 key，于是"按住 1 蓄力"那条读到 `pumpCharge = 0`、`pumpPress = 0`——
+红的其实是量具。`windowsVirtualKeyCode` 该给还是要给（字母/数字键不给就收不到）。
+
+**第二十一个坑：`setWebLifecycleState: active` 恢复不了。** 机制自检那一条过了以后，
+页面其实一直停在 hidden、rAF 一直停。后面每一条断言读的都是一个不动的页面：
+蓄力永远 0、刹车松了又"没松"、拖拽状态"没复位"…… 十来个红**全是同一个原因**。
+当时看起来非常像"功能没做"，而真相是"量具把它自己弄停了"。修法是切走/切回都改成两步。
+
+**第二十二个坑：在暂停状态里验键盘。** "回来以后再按 S 仍然能刹"这条一开始写在
+暂停卡还挂着的时候 —— 而 `if (state.paused && state.phase === 'run')` 那条分支
+本来就会吞掉所有键。要先按空格继续，再验键盘。同理"再按 1 还能蓄力"。
+
+另外两条小修：1-2 的车本来就在自己跑（`speed ≈ 2.8` 是这一关的正常状态），
+所以"不许凭空推一下"不能断言绝对速度，要比**切走前后有没有多出 0.6 m/s 以上**；
+1-1 的标准解要跑 5 秒多，D 段（结算页）原来只等 4.8 秒，那条红是**没等到**。
+
+### 结果
+
+- `tools/test_focus_blur.js` **28/28**（A 按 S 切走 / B 按住打气筒切走 / C 建造期拖拽 / D 结算页），
+  已接进 `verify.mjs` 的脚本组
+- `verify.mjs` 全套 **69 项全绿**（48 个脚本 + 21 项静态/度量尺自检）
+- 反证做过：把两个 `addEventListener` 注掉 → **12/26**，14 条红。量具能失败。
+- 六关标准解、三星判定、金币、结算卡、`check_html_logic.js` 39/39 全部未变
 
 ## 待用户试玩（runtime=html）
 

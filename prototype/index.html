@@ -134,6 +134,10 @@
      * （见 keydown 分支里的注释与 tools/test_hold_key.js）。 */
     heldKeys: {},
     heldBtn: 0,
+    /* 这次暂停是不是"切走窗口"自动按下的（见 loseFocus）。
+     * 只用来把暂停卡上的那行说明改一句话 —— 玩家自己按 Esc 看见的卡，
+     * 和切了个窗口回来迎面看见的卡，不说清楚会被当成游戏卡死。 */
+    autoPaused: false,
     lastBreakSfx: 0
   };
 
@@ -632,6 +636,12 @@
      * 早已不存在的组（`releaseInteract` 找不到组就返回 false，静默无事）。 */
     state.heldKeys = {};
     state.heldBtn = 0;
+    /* 换关也必须把"暂停"清掉。切走窗口会自动暂停（见 loseFocus），
+     * 如果玩家在自动暂停的状态下直接重开/换关，新一局会一出来就是暂停的，
+     * 屏幕上还挂着上一局那张"已暂停"卡 —— 而这一局根本没开始过。
+     * `state.autoPaused` 一起清，不然回来时的"已暂停（切走了）"提示会重复弹。 */
+    state.paused = false;
+    state.autoPaused = false;
   }
 
   function selectPart(part) {
@@ -686,6 +696,8 @@
     state.replayT = 0; state.replayIdx = 0;
     state.heldKeys = {};        // 新的一局：按住状态必须从零开始（见 startLevel 的注释）
     state.heldBtn = 0;
+    state.paused = false;       // 同理：上一局的自动暂停不该带进这一局
+    state.autoPaused = false;
   }
 
   /* 标准解发射：给测试用的一步到位入口。
@@ -749,9 +761,9 @@
     // 暂停面板：两张"行"必须先判，否则点继续会落到下面的 HUD 按钮上
     if (state.paused && state.phase === 'run') {
       const PY2 = pauseRowRects();
-      if (hit(PY2.resume, p.x, p.y)) { state.paused = false; return; }
+      if (hit(PY2.resume, p.x, p.y)) { state.paused = false; state.autoPaused = false; return; }
       if (hit(PY2.back, p.x, p.y)) {
-        state.phase = 'build'; state.run = null; state.paused = false; return;
+        state.phase = 'build'; state.run = null; state.paused = false; state.autoPaused = false; return;
       }
       return;   // 暂停时其余点击一律吞掉，避免误触刹车/交互
     }
@@ -779,10 +791,10 @@
       const hb = btnRect('help');
       if (hb && hit(hb, p.x, p.y)) { state.helpOpen = !state.helpOpen; return; }
       const pb = btnRect('pause');
-      if (pb && hit(pb, p.x, p.y)) { state.paused = !state.paused; return; }
+      if (pb && hit(pb, p.x, p.y)) { state.paused = !state.paused; state.autoPaused = false; return; }
       const rb = btnRect('restartRun');
       if (rb && hit(rb, p.x, p.y)) {
-        state.phase = 'build'; state.run = null; state.paused = false;
+        state.phase = 'build'; state.run = null; state.paused = false; state.autoPaused = false;
         return;
       }
       const bk = btnRect('brake');
@@ -1096,8 +1108,8 @@
     }
     // 暂停优先：面板上写着空格/Esc 继续、R 回建造，键盘就必须真的这么走
     if (state.paused && state.phase === 'run') {
-      if (k === ' ' || k === 'escape') { state.paused = false; ev.preventDefault(); return; }
-      if (k === 'r') { state.phase = 'build'; state.run = null; state.paused = false; return; }
+      if (k === ' ' || k === 'escape') { state.paused = false; state.autoPaused = false; ev.preventDefault(); return; }
+      if (k === 'r') { state.phase = 'build'; state.run = null; state.paused = false; state.autoPaused = false; return; }
       return;
     }
     // 结算页键盘：面板上的按钮写了键帽，键盘就必须真的能用
@@ -1189,6 +1201,60 @@
       }
     }
   });
+
+  /* ---------- 切走窗口（alt-tab / 切标签页 / 锁屏）----------
+   *
+   * 为什么必须处理：玩家的手还按在键上，窗口先没了。那一刻 `keyup` 落到了
+   * 别的窗口上，页面上**永远收不到**那一下松手。于是有两种真实的坏结局：
+   *
+   *   A. 按住状态永久残留。`state.heldKeys['s'] = true` 一直留着 →
+   *      回来以后刹车还踩着；更糟的是下一次按 S 会被
+   *      `if (state.heldKeys[k]) return` 直接挡掉，玩家会以为键盘坏了。
+   *      这和第一版（第 43 轮 auto-repeat 把 pumpPress 刷到 17）、
+   *      第 44 轮（手指滑出按钮松不开）是同一个形状 —— 那两次都只防了
+   *      "同一个窗口里的意外松手"，没防"整个窗口失去焦点"。
+   *
+   *   B. 回来时迎面撞上一局已经跑完的比赛。物理推进只在 `frameBody` 里，
+   *      条件是 `run && !paused`——没有任何"页面还看得见吗"的判断。
+   *      主流浏览器会冻结后台标签页的 rAF，所以多数情况下侥幸没事；
+   *      但那是巧合不是设计（一个被节流到 1 fps 的标签页会用 60 倍的时间步长飙车）。
+   *
+   * 所以这里做三件事：清按住状态、把这一局自动暂停、把拖拽/擦除手势复位。
+   *
+   * 注意"取消交互"不是"松开交互"：**不许放气**。玩家没有决定推这一下，
+   * 一局里凭空多出一次冲量比"这次蓄力白蓄了"难受得多（见 game.js cancelInteract）。
+   *
+   * 用 `visibilitychange` + `blur` 两个都挂：前者是真失焦的主信号（实测
+   * Page.setWebLifecycleState 只会送它），后者覆盖"切到同页面的开发者工具"
+   * 这类仍然可见但拿不到键盘的情形。
+   */
+  function loseFocus(reason) {
+    const inRun = state.phase === 'run' && state.run;
+    if (inRun) {
+      RAP.cancelInteract(state.run);
+      RAP.setBrake(state.run, false);
+    }
+    state.heldKeys = {};
+    state.heldBtn = 0;
+    /* 拖拽/擦除手势：mouseup 也不会来了，不复位的话回来时光标一动
+     * 就还在"拖着零件"或"一路擦格子"。 */
+    state.mouse.down = false;
+    state.dragPart = null;
+    state.dragMove = null;
+    state.pendingClick = null;
+    state.erasePaint = false;
+    state.lastDragCell = null;
+    /* 自动暂停。只在真的在跑的时候暂停 —— 建造页/结算页本来就是静止的，
+     * 在那边弹一个"已暂停"会莫名其妙。 */
+    if (inRun && state.run.phase === 'run' && !state.paused) {
+      state.paused = true;
+      state.autoPaused = reason || true;
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) loseFocus('hidden');
+  });
+  window.addEventListener('blur', () => loseFocus('blur'));
 
   // ---------- 参数面板 ----------
   const SLIDERS = [
@@ -2613,7 +2679,11 @@ const BIOMES = {
       ctx.strokeStyle = 'rgba(232,200,122,.5)'; ctx.lineWidth = 2;
       roundRect(P.x, P.y, P.w, P.h, 16); ctx.stroke();
       text('已暂停', DW / 2, P.y + 52, 30, '#ffe9b0', 'center', true);
-      text('时间已停住，可以慢慢想', DW / 2, P.y + 78, 13, '#8fa3b4', 'center');
+      /* 自动暂停要写清**是谁按的暂停**。玩家自己按 Esc 看见这张卡，和
+       * 切了个窗口回来迎面看见这张卡，是完全不同的两件事 ——
+       * 不说清楚，玩家会以为游戏自己卡死了。 */
+      text(state.autoPaused ? '窗口切走了，已经替你暂停' : '时间已停住，可以慢慢想',
+        DW / 2, P.y + 78, 13, state.autoPaused ? '#ffd79a' : '#8fa3b4', 'center');
 
       const row = (r, label, key, main) => {
         ctx.fillStyle = main ? 'rgba(232,200,122,.92)' : 'rgba(24,40,50,.92)';

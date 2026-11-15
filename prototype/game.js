@@ -968,6 +968,33 @@
     return true;
   }
 
+  /* 取消按住（不是"松开"）。
+   *
+   * 场景：玩家正按着打气筒蓄力，突然 alt-tab / 切标签页 / 锁屏。
+   * 那一刻 `keyup` 落到了别的窗口上，页面上永远收不到那一下松手。
+   * 于是：
+   *   · `state.heldKeys['1']` 永远留着 → 回来以后再按 1 会被 "已经按着了" 挡掉，
+   *     玩家会认为键盘坏了；
+   *   · `car.pumpHeld` 一直是 true、零件一直亮着 —— 回来以后车自己在蓄力。
+   *
+   * 为什么用"取消"而不是"松开"（releaseInteract）：松开意味着**放一次气**，
+   * 车会被推出去一段。玩家并没有做这个决定 —— 他只是把窗口切走了。
+   * 一局里突然凭空多出一次冲量，比"这次蓄力白蓄了"难受得多。
+   * 所以这里只清状态，`pumpPress` 也不动（那一次按下确实发生过）。
+   *
+   * 返回是否真的清掉了什么：给测试一个"有没有东西被清"的读数，
+   * 也让渲染层能在需要时只播一次提示。 */
+  function cancelInteract(state) {
+    if (!state || !state.car || state.phase !== 'run') return false;
+    var car = state.car;
+    var any = false;
+    (car.groups || []).forEach(function (g) { if (g.on) { g.on = false; any = true; } });
+    if (car.pumpHeld || (car.pumpCharge || 0) > 0) any = true;
+    car.pumpHeld = false;
+    car.pumpCharge = 0;
+    return any;
+  }
+
   function releaseInteract(state, n) {
     if (state.phase !== 'run') return false;
     var car = state.car;
@@ -1505,7 +1532,7 @@
     interactiveCount: interactiveCount, buildVehicle: buildVehicle,
     createRun: createRun, step: step, stepLoose: stepLoose, damageCar: damageCar, setBrake: setBrake, pressInteract: pressInteract,
     pressInteract: pressInteract,
-    releaseInteract: releaseInteract, challengePass: challengePass,
+    releaseInteract: releaseInteract, cancelInteract: cancelInteract, challengePass: challengePass,
     popBalloon: popBalloon, dropSandbag: dropSandbag, tapAt: tapAt, syncCarMass: syncCarMass,
     recomputeLift: recomputeLift, cellCount: cellCount,
     SPECS: SPECS, applySpec: applySpec, applySpecRuntime: applySpecRuntime,

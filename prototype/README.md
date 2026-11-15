@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：68 项（47 个脚本 + 21 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：69 项（48 个脚本 + 21 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -71,6 +71,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_pump_charge_ring.js` | 打气筒的蓄力环：没按不长环、半蓄力是蓝弧且未闭合、满蓄力转金；读数与渲染同源 |
 | `test_battery_icon.js` | 1-3 车上的电池电量条随电量变短（曾因读一个从没被写过的 `def.__pct` 而永远满格） |
 | `test_motor_out.js` | 电池用光时 HUD 弹提示、能量栏改写「用光」、失败归因点名电池；一次断电只写一条 `motor_out` |
+| `test_focus_blur.js` | 切走窗口（alt-tab / 切标签页 / 锁屏）之后回来这一局怎么样：按住的键必须松开、不许"回来再按同一键被自己挡掉"、这一局必须自动暂停、建造期的拖拽手势必须复位、结算页不许被改成暂停卡。用 `setFocusEmulationEnabled:false` + `setWebLifecycleState:frozen` 造真实失焦（无头环境下只有这一对能送得到事件，见 `tools/probe_focus_combo.js`） |
 | `audit_state_fields.js` | 静态对账：引擎写的字段渲染层读没读、渲染层读的 `def.__X` 有没有人写、事件标签有没有人听（纯 Node） |
 | `audit_dead_reads.js` | 反向静态对账：渲染层读的 run 状态字段**引擎到底写过没有**。第 57 轮靠它查出 `lastImpactAt` / `lastBoxAt` 从来没被写过 —— 猪的 dizzy 表情和"吃到木箱就笑"两个分支从写下的那天起就是死的（`undefined \|\| -9` 恒为 -9，把"字段不存在"伪装成"条件不成立"） |
 | `audit_parts_spec.js` | 零件表对账：`PARTS` 里每个字段都得有人读；说明文字里的每个数字都得和引擎常数一致（纯 Node） |
@@ -107,3 +108,5 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 10. **关卡数据里的 9 个字段被删了**（第 56 轮）：`physics`（整块 4 个子键）、`buildArea`、`grid.cell`、`grid.px`、`start.row`、`goal.row`、`materials[].surfaceRow`、`chapter`、`note`。它们全都**有人写、没人读** —— 而 `surfaceRow` 更糟：9 段材质声明里 6 段说的是假的（1-1 声明地表在第 8 行，实际是 5~8 行的缓坡）。现在 `mapRows` 是地形的唯一真相，`game.js` 的 `BUILD_COLS/BUILD_ROWS/CELL` 与 `index.html` 的 `PPM` 是尺寸的唯一真相，出口 `tools/build_levels_js.js` 会拒绝任何一份带这些字段的 JSON。
 11. **猪的 dizzy（撞晕）和"吃到木箱就笑"两个表情，直到第 57 轮才真的会触发**：渲染层一直在读 `state.run.lastImpactAt` / `lastBoxAt`，但引擎从来没写过这两个字段，`undefined || -9` 恒为 -9，两个分支永远进不去。修法是让引擎在 `damageCar` 返回 true 时写 `lastImpactAt`、在拾起木箱时写 `lastBoxAt` —— 判"撞没撞到"本来就是物理的事，渲染层拿事件流重算一遍就成了第二份真相。
 12. **`mood` 的优先级会让 happy 被 scared 盖住**：`dead > dizzy > hurt > scared > happy`，而 `scared` 的条件是"离地 > 1.2 m 或速度 > 9 m/s"。1-2 吃到木箱那一帧车速 **11.53 m/s**，所以它永远是 scared；1-3、1-6 同理。这不是 bug，是"跑太快或在空中时不该笑"的设计 —— 但验 happy 必须用 1-1（吃到箱子时 4.76 m/s、离地 0.63 m）。
+
+13. **切走窗口（alt-tab / 切标签页 / 锁屏）终于有了交代**（第 58 轮）：原来页面里**一条** `blur` / `visibilitychange` 监听都没有。三个真实的坏结局分别是——按住的键永远松不开（`keyup` 落到别的窗口上，于是回来按同一个键会被"已经按着了"直接挡掉，玩家以为键盘坏了）；`heldBtn` 卡在 1，下一次 mouseup 去释放一个不存在的组；以及物理推进的条件里没有任何"页面还看得见吗"的判断。修法见 `index.html` 的 `loseFocus()`：清按住状态、把这一局**自动暂停**（并在暂停卡上写明"窗口切走了，已经替你暂停"）、复位拖拽/擦除手势，并且**取消**交互而不是**松开**交互 —— 松开意味着放一次气、车会被凭空推一下，玩家没做这个决定。测试 `tools/test_focus_blur.js`（28/28）用的是无头环境里唯一真正送得到事件的组合：关掉 `Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState:frozen`。
