@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：71 项（50 个脚本 + 21 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：70 项（49 个脚本 + 21 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -55,7 +55,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_all_levels.js` | 六关标准解都能通、都能三星，Node 与浏览器结论一致 |
 | `test_1_6_browser.js` | 1-6 的送件时间轴（扔 3 / 扎 1）在真实浏览器里也真的送到 |
 | `test_chapter_end.js` | 打通六关才出现「整章通关」，只通 1-6 时不许出现 |
-| `test_coin_display.js` | 结算卡的 `+N` 必须等于钱包实增；重刷/失败不许再写 `+N` |
+| `test_stars.js` | 星是唯一的进度货币：金币第 61 轮被**整个删掉**（没有出口的东西不留），所以这条守的是"金币真的不在了"——源代码剥注释后 `coinsOf/totalCoins/coinGain/已拿满` 零命中、`__rap` 不再导出、存档不再写 `coins`；同时守星仍是累计的永久标记（重刷不翻倍、分两次拿也算、旧存档迁移） |
 | `test_fail_culprit.js` | 失败归因要说清"还剩 3 个沙袋没扔"，数量必须等于车上实际剩余 |
 | `test_drag_unequip.js` | 拖出网格 = 卸下（待使用 +n，叠放数量不许丢）；拖到被占格 = 弹回原处 |
 | `test_undo.js` | 撤销 = 回到上一步整张图纸（卸下/擦除/放置/换向都算一步，一笔擦除只记一步） |

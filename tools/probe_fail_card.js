@@ -64,7 +64,7 @@ const PATCH = `(() => {
       if (recs.some(t => t.indexOf('全部三星') >= 0)) bad.push('失败卡上写「全部三星」');
       if (recs.some(t => t.indexOf('整章通关') >= 0)) bad.push('失败卡上写「整章通关」');
       if (recs.some(t => /^\+\d+$/.test(t))) bad.push('失败卡上写 +N');
-      if (recs.some(t => t.indexOf('已拿满') >= 0)) bad.push('失败卡上写「已拿满」');
+      if (recs.some(t => t.indexOf('无新星') >= 0)) bad.push('失败卡上写「无新星」');
       if (recs.some(t => t === 'S' || t === 'A')) bad.push('失败卡上给 S/A 评级');
     }
     console.log(bad.length ? '  ✗ 矛盾：' + bad.join('；') : '  ✓ 无自相矛盾');

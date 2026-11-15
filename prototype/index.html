@@ -187,19 +187,20 @@
     return migrateRecord(rec);
   }
 
-  // 金币跟着星走：一关的金币 = 该关**已点亮**的星数 ×50 + 木箱 ×30。
-  // 这样重刷不会无限刷金币（金币永远由永久标记推导），也不需要单独存一个会漂移的数字。
-  function coinsOf(stars, boxesGot) {
-    return (stars || 0) * 50 + (boxesGot || 0) * 30;
-  }
-  function totalCoins() {
-    let sum = 0;
-    levels.forEach(lv => {
-      const pr = readRecord(lv.levelId);
-      if (pr) sum += coinsOf(starsOf(pr.goals), pr.boxes || 0);
-    });
-    return sum;
-  }
+  /* 金币已经**整个删掉了**（第 61 轮，按用户要求）。
+   *
+   * 原来的金币是推导出来的（coinsOf ← 已点亮星 ×50 + 最好木箱 ×30），
+   * 所以"重刷不刷钱"这件事是对的 —— 但**它没有任何出口**：
+   * 全项目搜不到一处花金币的地方，结算卡上写的 +180 只是往一个
+   * 永远用不上的口袋里塞数字。
+   *
+   * 按用户的原话：「取消金币，只计算通关的星星，重复通关不能获得或者只能
+   * 获得以前没拿到的星星。后面可以把星星设计有对应的成就」。
+   * 所以现在唯一的进度货币就是星：
+   *   - 星是**累计**的永久标记（见上面的 mergeGoals），重刷只补没点亮的那几颗；
+   *   - 没有任何可以攒、可以花、会漂移的数字。
+   * 唯一读星数的地方是 totalStars()（结算卡底部、选关页进度条）。
+   */
   function totalStars() {
     return levels.reduce((n, lv) => {
       const pr = readRecord(lv.levelId);
@@ -236,8 +237,13 @@
     if (chapterDone()) return { label: '章节总览', disabled: false, keycap: 'L', action: 'overview' };
     return { label: '已是最后一关', disabled: true, keycap: null, action: 'none' };
   }
-  /* 写存档：goals 取并集（只增不减），木箱取最好，时间取最短。
-   * 返回 { before, after }，让调用方知道"这一次到底点亮了哪颗新星"。 */
+  /* 写存档：goals 取并集（只增不减），时间取最短，木箱取最好。
+   * 返回 { before, after }，让调用方知道"这一次到底点亮了哪颗新星"。
+   *
+   * 注意：存档里**没有** coins 字段（第 61 轮删干净了，见下面 totalStars 上方的
+   * 长注释）。`boxes` 保留着 —— 它现在没有读者，但它是"最好一次吃到几个木箱"，
+   * 和「木箱全收」那颗星不是同一件事（5/6 也能是合法成绩），
+   * 以后做成就（"累计收集 N 个木箱"）时是唯一现成的数据源。 */
   function saveProgress(levelId, goals, time, boxesGot) {
     const cur = migrateRecord(progress[levelId]) ||
       { goals: { arrive: false, boxes: false, challenge: false }, best: null, boxes: 0 };
@@ -246,6 +252,7 @@
     if (!cur.best || time < cur.best) cur.best = time;
     if (typeof boxesGot === 'number' && boxesGot > (cur.boxes || 0)) cur.boxes = boxesGot;
     cur.stars = starsOf(cur.goals);        // 冗余字段：给旧代码/旧存档读
+    delete cur.coins;                      // 旧存档里残留的 coins 字段一并清掉
     progress[levelId] = cur;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(progress)); } catch (e) {}
     return { before, after: Object.assign({}, cur.goals) };
@@ -3817,43 +3824,45 @@ const BIOMES = {
         }
       }
     }
-    // 星级提升提示
-    if (win && state.newStarRecord && !state.newBest) {
-      const bt2 = Math.max(0, Math.min(1, ((state.resultT || 0) - 0.7) * 4));
-      if (bt2 > 0) {
-        ctx.save();
-        ctx.globalAlpha = bt2;
-        ctx.fillStyle = 'rgba(255,217,61,.9)';
-        roundRect(X + W - 234, cardY + 54, 168, 34, 9); ctx.fill();
-        text('星级提升！', X + W - 150, cardY + 77, 16, '#5a4300', 'center', true);
-        ctx.restore();
-      }
-    }
+    /* 原来这里还有一枚独立的「星级提升！」胶囊。
+     * 它和下面那格（原金币位）说的是**同一件事**：这一局点亮了新星。
+     * 两块内容同屏、位置还压在同一个角落（胶囊 x 786..954 / y +54..88，
+     * 星星位 x 830±15 / y +59..89）—— 第 61 轮把金币位改成"新星数"之后，
+     * 这两个元素正式开始打架，所以合并成一块：星星位自己就是"星级提升"的表达。
+     */
 
-    // 金币 + 评级（滑入后 0.55s 登场）
-    const coinT = Math.max(0, Math.min(1, ((state.resultT || 0) - 0.55) * 4));
-    if (coinT > 0) {
+    /* 这一局点亮了**几颗新星** + 评级（滑入后 0.55s 登场）
+     *
+     * 这一格原来是金币。金币在第 61 轮被**整个删掉**（用户裁定：取消金币，
+     * 只计算通关的星星，重复通关不能获得、或者只能获得以前没拿到的星星）。
+     * 理由不是"金币不好看"，而是它**没有出口**：全项目搜不到一处花金币的地方，
+     * 卡上那个 +180 只是往一个永远用不上的口袋塞数字 —— 一个承诺了却没兑现的数。
+     *
+     * 现在这一格只说星：这一局**新点亮**了几颗（state.newGoals 的长度）。
+     * 一颗没有也照样画，写「无新星」—— 因为"重刷这一关什么都不给"本身就是
+     * 玩家该知道的规则（三星是累计制，重刷只补没拿到的那几颗）。
+     * 失败局仍然**什么都不写**：那颗星不是这一局点亮的，写在失败卡上像嘲讽
+     * （tools/probe_fail_card.js 抓过「这一趟失败了」和「已拿满」同屏的版本）。 */
+    const newT = Math.max(0, Math.min(1, ((state.resultT || 0) - 0.55) * 4));
+    if (newT > 0) {
       ctx.save();
-      ctx.globalAlpha = coinT;
+      ctx.globalAlpha = newT;
       const cy2 = cardY + 74;       // 与标题同一行右侧（新纪录徽章下方不会挡）
-      /* 金币：这一局**实际进钱包**多少（主循环里前后各读一次总数算的差）。
-       * 原来写死 `coinsOf(1, boxes) = +80`，但钱包是推导出来的：
-       * 重刷同一关没有新标记，钱包一分不动，卡上却仍写 "+80" ——
-       * 实测连打三遍，实增 180 / 0 / 0，卡上三次全是 "+80"。
-       * 现在 0 就明说「已拿满」，不再假装在攒钱。 */
-      const coins = state.coinGain || 0;
       const badgeX = X + W - 190;
-      /* 失败局**什么都不写**：既不许写 +N（钱没进），也不许写「已拿满」——
-       * 后者是"这一关你已经全拿到了"的意思，放在失败卡上读起来像在嘲讽。
-       * 这条是 tools/probe_fail_card.js 抓出来的：第一版把 else 分支写成了
-       * 无条件「已拿满」，于是失败卡上同时出现「这一趟失败了」和「已拿满」。 */
+      const newStars = (state.newGoals || []).length;
       if (win) {
-        ctx.fillStyle = coins > 0 ? '#f0c040' : 'rgba(150,168,182,.55)';
-        ctx.beginPath(); ctx.arc(badgeX, cy2, 15, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = coins > 0 ? '#8a6a10' : 'rgba(90,104,116,.7)';
-        ctx.beginPath(); ctx.arc(badgeX, cy2, 9, 0, Math.PI * 2); ctx.fill();
-        if (coins > 0) text('+' + coins, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
-        else text('已拿满', badgeX + 24, cy2 + 6, 14, 'rgba(190,208,222,.8)', 'left', true);
+        const on = newStars > 0;
+        ctx.fillStyle = on ? '#ffd93d' : 'rgba(150,168,182,.42)';
+        ctx.beginPath();
+        for (let k = 0; k < 10; k++) {
+          const ang = -Math.PI / 2 + k * Math.PI / 5;
+          const rad = (k % 2 === 0) ? 15 : 6.5;
+          ctx[k === 0 ? 'moveTo' : 'lineTo'](badgeX + Math.cos(ang) * rad, cy2 + Math.sin(ang) * rad);
+        }
+        ctx.closePath(); ctx.fill();
+        if (on) { ctx.strokeStyle = 'rgba(120,86,10,.6)'; ctx.lineWidth = 1.5; ctx.stroke(); }
+        if (on) text('+' + newStars, badgeX + 26, cy2 + 7, 20, '#ffd93d', 'left', true);
+        else text('无新星', badgeX + 24, cy2 + 6, 14, 'rgba(190,208,222,.8)', 'left', true);
       }
       // 评级：看**累计**星数（累计 3 星 = S），而不是这一局
       const accStars = starsOf(tgoals);
@@ -4326,16 +4335,21 @@ const BIOMES = {
         }
       }
       text(got + ' / ' + tot + ' 星', BX + BW / 2, BY + 52, 13, got === tot ? '#ffe9b0' : 'rgba(190,214,232,.6)', 'center', true);
-      // 金币总数：每关只记"最好那一次"，重刷不会累加（公式见 coinsOf）
-      const tc = totalCoins();
-      {
-        const cxc = BX + BW - 26, cyc = BY + 47;
-        ctx.fillStyle = '#f0c040';
-        ctx.beginPath(); ctx.arc(cxc, cyc, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#8a6a10';
-        ctx.beginPath(); ctx.arc(cxc, cyc, 4.5, 0, Math.PI * 2); ctx.fill();
-        text('×' + tc, cxc + 13, cyc + 5, 12, tc > 0 ? '#ffd93d' : 'rgba(214,232,244,.86)', 'left', true);
-      }
+      /* 这里原来是一个金币图标 + 「×180」。金币删掉之后（第 61 轮），
+       * 那个位置空出来一块 —— 现在放"满星过关几关"：仍然只由星推导，
+       * 不发明第二种货币。满星 6 关时它变成金色，算这个切片唯一的
+       * "全清"指标（以后成就系统可以直接挂在这条线上）。 */
+      let perfect = 0;
+      levels.forEach(lv => { const pr = readRecord(lv.levelId); if (pr && starsOf(pr.goals) === 3) perfect++; });
+      /* 0 满星时那句「还没有满星的关」必须仍然读得清：它是**唯一**在告诉玩家
+       * "还有满星这回事"的一句话，读不清就等于没说过。
+       * 第一版用 rgba(150,170,186,.7)，叠在卡片底色 rgb(14,26,33) 上是
+       * rgb(109,127,140) = 对比度 4.22 —— 被 tools/test_text_contrast.js 判低
+       * （阈值 4.5）。改成 .85 之后是 5.65，和其他"次要文字"一档。 */
+      text(perfect > 0 ? '满星 ' + perfect + ' / ' + levels.length + ' 关' : '还没有满星的关',
+        BX + BW - 26, BY + 52, 12,
+        perfect === levels.length ? '#ffd93d' : (perfect > 0 ? 'rgba(214,232,244,.86)' : 'rgba(150,170,186,.85)'),
+        'right', perfect > 0);
     }
 
     // 「玩法说明」按钮：重新打开欢迎引导
@@ -4806,31 +4820,28 @@ const BIOMES = {
           // 先读旧记录，判断破没破纪录、点亮了几颗新星，再写
           const rec = readRecord(level().levelId);
           const oldBest = rec ? rec.best : null;
-          const oldStars = rec ? starsOf(rec.goals) : 0;
           state.newBest = (oldBest === null || state.run.time < oldBest);
           state.oldBest = oldBest;
-          /* 这一局真正进钱包多少金币 —— 必须**量出来**，不能算。
+          /* 这一局点亮了哪几颗**新**星 —— 结算卡上那格只画这个数。
+           * 原来这里还算了一次 coinsBefore/coinsAfter（金币的差），
+           * 第 61 轮金币整个删掉之后，唯一还会增长的只有星，
+           * 而星的差就是 newGoals.length —— 不需要第二套记账。
            *
-           * 金币总数是由永久标记推导的（coinsOf ← 星数 + 木箱），重刷同一关
-           * 只要没有新标记，钱包一点不动。可结算卡原来固定写 `+80`：
-           * 实测同一关连打三遍，卡上三次都写 "+80"，而钱包只涨了第一遍的 180。
-           * 也就是说屏幕上那个数字是**假的** —— 它承诺了没发生的事。
-           * 现在改成前后各读一次总数，卡上写的就是差。 */
-          const coinsBefore = totalCoins();
-          // 这一局点亮了哪几颗**新**星（用于结算页的"新星"提示）
+           * 同时删掉了 `state.newStarRecord`：它记的是"本关累计星数有没有涨"，
+           * 而 mergeGoals 是**取并集**，所以「星数涨了」和「newGoals 非空」是
+           * 同一件事的两种写法。原来它喂那枚「星级提升！」胶囊，
+           * 胶囊合并进星星位之后它就没有读者了 —— 一个写了没人读的字段
+           * 正是 tools/audit_state_fields.js 专门在抓的形状，不能留着。 */
           const goals = state.run.starGoals ||
             { arrive: state.run.stars >= 1, boxes: state.run.stars >= 2, challenge: state.run.stars >= 3 };
           const res = saveProgress(level().levelId, goals, state.run.time, state.run.boxesGot);
-          state.coinGain = Math.max(0, totalCoins() - coinsBefore);
           state.newGoals = GOALS.filter(k => goals[k] && !res.before[k]);
           state.totalGoals = mergeGoals(res.after);
-          state.newStarRecord = starsOf(res.after) > oldStars;
           state.didSave = true;
         } else {
           state.newBest = false;
           state.didSave = false;
           state.newGoals = [];
-          state.coinGain = 0;
           // 失败也要让玩家看到"这一关已经亮了几颗" —— 否则累计制读不出来
           const rec2 = readRecord(level().levelId);
           state.totalGoals = rec2 ? mergeGoals(rec2.goals) : mergeGoals(null);
@@ -4884,7 +4895,7 @@ const BIOMES = {
   window.__rap = { state, RAP, levels, startLevel, launch, launchSpec, buildOrigin, BUILD_PX, cellAt, canvasPos,
                    trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,
                    welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect,
-                   runChallengeRect, challengeStatus, coinsOf, totalCoins, SAVE_KEY,
+                   runChallengeRect, challengeStatus, SAVE_KEY,
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
                    drawStackBadge, liftLineOf: () => liftLineCache,
