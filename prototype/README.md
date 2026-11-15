@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：69 项（48 个脚本 + 21 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：70 项（49 个脚本 + 21 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -72,6 +72,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_battery_icon.js` | 1-3 车上的电池电量条随电量变短（曾因读一个从没被写过的 `def.__pct` 而永远满格） |
 | `test_motor_out.js` | 电池用光时 HUD 弹提示、能量栏改写「用光」、失败归因点名电池；一次断电只写一条 `motor_out` |
 | `test_focus_blur.js` | 切走窗口（alt-tab / 切标签页 / 锁屏）之后回来这一局怎么样：按住的键必须松开、不许"回来再按同一键被自己挡掉"、这一局必须自动暂停、建造期的拖拽手势必须复位、结算页不许被改成暂停卡。用 `setFocusEmulationEnabled:false` + `setWebLifecycleState:frozen` 造真实失焦（无头环境下只有这一对能送得到事件，见 `tools/probe_focus_combo.js`） |
+| `test_mute.js` | 静音开关：静音时**一个发声节点都不建**（不是"建了再把音量拧到 0"；无头里增益读不准，见 `tools/probe_audio_env.js`）、那颗钮在欢迎页/暂停卡/行驶中都点得动、键盘 M 也能切、关掉页面再进状态还在、钮上的红斜杠/<wbr>金喇叭像素随状态翻转、钮不与任何固定面板重叠 |
 | `audit_state_fields.js` | 静态对账：引擎写的字段渲染层读没读、渲染层读的 `def.__X` 有没有人写、事件标签有没有人听（纯 Node） |
 | `audit_dead_reads.js` | 反向静态对账：渲染层读的 run 状态字段**引擎到底写过没有**。第 57 轮靠它查出 `lastImpactAt` / `lastBoxAt` 从来没被写过 —— 猪的 dizzy 表情和"吃到木箱就笑"两个分支从写下的那天起就是死的（`undefined \|\| -9` 恒为 -9，把"字段不存在"伪装成"条件不成立"） |
 | `audit_parts_spec.js` | 零件表对账：`PARTS` 里每个字段都得有人读；说明文字里的每个数字都得和引擎常数一致（纯 Node） |
@@ -110,3 +111,9 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 12. **`mood` 的优先级会让 happy 被 scared 盖住**：`dead > dizzy > hurt > scared > happy`，而 `scared` 的条件是"离地 > 1.2 m 或速度 > 9 m/s"。1-2 吃到木箱那一帧车速 **11.53 m/s**，所以它永远是 scared；1-3、1-6 同理。这不是 bug，是"跑太快或在空中时不该笑"的设计 —— 但验 happy 必须用 1-1（吃到箱子时 4.76 m/s、离地 0.63 m）。
 
 13. **切走窗口（alt-tab / 切标签页 / 锁屏）终于有了交代**（第 58 轮）：原来页面里**一条** `blur` / `visibilitychange` 监听都没有。三个真实的坏结局分别是——按住的键永远松不开（`keyup` 落到别的窗口上，于是回来按同一个键会被"已经按着了"直接挡掉，玩家以为键盘坏了）；`heldBtn` 卡在 1，下一次 mouseup 去释放一个不存在的组；以及物理推进的条件里没有任何"页面还看得见吗"的判断。修法见 `index.html` 的 `loseFocus()`：清按住状态、把这一局**自动暂停**（并在暂停卡上写明"窗口切走了，已经替你暂停"）、复位拖拽/擦除手势，并且**取消**交互而不是**松开**交互 —— 松开意味着放一次气、车会被凭空推一下，玩家没做这个决定。测试 `tools/test_focus_blur.js`（28/28）用的是无头环境里唯一真正送得到事件的组合：关掉 `Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState:frozen`。
+
+14. **整个游戏原来一个静音/音量控件都没有**（第 59 轮）：音效很密（放零件、卸零件、拒绝、发射、吃箱、过关、失败、打气、气球炸、沙袋落、撞击、裂框、碎框、星星、欢呼、滚动嗡嗡声、分级触地、马达断电），玩家唯一的办法是去拧系统音量 —— 而那会把别的声音一起关掉。更麻烦的是它**没有地方可挂**：`SFX` 里三个发声点（`tone` / `noise` / `rollStart`）各自直接连 `a.destination`，没有总增益节点。
+
+    修法是先进一条总线（`bus(a)`，懒建的 `master` 增益节点），再在每个发声函数开头判 `if (muted) return;` —— 也就是**静音时根本不创建振荡器**，而不是"建完把音量拧到 0"。这不是为了省那几微秒，是为了让这件事在无头环境里**可以断言**：`AudioContext` 在那里永远是 `suspended`、`currentTime` 永远是 `0`、`setTargetAtTime` 永远到不了目标值（`tools/probe_audio_env.js` 量过；`resume()` 的 promise 更是永远不 settle，`probe_audio_resume.js` 因此挂死过），所以"读一下 master 增益是不是 0"会是一条永远为真的空断言。改成数**真的建了几个发声节点**（`SFX.stats()`）之后，这条判据可以真的变红 —— `tools/test_mute.js` 里有一条自证：把 `if (muted) return;` 全部短路掉，`osc` 立刻从 0 变成 5。
+
+    入口做了三个，因为一个入口不够：右上角一颗钉住的钮（`muteRect()`，画在**所有面板之后**，所以在欢迎页/选关页/零件说明/暂停卡上都看得见点得着）、键盘 **M**（键盘玩家够不到那个角）、以及 `localStorage` 持久化（否则每次开页面都要重按一次，而这种开关玩家只会按一次）。钮本身不用 emoji（不同机器字形差别大、可能缺字），用两条 path 画喇叭和斜杠。

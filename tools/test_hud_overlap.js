@@ -49,6 +49,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     ['pause','restartRun','help','interact','brake','retryRun','launch','clear','undo','rotate'].forEach(n=>{
       const r=R.btnRect(n); if(r) add(n,r);
     });
+    /* 静音钮（第 59 轮）钉右上角，任何页面都在场 —— 所以它必须进这张表，
+     * 否则"它压住了计时面板"这种事没有任何量具会发现。 */
+    add('mute', R.muteRect());
     if (s.phase==='run') { const t=R.runTimeRects(); add('timer',t.timer); add('box',t.box);
       // 第 45 轮新加的木框耐久条：它必须和上面两块、下面的挑战条都分开
       if (t.frame) add('frame',t.frame);

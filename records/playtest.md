@@ -3478,6 +3478,130 @@ window.addEventListener('blur', () => loseFocus('blur'));
 - 反证做过：把两个 `addEventListener` 注掉 → **12/26**，14 条红。量具能失败。
 - 六关标准解、三星判定、金币、结算卡、`check_html_logic.js` 39/39 全部未变
 
+## 第 59 轮 · 这个游戏根本没法关小声（runtime=html，执行者：Agent）
+
+### 起点：一个静音控件都没有
+
+第 58 轮收尾时做的普查是"谁在乎玩家还在不在窗口前面"，这一轮换成同一个提问方式的另一个方向：
+**谁在乎玩家还想不想听？**
+
+```
+grep -c "mute|volume|静音|音量" prototype/index.html   →  0
+```
+
+零。而这游戏的音效密度不低 —— 合成出来的就有 14 支：放零件、卸零件、拒绝、发射、
+吃木箱、过关、失败、打气、气球炸、沙袋落、撞击、裂框、碎框、星星、欢呼，
+再加上三条持续/分级的（滚动的嗡嗡声、分级触地、马达断电）。玩家唯一的办法是去拧系统音量，
+而那会顺带把别的声音一起关掉。对一个**要发到别处、和别人的声音并存**的游戏来说，
+这不是"少个按钮"，是缺一个基本礼貌。
+
+### 更麻烦的一半：它没有地方可挂
+
+三个发声点各自直接连 `a.destination`：
+
+```
+index.html:287  o.connect(g); g.connect(a.destination);      // tone
+index.html:298  src.connect(g); g.connect(a.destination);     // noise
+index.html:346  o.connect(g); g.connect(a.destination);      // rollStart
+```
+
+没有总增益节点。所以哪怕只加一颗"音量 0"的按钮，也没有一个地方能一次管住全部声音。
+这不是漏写，是当初一个一个音效加进来时，每次都在最省事的地方收尾。
+
+### 修法：先进总线，再在源头停手
+
+```js
+const bus = a => { if (!master) { master = a.createGain(); master.gain.value = muted ? 0 : VOL;
+                                  master.connect(a.destination); } return master; };
+```
+
+三处 `a.destination` 全换成 `bus(a)`。然后在 `tone()` / `noise()` / `rollStart()` 开头
+判 `if (muted) return;` —— 静音时**根本不创建振荡器**，而不是"建完把音量拧到 0"。
+
+这么做的第一个理由是省开销（静音时不该还在合成波形），但**真正的理由是可测性**，见下一节。
+另外 `rollStart` 必须单独判：它是一条持续振荡器，不归 `tone()` 管，漏掉这一处
+"静音"就只是把一次性的音关掉了，车轮的嗡嗡声还在响。
+
+### 为什么不能断言"增益等于 0"
+
+无头环境里的 WebAudio 是**半死的**。`tools/probe_audio_env.js` 实测：
+
+```
+new AudioContext() → { state: "suspended", currentTime: 0 }
+resume() 之后 700 ms 再开一个 → 依然 { state: "suspended", currentTime: 0 }
+g.gain.value = 0.5; g.gain.setTargetAtTime(0, t, 0.08);
+600 ms 后读 → { value: 0.5, t: 0 }        // 目标值永远到不了
+```
+
+`currentTime` 永远是 0，时间驱动的 ramp 永远不推进。于是"读一下 master 增益是不是 0"
+会是一条**永远为真**的空断言 —— 和本项目已经踩过三次的"读一个从没人写过的字段"
+（第 45 轮 `def.__pct`、第 57 轮 `lastImpactAt` / `lastBoxAt`）完全同型：
+**判据读的东西根本不在动**，所以它永远绿，也就永远没用。
+
+（更早还有一条弯路：`await a.resume()` 返回的 promise 在无头里**永远不 settle**，
+`tools/probe_audio_resume.js` 直接把整次工具调用挂住，最后是 kill 掉的。
+那一版 probe 已经删了，教训写进了 `probe_audio_env.js` 的头注释。）
+
+### 判据改成"数真的建了几个发声节点"
+
+`SFX.stats()` 同步可数：
+
+```
+静音时发射一局并跑 0.5 秒 → {"tones":0,"noises":0,"osc":0,"muted":true}
+取消静音后同一个动作     → {"tones":4,"noises":1,"osc":5,"muted":false}
+```
+
+`osc` 里 4 个来自 `tone`、1 个来自 `rollStart`。这条判据能真的变红 ——
+把 4 处 `if (muted) return;` 全部短路成 `if (false && muted) return;`，`test_mute.js`
+掉到 **15/17**，两条红都长这样：
+
+```
+✗ 静音时一个发声节点都不建   {"tones":4,"noises":1,"osc":5,"muted":true}
+```
+
+注意那句 `muted:true` —— 状态是对的、图标是对的、localStorage 是对的，
+**只有"实际上没在发声"这一件事错了**。这正是"读增益"那种判据永远发现不了的东西。
+
+### 三个入口，缺一个都不算做完
+
+- **右上角的钮**（`muteRect()` = `{x:1224, y:16, w:36, h:30}`）。位置是选出来的：
+  顶部页签只排到 x≈534，行驶期的「?」在 y=84、计时面板从 `DW-224` 起，
+  1224..1260 × 16..46 这一小块是**所有页面里唯一都空着**的角落。
+- **它必须画在所有面板之后**。第一版把 `drawMuteBtn()` 写在 `drawTabs()` 里，
+  于是欢迎页、选关页、零件说明、暂停卡一盖上来它就不见了 —— 而那几页
+  恰好是玩家最想静音的时候（尤其是被自动暂停的时候）。改成 `frame()` 里
+  `drawWelcome / drawLevelSelect / drawHelp` 之后调用。点击判定同理，放在
+  `mousedown` 处理的最前面（欢迎页那条 `if (state.welcome)` 会吞掉所有点击）。
+- **键盘 M**（`keydown` 最前面）。键盘玩家够不到右上角那个角；
+  而且要放在欢迎页/暂停/结算各分支之前，否则"某个页面里按 M 没反应"。
+  它不和任何现用键冲突（已用：空格 / Esc / R / Z / C / H / T / S / 1-3 / N / ←→）。
+- **`localStorage` 持久化**（`rap-muted-v1`）。这种开关玩家只会按一次；
+  每开一次页面都要重按一遍，等于没做。
+
+钮本身不用 emoji：🔇 / 🔊 在不同机器上字形差别很大，还可能缺字。
+用两条 path 画喇叭 + 斜杠，颜色随状态翻转（有声金喇叭 / 静音红斜杠）。
+
+### 一个自己踩出来的坑
+
+`test_mute.js` 第一版用 `RAP.buildOrigin()` 当"会响的动作"的起点 —— 但
+`buildOrigin` 是**顶层导出**（`window.__rap.buildOrigin`），不在 `RAP` 上，
+一上来就 `TypeError: R.buildOrigin is not a function`。
+更关键的是**放零件根本不发声**：`RAP.tryPlace` 是纯引擎的落子，`SFX.place()`
+在 UI 的点击处理里。所以那个探针量的一直是 0，看起来像"静音生效了"。
+换成 `startLevel` + `applySpec` + `launch()`（走玩家同一条路径）之后才真的会响。
+
+### 结果
+
+- `tools/test_mute.js` **22/22**（A 默认有声且计数会走 / B 鼠标钮（建造页·欢迎页·暂停卡）/
+  C 键盘 M + 量具自证 / D 重载后仍静音 / E 不与 13 个固定矩形重叠 /
+  F 像素：金喇叭 ↔ 红斜杠随状态翻转 `red 0 → 255`）
+- `verify.mjs` 全套 **70 项全绿**（49 个脚本 + 21 项静态/度量尺自检），exit 0
+- 反证做过：4 处 `if (muted) return;` 短路 → **15/17**。量具能失败。
+- 顺手把静音钮加进了两张"屏幕几何"量具的矩形表（`test_hud_overlap.js` 21 + 12 个矩形、
+  `test_ghost_buttons.js` 17 个可见矩形）—— 一个钉在全屏可见位置的钮，
+  不进这两张表就没人会发现它压住了别的东西
+- 布局审计 0 问题（欢迎第 3 页从 12 行变成 13 行）、对比度 0/235 低、`check_html_logic.js` 39/39 未变
+
 ## 待用户试玩（runtime=html）
 
 - 浏览器这一项由用户打开 `prototype/index.html` 验证；AI 侧只做了 `node --check` 语法检查与数值校核，

@@ -265,9 +265,31 @@
     fxLog.push(name);
     if (fxLog.length > 24) fxLog.shift();
   }
+  /* 静音开关（第 59 轮）。
+   *
+   * 之前**一个静音/音量控件都没有** —— 对一个合成音效很密的游戏来说，
+   * 玩家能做的只有去调系统音量。而且 SFX 里每个节点都直接连 `a.destination`，
+   * 就算想加个总音量也没地方挂。
+   *
+   * 静音的实现不只是"把增益拧到 0"，而是**根本不创建振荡器**。理由很实际：
+   * 无头环境里 AudioContext 永远是 suspended、`currentTime` 永远是 0、
+   * `setTargetAtTime` 永远到不了目标值（见 tools/probe_audio_env.js）——
+   * 在那里"读一个增益值"的断言非常容易变成永远为真的空话。
+   * 而"静音时 createOscillator 被调了几次"是同步可数的，能真的失败。
+   * 顺带的好处：静音时连 AudioContext 都不建，不碰音频设备。
+   */
+  const MUTE_KEY = 'rap-muted-v1';
+  let muted = false;
+  try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch (e) { muted = false; }
+
   const SFX = (() => {
     let ac = null;
     let ROLL = null;
+    let master = null;
+    /* 真的建了几个发声节点。给测试读的（无头里声音听不到、增益也读不准，
+     * 但这个数是同步可数、可以真的变红的）。 */
+    const stat = { tones: 0, noises: 0, osc: 0 };
+    const VOL = 0.85;
     const ensure = () => {
       try {
         if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -275,8 +297,20 @@
       } catch (e) { ac = null; }
       return ac;
     };
+    /* 总音量总线：所有声音从这里过一手。懒建（跟着 AudioContext 一起），
+     * 所以"静音时根本没建过 master"也是一条可断言的事实。 */
+    const bus = a => {
+      if (!master) {
+        master = a.createGain();
+        master.gain.value = muted ? 0 : VOL;
+        master.connect(a.destination);
+      }
+      return master;
+    };
     function tone(freq, dur, type, gain, slideTo) {
+      if (muted) return;                       // 静音：连节点都不建
       const a = ensure(); if (!a) return;
+      stat.tones++; stat.osc++;
       const o = a.createOscillator(), g = a.createGain();
       o.type = type || 'triangle';
       o.frequency.setValueAtTime(freq, a.currentTime);
@@ -284,18 +318,20 @@
       g.gain.setValueAtTime(0.0001, a.currentTime);
       g.gain.exponentialRampToValueAtTime(gain || 0.12, a.currentTime + 0.012);
       g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
-      o.connect(g); g.connect(a.destination);
+      o.connect(g); g.connect(bus(a));
       o.start(); o.stop(a.currentTime + dur + 0.02);
     }
     function noise(dur, gain) {
+      if (muted) return;
       const a = ensure(); if (!a) return;
+      stat.noises++;
       const n = Math.floor(a.sampleRate * dur);
       const buf = a.createBuffer(1, n, a.sampleRate);
       const d = buf.getChannelData(0);
       for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
       const src = a.createBufferSource(); src.buffer = buf;
       const g = a.createGain(); g.gain.value = gain || 0.08;
-      src.connect(g); g.connect(a.destination); src.start();
+      src.connect(g); g.connect(bus(a)); src.start();
     }
     return {
       place(h) {
@@ -337,15 +373,19 @@
       cheer() { [784, 988, 1175].forEach((f, i) => setTimeout(() => tone(f, 0.22, 'sine', 0.09), i * 90)); },
       // 轮子滚动环境音：用持续振荡器，速度调制频率与音量
       rollStart() {
+        /* 静音时**不许**起这条持续振荡器：它不归 tone() 管，
+         * 漏掉这一处的话"静音"只是把一次性的音关掉，滚动的嗡嗡声还在响。 */
+        if (muted) return;
         const a = ensure(); if (!a || ROLL) return;
         try {
           const o = a.createOscillator(), g = a.createGain();
           o.type = 'sawtooth';
           o.frequency.value = 60;
           g.gain.value = 0.0001;
-          o.connect(g); g.connect(a.destination);
+          o.connect(g); g.connect(bus(a));
           o.start();
           ROLL = { o, g };
+          stat.osc++;
         } catch (e) {}
       },
       rollSet(speed) {
@@ -374,7 +414,32 @@
         ROLL.g.gain.setTargetAtTime(0.0001, a.currentTime, 0.1);
         const r = ROLL; ROLL = null;
         setTimeout(() => { try { r.o.stop(); } catch (e) {} }, 400);
-      }
+      },
+      /* 静音开关与它的读数。
+       *
+       * `stat` 是**真的建了几个发声节点**（不是"调了几个 SFX 函数"）——
+       * 静音时 `tone()`/`noise()`/`rollStart()` 都在建节点之前就 return，
+       * 所以 muted 时 osc 必须停在 0。这条能真的失败：把某处的 `if (muted) return;`
+       * 删掉，那个计数立刻涨。
+       *
+       * 为什么不用"master 增益 == 0"来当判据：无头环境里 AudioContext 永远
+       * suspended、currentTime 永远 0，setTargetAtTime 到不了目标值；
+       * 读增益是个非常容易永远为真的空断言（见 tools/probe_audio_env.js）。 */
+      setMuted(v) {
+        muted = !!v;
+        try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch (e) {}
+        if (muted) {
+          /* 正在滚的话先把那条持续振荡器停掉，否则它会一直响到关页面。 */
+          this.rollStop();
+          if (master) master.gain.value = 0;
+        } else if (master) {
+          master.gain.value = VOL;
+        }
+        return muted;
+      },
+      isMuted() { return muted; },
+      stats() { return { tones: stat.tones, noises: stat.noises, osc: stat.osc, muted: muted, hasMaster: !!master }; },
+      _resetStats() { stat.tones = 0; stat.noises = 0; stat.osc = 0; }
     };
   })();
 
@@ -420,6 +485,14 @@
     return { r, c };
   }
   function tabRect(i) { return { x: 24 + i * 86, y: 18, w: 80, h: 30 }; }
+  /* 静音钮：所有页面共用一颗，钉在右上角。
+   *
+   * 位置是有讲究的：顶部页签只排到 x≈534，行驶期的「?」在 y=84、
+   * 计时面板从 DW-224 起 —— 拐角这块 1224..1260 × 16..46 是唯一
+   * 在所有页面里都空着的地方（由 test_hud_overlap 把守）。
+   * 不做成"设置页"里的一项：静音是一个随时想按就按的动作，
+   * 藏在二级页面里等于没有。 */
+  function muteRect() { return { x: DW - 56, y: 16, w: 36, h: 30 }; }
   // 暂停面板的几何：绘制与点击共用一份，避免"看得见点不着"
   function pausePanel() {
     const PW = 420, PH = 236;
@@ -620,6 +693,19 @@
 
   function toast(msg) { state.toast = msg; state.toastT = 2.2; }
 
+  /* 静音开关。切换时给一句 toast 和一声**确认音**（取消静音那一下才响）。
+   *
+   * 为什么要那一声音：静音是个没有别的反馈的开关 —— 图标很小，
+   * 而玩家点它的时候游戏通常正好是安静状态（建造页）。不响一声，
+   * "我到底点中了没有"就只能靠去听下一次发射。响了这一声，他就确定了。
+   * 反过来说，**切到静音时不许响** —— 那一声会很讽刺。 */
+  function toggleMute() {
+    const now = SFX.setMuted(!SFX.isMuted());
+    toast(now ? '已静音（声音全关）' : '声音已打开');
+    if (!now) SFX.place(0.5);    // 用"放零件"的音当确认音：短、不刺耳、玩家听过
+    return now;
+  }
+
   function startLevel(i) {
     state.levelIndex = i;
     state.build = RAP.newBuild();
@@ -742,6 +828,13 @@
   cv.addEventListener('mousedown', ev => {
     const p = canvasPos(ev);
     state.mouse.x = p.x; state.mouse.y = p.y; state.mouse.down = true;
+
+    /* 静音钮必须**早于**所有面板/阶段判定：它钉在右上角，
+     * 而那个角在欢迎页、零件说明、暂停卡、选关页上都是看得见的。
+     * 埋在任何一个分支后面，就会出现"这个页面里静音不了"。
+     * （顺便证明它真的排在最前面：tools/test_mute.js 会在欢迎页和
+     * 暂停卡上各点它一次。） */
+    if (hit(muteRect(), p.x, p.y)) { toggleMute(); return; }
 
     // 欢迎引导：必须用按钮翻页（避免误触关闭）
     if (state.welcome) {
@@ -1097,6 +1190,10 @@
   });
   window.addEventListener('keydown', ev => {
     const k = ev.key.toLowerCase();
+    /* M = 静音。放在**最前面**，欢迎页/暂停卡/结算页/行驶中都能按 ——
+     * 鼠标那颗钮钉在右上角，而键盘玩家在这个角上是够不到的。
+     * 不和别的键冲突：本作已用的是 空格/Esc/R/Z/C/H/T/S/1-3/N/←→。 */
+    if (k === 'm') { toggleMute(); ev.preventDefault(); return; }
     // 欢迎引导：Enter/空格翻页，Esc 跳过（面板上写了，就得真的能用）
     if (state.welcome) {
       if (k === 'enter' || k === ' ') {
@@ -2565,6 +2662,38 @@ const BIOMES = {
     });
   }
 
+  /* 右上角静音钮：喇叭图形 + 打斜杠表示静音。
+   * 不用 emoji（🔇/🔊 在不同机器上字形差别很大，还可能缺字），
+   * 用两条 path 画：喇叭 = 一个梯形 + 一段弧，静音 = 一道斜杠。 */
+  function drawMuteBtn() {
+    const m = muteRect();
+    const on = SFX.isMuted();
+    ctx.fillStyle = on ? 'rgba(60,26,26,.92)' : 'rgba(16,30,40,.92)';
+    roundRect(m.x, m.y, m.w, m.h, 7); ctx.fill();
+    ctx.strokeStyle = on ? 'rgba(255,150,130,.85)' : 'rgba(232,200,122,.55)';
+    ctx.lineWidth = 1.5; roundRect(m.x, m.y, m.w, m.h, 7); ctx.stroke();
+    const cx = m.x + m.w / 2, cy = m.y + m.h / 2;
+    ctx.fillStyle = on ? '#ff9f8a' : '#ffe9b0';
+    // 喇叭：小方块 + 一个张开的喇叭口
+    ctx.beginPath();
+    ctx.moveTo(cx - 9, cy - 3); ctx.lineTo(cx - 4, cy - 3);
+    ctx.lineTo(cx + 2, cy - 8); ctx.lineTo(cx + 2, cy + 8);
+    ctx.lineTo(cx - 4, cy + 3); ctx.lineTo(cx - 9, cy + 3);
+    ctx.closePath(); ctx.fill();
+    if (on) {
+      // 静音：一道斜杠从左下到右上
+      ctx.strokeStyle = '#ff6b52'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx - 10, cy + 9); ctx.lineTo(cx + 10, cy - 9);
+      ctx.stroke();
+    } else {
+      // 有声：两段同心弧
+      ctx.strokeStyle = '#ffe9b0'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(cx + 2, cy, 6, -0.9, 0.9); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx + 2, cy, 10, -0.9, 0.9); ctx.stroke();
+    }
+  }
+
   /* 「飞过终点但没落地」提示条的文案。抽成纯函数是为了让测试能直接断言
    * "什么时候该显、什么时候不该显"，而不是去数像素。
    * probe_over_goal.js 量过：标准解在 t=9.47 越过终点线时还在 15 米高空，
@@ -3650,7 +3779,8 @@ const BIOMES = {
         '底部彩色按钮 = 同色同类零件一起启动（打气筒等）',
         '已装的零件拖出网格松手 = 卸下，回到待使用',
         '★ 通关　★★ 拿到木箱　★★★ 每关的特殊条件',
-        '按 L 打开选关，进度会保存。'
+        '按 L 打开选关，进度会保存。',
+        '按 M（或点右上角那颗喇叭）= 静音，设置会记着。'
       ],
       art: 'run'
     }
@@ -4579,6 +4709,11 @@ const BIOMES = {
     drawWelcome();
     drawLevelSelect();
     drawHelp();
+    /* 静音钮画在**所有面板之后**：欢迎页、选关页、零件说明、暂停卡都会盖住
+     * 大半个屏幕，而那几页正好是玩家最想静音的地方（尤其是被自动暂停的时候）。
+     * 画在最底层就等于"看起来在那儿、其实点不着"—— 本项目已经踩过一次
+     * （右上角的钮被引导层吞掉，见 test_mute.js 的 B4/B5）。 */
+    drawMuteBtn();
     drawToast();
   }
   // 首次进入自动显示欢迎引导
@@ -4595,7 +4730,8 @@ const BIOMES = {
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
                    progressWarning, failText, failCulprit, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
-                   pumpChargeOf, batteryPctOf,
+                   pumpChargeOf, batteryPctOf, muteRect, toggleMute,
+                   sfxStats: () => SFX.stats(), sfxResetStats: () => SFX._resetStats(),
                    /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，
                     * 靠它才能断言"碎框走的是 structBreak 这一支"而不是靠人耳。 */
                    fxLog: () => fxLog.slice(), clearFxLog: () => { fxLog.length = 0; } };

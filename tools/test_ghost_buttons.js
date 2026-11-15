@@ -64,6 +64,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     add(R.btnRect('brake'));
     add(R.runTimeRects().timer); add(R.runTimeRects().box);
     add(R.runProgressRect().panel); add(R.runChallengeRect());
+    add(R.muteRect());                     // 第 59 轮：右上角静音钮也算"看得见"
     add({x:84,y:90,w:700,h:30});          // 顶部信息条
     // 底部交互键（按组数动态排）
     const gs=(R.state.run&&R.state.run.car.groups)||[];

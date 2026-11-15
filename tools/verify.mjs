@@ -72,7 +72,8 @@ const SCRIPTS = [
   'test_battery_icon.js',
   'test_motor_out.js',
   'test_perf_stable.js',
-  'test_focus_blur.js'
+  'test_focus_blur.js',
+  'test_mute.js'
 ];
 
 function run(cmd, args, label, timeoutMs = 180000) {
