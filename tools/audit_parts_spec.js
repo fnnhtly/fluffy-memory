@@ -1,116 +1,108 @@
-/* 探针：PARTS 里每个字段，到底谁在读？
+/* 零件表对账（第 63 轮重写）。
  *
- * `PARTS` 是这游戏最核心的一张表：每个零件的物理参数、渲染颜色、
- * 帮助面板的说明文字全在里面。表里任何一个字段"写了但没人读"，
- * 都是一份**假的**规格 —— 策划/我改了它，游戏的行为和画面对不上，
- * 而控制台不会报任何错。
+ * 这个脚本原来对账的是 `motor` / `battery` / `pump` 那套零件 ——
+ * 那套已经整体删掉了（用户：「马达，电池，打气筒…太反人类直觉了」），
+ * 所以它读 `R.PARTS.motor.desc` 直接抛 TypeError。
  *
- * 已经踩过一次同类：`pump.thrust = 6.0` 写在表里，引擎真正用的是
- * `Params.pumpImpulse = 6.0`。两个 6 看起来一致，但它们是两套旋钮：
- * 调参面板改 Parms 那个立刻生效，改 PARTS 这个毫无反应。
+ * 和删金币、删刹车同一个原则：**被测对象死了，测试要跟着重写**，
+ * 而不是把对象加回来让它变绿。
  *
- * 所以这份脚本按字段逐个列出"在 game.js / index.html 里被读了几次"，
- * 只打印，不断言 —— 判断"该不该有读的人"需要人看。
- * 三条硬底线留给断言：
- *   1) 每个零件必须至少被某个地方读过（否则整个零件是死的）；
- *   2) 表里每个字段名在**两处**加起来至少出现一次；
- *   3) 量具自证：塞一个假字段进去，必须被列出来。
+ * 现在对账的是新表，验三件事：
+ *   A. 每个零件都有 label / desc，且 desc **不是空话**（至少 20 字）
+ *   B. desc 里承诺的数字和引擎常数一致（文案不许撒谎 —— 这是原脚本的核心价值）
+ *   C. 每个零件的**功能性标志**必须真的被引擎读过（写了没人读 = 假规格）
  */
+const R = require('../prototype/game.js');
 const fs = require('fs');
 const path = require('path');
-const ROOT = path.join(__dirname, '..');
-const ENGINE = fs.readFileSync(path.join(ROOT, 'prototype', 'game.js'), 'utf8');
-const RENDER = fs.readFileSync(path.join(ROOT, 'prototype', 'index.html'), 'utf8');
-const R = require('../prototype/game.js');
 
-function countRe(src, name) {
-  const re = new RegExp('\\.' + name + '\\b', 'g');
-  return (src.match(re) || []).length;
+let pass = 0, fail = 0;
+function chk(label, cond, extra) {
+  if (cond) { pass++; console.log('✓ ' + label + (extra ? '  ' + extra : '')); }
+  else { fail++; console.log('✗ ' + label + '  ' + (extra || '')); }
 }
 
-/* 字段清单必须取**所有零件**的并集，不能只看木框 ——
- * 第一版只读了 `Object.keys(PARTS.wood_frame)`，于是 7 个字段之外
- * 的 `radius` / `grip` / `liftMass` / `maxStack` 全都不在扫描范围里，
- * 一份"7/7 全绿"的报告其实是漏了一半的表。 */
-const keys = [];
-R.TRAY_ORDER.forEach(p => Object.keys(R.PARTS[p]).forEach(k => {
-  if (keys.indexOf(k) < 0) keys.push(k);
-}));
+console.log('=== A 每个零件都有说得清的说明 ===');
+const ids = Object.keys(R.PARTS);
+chk('零件表非空', ids.length >= 10, ids.length + ' 件');
+let noDesc = [];
+ids.forEach(id => {
+  const d = R.PARTS[id];
+  if (!d.label || !d.desc || d.desc.length < 20) noDesc.push(id);
+});
+chk('每件都有 label + 至少 20 字的 desc', noDesc.length === 0,
+  noDesc.length ? '缺：' + noDesc.join(',') : '全部齐');
 
-console.log('=== 字段读取次数（engine / html） ===');
-const dead = [];
-for (const k of keys) {
-  const e = countRe(ENGINE, k), h = countRe(RENDER, k);
-  const flag = (e + h === 0) ? '  ← 没人读' : '';
-  if (e + h === 0) dead.push(k);
-  console.log('  ' + k.padEnd(12) + ' ' + String(e).padStart(3) + ' / ' + String(h).padStart(3) + flag);
-}
-
-/* 字段在哪些零件上出现 —— 死字段的排查离不开这一列 */
-console.log('\n=== 字段归属 ===');
-for (const k of keys) {
-  console.log('  ' + k.padEnd(12) + R.TRAY_ORDER.filter(p => k in R.PARTS[p]).join(','));
-}
-
-console.log('\n=== 同义双写：表里写的值 vs 引擎真正用的值 ===');
-const dupes = [
-  { field: 'pump.thrust', table: ('thrust' in R.PARTS.pump) ? R.PARTS.pump.thrust : '（已删）',
-    real: R.Params.pumpImpulse, realName: 'Params.pumpImpulse',
-    note: '冲量是运行时旋钮，只能有一份' },
-  { field: 'motor（desc 说 6 m/s²）', table: 'desc 文字', real: R.Params.motorAccel, realName: 'Params.motorAccel',
-    note: 'desc 是文案，不是参数；但两者一旦分叉，说明文字就在撒谎' }
-];
-dupes.forEach(d => console.log('  ' + d.field + ' 表=' + d.table + '  实际=' + d.realName + '=' + d.real + '  （' + d.note + '）'));
-
-console.log('\n=== 说明文字里承诺的数值 vs 引擎常数 ===');
+console.log('\n=== B 说明里承诺的数字 vs 引擎常数 ===');
+/* 每一条都是"文案说了个数，引擎里也有个数，两者必须相等"。
+ * 这是原脚本最有价值的部分 —— 文案一旦和实现分叉，玩家就在读谎话。 */
 const claims = [
-  { text: R.PARTS.motor.desc, re: /(\d+(?:\.\d+)?)\s*m\/s²/, actual: R.Params.motorAccel, label: '马达加速度' },
-  { text: R.PARTS.motor.desc, re: /耗能\s*(\d+(?:\.\d+)?)\/秒/, actual: R.Params.motorEnergy, label: '马达耗能' },
-  { text: R.PARTS.motor.desc, re: /自带\s*(\d+)\s*电量/, actual: 12, label: '马达自带电量' },
-  { text: R.PARTS.battery.desc, re: /\+(\d+)\s*能量/, actual: R.PARTS.battery.energy, label: '电池容量' },
-  { text: R.PARTS.balloon.desc, re: /(\d+(?:\.\d+)?)\s*kg\s*举起来/, actual: R.PARTS.balloon.liftMass, label: '气球浮力' },
-  { text: R.PARTS.sandbag.desc, re: /每个\s*(\d+(?:\.\d+)?)\s*kg/, actual: R.PARTS.sandbag.mass, label: '沙袋重量' },
-  { text: R.PARTS.wood_wheel.desc, re: /（(\d+(?:\.\d+)?)）/, actual: R.PARTS.wood_wheel.iceGrip, label: '木轮冰面抓地' },
-  { text: R.PARTS.iron_wheel.desc, re: /重\s*(\d+(?:\.\d+)?)\s*kg/, actual: R.PARTS.iron_wheel.mass, label: '铁轮重量' },
-  { text: R.PARTS.iron_wheel.desc, re: /冰面抓地\s*(\d+(?:\.\d+)?)/, actual: R.PARTS.iron_wheel.iceGrip, label: '铁轮冰面抓地' },
-  { text: R.PARTS.wood_frame.desc, re: /耐久\s*(\d+)\s*段/, actual: R.PARTS.wood_frame.maxHp, label: '木框耐久段数' }
+  { id: 'balloon', re: /举起\s*(\d+(?:\.\d+)?)\s*kg/, actual: () => R.PARTS.balloon.liftMass, label: '热气球浮力' },
+  { id: 'sandbag', re: /每个\s*(\d+(?:\.\d+)?)\s*kg/, actual: () => R.PARTS.sandbag.mass, label: '压舱石重量' },
+  { id: 'wood_wheel', re: /打滑（(\d+(?:\.\d+)?)）/, actual: () => R.PARTS.wood_wheel.iceGrip, label: '木轮冰面抓地' },
+  { id: 'iron_wheel', re: /重\s*(\d+(?:\.\d+)?)\s*kg/, actual: () => R.PARTS.iron_wheel.mass, label: '铁轮重量' },
+  { id: 'iron_wheel', re: /抓地\s*(\d+(?:\.\d+)?)/, actual: () => R.PARTS.iron_wheel.iceGrip, label: '铁轮冰面抓地' },
+  { id: 'wood_frame', re: /耐久\s*(\d+)\s*段/, actual: () => R.PARTS.wood_frame.maxHp, label: '木框耐久段数' },
+  { id: 'iron_frame', re: /耐久\s*(\d+)\s*段/, actual: () => R.PARTS.iron_frame.maxHp, label: '岩框耐久段数' },
+  { id: 'anemo_core', re: /\+(\d+)\s*动力容量/, actual: () => R.PARTS.anemo_core.powerSrc, label: '风种容量' },
+  { id: 'geo_core', re: /\+(\d+)\s*动力容量/, actual: () => R.PARTS.geo_core.powerSrc, label: '岩种容量' },
+  { id: 'geo_core', re: /重\s*(\d+(?:\.\d+)?)\s*kg/, actual: () => R.PARTS.geo_core.mass, label: '岩种重量' },
+  { id: 'propeller', re: /推力\s*(\d+(?:\.\d+)?)\s*m\/s²/, actual: () => R.PARTS.propeller.thrust, label: '风车桨推力' },
+  { id: 'propeller', re: /占\s*(\d+)\s*点动力容量/, actual: () => R.PARTS.propeller.drawPower, label: '风车桨耗容量' },
+  { id: 'jet', re: /推力\s*(\d+(?:\.\d+)?)\s*m\/s²/, actual: () => R.PARTS.jet.thrust, label: '喷气口推力' },
+  { id: 'jet', re: /占\s*(\d+)\s*点容量/, actual: () => R.PARTS.jet.drawPower, label: '喷气口耗容量' },
+  { id: 'firework', re: /推\s*(\d+(?:\.\d+)?)\s*秒/, actual: () => R.PARTS.firework.burnTime, label: '霄灯燃烧时长' },
+  { id: 'firework', re: /（(\d+(?:\.\d+)?)\s*m\/s²）/, actual: () => R.PARTS.firework.thrust, label: '霄灯推力' }
 ];
 let claimBad = 0;
 claims.forEach(c => {
-  const m = (c.text || '').match(c.re);
+  const def = R.PARTS[c.id];
+  const text = (def && def.desc) || '';
+  const m = text.match(c.re);
   const said = m ? parseFloat(m[1]) : null;
-  const ok = said !== null && Math.abs(said - c.actual) < 1e-6;
+  const real = c.actual();
+  const ok = said !== null && Math.abs(said - real) < 1e-6;
   if (!ok) claimBad++;
-  console.log('  ' + (ok ? 'OK  ' : 'BAD ') + c.label.padEnd(12) +
-    ' 文案说 ' + (said === null ? '（没写）' : said) + '，实际 ' + c.actual);
+  console.log('  ' + (ok ? 'OK  ' : 'BAD ') + c.label.padEnd(14) +
+    ' 文案=' + (said === null ? '没写' : said) + '  引擎=' + real);
 });
+chk('descriptions 里的数字全部和引擎一致（文案不撒谎）', claimBad === 0,
+  claimBad ? claimBad + ' 条不符' : '全部一致');
 
-/* ---------- 断言 ---------- */
-let pass = 0, fail = 0;
-const line = (ok, name, detail) => { if (ok) pass++; else fail++;
-  console.log((ok ? 'PASS ' : 'FAIL ') + ' ' + name + (detail ? '　' + detail : '')); };
+console.log('\n=== C 功能性标志必须真的被读过 ===');
+const src = fs.readFileSync(path.join(__dirname, '..', 'prototype', 'game.js'), 'utf8');
+/* 只检查**新增**的几个功能性字段。老的（structure/wheel/mass）早就有读的人。 */
+const flags = ['powerSrc', 'tool', 'drawPower', 'oneShot', 'burnTime', 'tether', 'thrust'];
+const orphan = [];
+flags.forEach(f => {
+  /* 表里写了几次不重要，重要的是**引擎代码里读过它**。
+   * 读法有两种：`def.xxx` 或 `PARTS[...].xxx`。 */
+  const re = new RegExp('\\.' + f + '\\b');
+  if (!re.test(src)) orphan.push(f);
+});
+chk('每个新功能字段都至少有一处读它（没有"写了没人读"的假规格）',
+  orphan.length === 0, orphan.length ? '没人读：' + orphan.join(',') : '全部有读');
+
+/* 反向检查：所有零件至少要被某条分支画到（否则玩家看到空气）*/
+console.log('\n=== D 每件都能被画出来（渲染层有分支）===');
+const html = fs.readFileSync(path.join(__dirname, '..', 'prototype', 'index.html'), 'utf8');
+const drawable = {
+  wood_frame: /def\.structure/, iron_frame: /def\.structure/,
+  wood_wheel: /def\.wheel/, iron_wheel: /def\.wheel/,
+  anemo_core: /def\.powerSrc/, geo_core: /def\.powerSrc/,
+  propeller: /def\.tool/, jet: /def\.tool/,
+  balloon: /def\.liftMass/, sandbag: /def\.dropOne/,
+  firework: /def\.oneShot/, pump: /def\.interactive/, pig: /def\.pig/
+};
+const undraw = [];
+ids.forEach(id => {
+  const re = drawable[id];
+  if (!re) undraw.push(id + '(无映射)');
+  else if (!re.test(html)) undraw.push(id);
+});
+chk('每件零件在渲染层都有对应分支', undraw.length === 0,
+  undraw.length ? '画不出：' + undraw.join(',') : '全部可画');
 
 console.log('');
-line(dead.length === 0, 'PARTS 表里没有"写了没人读"的字段',
-  dead.length ? '死字段：' + dead.join(', ') : keys.length + ' 个字段全部有读者');
-line(claimBad === 0, '零件说明里写的每个数字都和引擎常数一致（说明不会撒谎）',
-  claimBad ? claimBad + ' 条对不上' : claims.length + ' 条全部一致');
-
-// 量具自证：塞一个假字段，必须被列出来
-{
-  const fake = { ...R.PARTS.wood_frame, zzNeverUsed: 1 };
-  const fakeKeys = Object.keys(fake);
-  const d2 = fakeKeys.filter(k => countRe(ENGINE, k) + countRe(RENDER, k) === 0);
-  line(d2.indexOf('zzNeverUsed') >= 0, '量具能失败：塞一个没人读的字段，能认出来', d2.join(', '));
-}
-// 量具自证：把描述里的数字改错，必须判红
-{
-  const bad2 = R.PARTS.motor.desc.replace(/(\d+(?:\.\d+)?)\s*m\/s²/, '9.5 m/s²');
-  const m2 = bad2.match(/(\d+(?:\.\d+)?)\s*m\/s²/);
-  line(m2 && parseFloat(m2[1]) !== R.Params.motorAccel,
-    '量具能失败：把说明里的加速度改成 9.5，判据能认出不一致',
-    '改后 ' + (m2 ? m2[1] : '?') + ' vs 实际 ' + R.Params.motorAccel);
-}
-
-console.log('\nASSERTS ' + pass + ' / ' + (pass + fail));
-process.exit(fail === 0 ? 0 : 1);
+console.log('ASSERTS ' + pass + ' / ' + (pass + fail));
+if (fail) process.exit(1);

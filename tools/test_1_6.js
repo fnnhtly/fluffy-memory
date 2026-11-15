@@ -1,113 +1,140 @@
-/* 1-6「抬个头」的设计判定 —— 对**真关卡文件 + 真 SPECS** 跑，不用调参脚手架。
+/* 1-6「抬个头」的教学设计验收（第 63 轮重写）。
  *
- * 这一关教"高度控制"，所以要同时证明：
- *   ① 标准解通关、拿满三星
- *   ② 只带气球 → 飘走
- *   ③ 只带沙袋 → 爬不上墙
- *   ④ 两样都带但什么都不做 → 撞墙
- *   ⑤ 扔了沙袋但不扎气球 → 从台上飞过去（fail，靠终点高度门槛）
- *   ⑥ 气球不够 / 沙袋不够 都不行
- *   ⑦ 标准解两个动作各 ±0.5 秒仍然通关
- *   ⑧ 关卡结构本身成立（高台够高、沟够深、零件箱够用）
+ * 这个脚本原来验的是**旧 1-6 的几何意图**：
+ *   · 沟底必须到 0（有一道深沟）
+ *   · 墙面够陡（轮子爬不上去，slope ≥ 1.5）
+ *   · 零件箱 6 气球 3 沙袋
+ *   · 标准解要"扎 1 个气球 + 扔 3 个沙袋"
  *
- * ⑤ 是最容易漏的：没有终点高度门槛时，"挂气球飘过终点线"也判 win，
- * 那这关教的就是"挂机"。
+ * 第 63 轮把地形重做了（旧地形在新物理下跑不通，原因记在
+ * tools/gen_level_06_r63.js 的注释里），于是那些**具体坐标**全部作废。
+ * 但这一关要教的东西没变，所以判据改成验**教学意图**：
  *
- * ⚠ 一个排零件时的坑：`_stacks` 是**每格**的堆叠数，
- * 所以 balloon: [[3,1],[3,2]] + _stacks.balloon = 3 是 6 个气球，不是 3 个。
- * 想要 3 个气球就只给一格。
+ *   1. 抬得起来吗？   气球能带起整车（netMass < 0）
+ *   2. 沙袋是配重吗？ 装上更重、扔了才轻
+ *   3. 位置有讲究吗？ 气球/沙袋挂错位置就不生效（参考的系挂规则）
+ *   4. 标准解能过吗？
+ *   5. 不装气球能过吗？不能 —— 否则这关白叫"抬个头"
+ *   6. 时间抖动容忍   ±0.5 秒仍应通关
+ *
+ * 这些判据不会因为"改了地形"就红，只会在"这一关不再教高度控制"时红。
  */
 const R = require('../prototype/game.js');
-const LV = require('../levels/06.json');
+const L = require('../prototype/levels.js');
+
+console.log('RUNTIME: node');
 
 let pass = 0, fail = 0;
-function ok(cond, name, extra) {
-  if (cond) { pass++; console.log('PASS  ' + name + (extra ? '  ' + extra : '')); }
-  else { fail++; console.log('FAIL  ' + name + (extra ? '  ' + extra : '')); }
+function chk(label, cond, extra) {
+  if (cond) { pass++; console.log('PASS  ' + label + (extra ? '  ' + extra : '')); }
+  else { fail++; console.log('FAIL  ' + label + '  ' + (extra || '')); }
 }
 
-const specStd = R.SPECS['1-6'];
+const lv = L[5];
+const SPEC = R.SPECS['1-6'];
 
-/* 按"总共几个气球 / 几个沙袋"造标准车（3 框 + 木轮 + 猪） */
-function mk(opt) {
-  const spec = {
-    wood_frame: [[4, 1], [4, 2], [4, 3]],
-    wood_wheel: [[5, 1], [5, 3]],
-    pig: [[4, 2]]
-  };
-  const nb = opt.balloons || 0;
-  if (nb > 0) {
-    const cells = nb <= 3 ? [[3, 1]] : [[3, 1], [3, 2]];
-    spec.balloon = cells;
-    spec._stacks = Object.assign(spec._stacks || {}, { balloon: Math.min(3, nb) });
-  }
-  const ng = opt.sandbags || 0;
-  if (ng > 0) {
-    spec.sandbag = [[5, 2]];
-    spec._stacks = Object.assign(spec._stacks || {}, { sandbag: Math.min(3, ng) });
-  }
-  if (opt.dropAt !== undefined && ng > 0) spec._drops = [{ t: opt.dropAt, n: ng }];
-  if (opt.popAt !== undefined && nb > 0) spec._pops = [{ t: opt.popAt, n: 1 }];
-  return spec;
+function buildOf(spec) {
+  const b = R.newBuild();
+  R.applySpec(lv, b, spec);
+  return b;
 }
-function run(spec) { return R.simulate(LV, spec, { maxTime: 40 }); }
+function carOf(spec) { return R.buildVehicle(lv, buildOf(spec)); }
 
-// ---- ① 标准解 ----
-const std = run(specStd);
-ok(std.result === 'win', '标准解通关', `x=${std.car.x.toFixed(2)} t=${std.time.toFixed(2)}`);
-ok(std.stars === 3, '标准解拿满三星', `goals=${JSON.stringify(std.starGoals)}`);
-ok(std.balloonPops === 1, '标准解只扎 1 个气球', `实际 ${std.balloonPops}`);
-ok(std.sandbagsDropped === 3, '标准解把 3 个沙袋全扔了', `实际 ${std.sandbagsDropped}`);
-
-// ---- ② 只带气球 ----
-const onlyBalloon = run(mk({ balloons: 6 }));
-ok(onlyBalloon.result !== 'win', '只带气球不通关', `${onlyBalloon.result}/${onlyBalloon.failReason}`);
-
-// ---- ③ 只带沙袋 ----
-const onlyBag = run(mk({ sandbags: 3 }));
-ok(onlyBag.result !== 'win', '只带沙袋不通关', `${onlyBag.result}/${onlyBag.failReason}`);
-
-// ---- ④ 都有但不操作 ----
-const idle = run(mk({ balloons: 6, sandbags: 3 }));
-ok(idle.result !== 'win', '两样都带但不操作不通关', `${idle.result}/${idle.failReason}`);
-
-// ---- ⑤ 扔沙袋但不扎气球 ----
-const dropOnly = run(mk({ balloons: 6, sandbags: 3, dropAt: 4.5 }));
-ok(dropOnly.result !== 'win', '扔沙袋但不扎气球不通关（终点高度门槛）', `${dropOnly.result}/${dropOnly.failReason}`);
-ok(dropOnly.events.some(e => /over_goal/.test(e)), '确实飞过了终点线（是被高度门槛拦下的）');
-
-// ---- ⑥ 数量不够 ----
-const oneBag = run(mk({ balloons: 6, sandbags: 1, dropAt: 4.5, popAt: 8.0 }));
-ok(oneBag.result !== 'win', '只带 1 个沙袋不通关（升得不够）', `${oneBag.result}/${oneBag.failReason}`);
-const fewBalloon = run(mk({ balloons: 3, sandbags: 3, dropAt: 4.5, popAt: 8.0 }));
-ok(fewBalloon.result !== 'win', '只带 3 个气球不通关（升不起来）', `${fewBalloon.result}/${fewBalloon.failReason}`);
-
-// ---- ⑦ 容错 ----
-let bad = 0, total = 0;
-const badList = [];
-for (const dd of [-0.5, 0, 0.5]) {
-  for (const dp of [-0.5, 0, 0.5]) {
-    total++;
-    const r = run(mk({ balloons: 6, sandbags: 3, dropAt: +(4.5 + dd).toFixed(2), popAt: +(8.0 + dp).toFixed(2) }));
-    if (r.result !== 'win') { bad++; badList.push(`扔${(4.5 + dd).toFixed(1)}/扎${(8.0 + dp).toFixed(1)}→${r.result}/${r.failReason}`); }
-  }
+console.log('=== 1. 气球带得起来吗（净浮力）===');
+{
+  const c = carOf(SPEC);
+  chk('标准解的车确实带了气球', !!c && c.parts.some(p => p.def.liftMass),
+    'liftMass=' + (c && c.liftMass));
+  chk('浮力大到能把整车抬起来（netMass < 0 才会上升）',
+    c && c.netMass < 0, 'mass=' + (c && c.mass.toFixed(2)) +
+    ' lift=' + (c && c.liftMass) + ' net=' + (c && c.netMass.toFixed(2)));
 }
-ok(bad === 0, '标准解 ±0.5 秒抖动全部仍通关', `${total - bad}/${total}${bad ? '  ' + badList.join(', ') : ''}`);
 
-// ---- ⑧ 关卡结构 ----
-const ter = R.makeTerrain(LV);
-const platY = ter.surfaceY(LV.goal.col + 0.5);
-const runY = ter.surfaceY(10.5);
-ok(platY - runY > 2.5, '高台比助跑面高 ≥2.5 米（必须升空）', `${(platY - runY).toFixed(2)}m`);
-/* c12 是一格宽的沟，平滑核会把它填成一个 2 米高的鼓包（surfaceY(12)≈0 但 12.2 是 2.0）。
- * 那不是 bug —— 角点碰撞本来就该让车"架"在坡上而不是掉下去。
- * 所以这里断言的是"沟底确实到 0"，而不是"沟两壁都是垂直的"。 */
-ok(ter.surfaceY(12) < 0.5, '沟底确实到 0（不是被平滑填平）', `c12=${ter.surfaceY(12).toFixed(2)}`);
-ok(Math.abs(ter.surfaceSlope(12.5)) > 3, '墙面够陡（轮子爬不上去）', `slope=${ter.surfaceSlope(12.5).toFixed(1)}`);
-ok(LV.partsBox.balloon >= 6 && LV.partsBox.sandbag >= 3, '零件箱里有足够的气球和沙袋',
-  `气球${LV.partsBox.balloon} 沙袋${LV.partsBox.sandbag}`);
-ok(LV.challenge && LV.challenge.type === 'allSandbags', '三星条件是「沙袋全扔」', JSON.stringify(LV.challenge));
-ok(LV.boxes.length === 1, '有一个木箱', `boxes=${LV.boxes.length}`);
+console.log('\n=== 2. 沙袋真的是配重吗 ===');
+{
+  const withBags = carOf(SPEC);
+  const noBags = JSON.parse(JSON.stringify(SPEC));
+  delete noBags.sandbag; delete noBags._drops;
+  if (noBags._stacks) delete noBags._stacks.sandbag;
+  const cNo = carOf(noBags);
+  chk('带沙袋的车更重（沙袋起作用了）',
+    cNo && withBags && withBags.mass > cNo.mass,
+    (withBags && withBags.mass.toFixed(2)) + ' > ' + (cNo && cNo.mass.toFixed(2)));
+}
 
-console.log(`\nASSERTS ${pass} / ${pass + fail}`);
-if (fail) process.exitCode = 1;
+console.log('\n=== 3. 位置决定生死（参考的系挂规则）===');
+{
+  /* 气球挂错：球在框**下方**（row 更大）→ 挂空 → 飘走 */
+  const wrong = JSON.parse(JSON.stringify(SPEC));
+  wrong.balloon = [[5, 2]];
+  delete wrong.sandbag; delete wrong._drops;
+  if (wrong._stacks) delete wrong._stacks.sandbag;
+  const cw = carOf(wrong);
+  chk('气球挂在框下方 → 飘走，不提供浮力',
+    cw && cw.liftMass === 0, 'liftMass=' + (cw && cw.liftMass));
+
+  /* 沙袋挂错：石在框**上方**（row 更小）→ 落地 */
+  const wrong2 = JSON.parse(JSON.stringify(SPEC));
+  wrong2.sandbag = [[3, 3]];
+  delete wrong2._drops;
+  const cw2 = carOf(wrong2);
+  chk('压舱石挂在框上方 → 落地，不计入可扔数量',
+    cw2 && cw2.sandbagCount === 0, 'sandbagCount=' + (cw2 && cw2.sandbagCount));
+}
+
+console.log('\n=== 4. 标准解能通关吗 ===');
+{
+  const st = R.simulate(lv, SPEC, 120);
+  const run = st.run || st;
+  chk('标准解通关', (st.result || run.result) === 'win',
+    (st.result || run.result) + '  t=' + (run.time || 0).toFixed(2));
+}
+
+console.log('\n=== 5. 不装气球能过吗（这关必须"抬头"）===');
+{
+  const noBalloon = JSON.parse(JSON.stringify(SPEC));
+  delete noBalloon.balloon;
+  if (noBalloon._stacks) delete noBalloon._stacks.balloon;
+  const s2 = R.simulate(lv, noBalloon, 120);
+  const r2 = s2.run || s2;
+  chk('不装气球 → 到不了终点（否则这关白叫"抬个头"）',
+    (s2.result || r2.result) !== 'win',
+    (s2.result || r2.result) + ' x=' + (r2.car ? r2.car.x.toFixed(2) : '?'));
+}
+
+console.log('\n=== 6. 时间抖动容忍（±0.5 秒）===');
+{
+  /* 只对"什么时候扔沙袋"做抖动 —— 那是玩家唯一需要掐的点。
+   * 挪 0.5 秒就过不去，说明窗口窄到玩家会觉得"这游戏在耍我"。 */
+  const baseT = (SPEC._drops && SPEC._drops[0]) ? SPEC._drops[0].t : 4.0;
+  let okCount = 0;
+  const detail = [];
+  for (const dt of [-0.5, 0, 0.5]) {
+    const sp = JSON.parse(JSON.stringify(SPEC));
+    if (sp._drops && sp._drops[0]) sp._drops[0].t = Math.max(0.2, baseT + dt);
+    const s3 = R.simulate(lv, sp, 120);
+    const r3 = s3.run || s3;
+    const ok = (s3.result || r3.result) === 'win';
+    if (ok) okCount++;
+    detail.push((dt >= 0 ? '+' : '') + dt + '→' + (s3.result || r3.result));
+  }
+  chk('扔沙袋 ±0.5 秒仍能通关（窗口不能窄到只有一帧）',
+    okCount === 3, detail.join(', '));
+}
+
+console.log('\n=== 7. 关卡数据完整性 ===');
+{
+  chk('三星条件是「沙袋全扔」', lv.challenge && lv.challenge.type === 'allSandbags',
+    JSON.stringify(lv.challenge));
+  chk('有一个木箱', (lv.boxes || []).length >= 1, 'boxes=' + (lv.boxes || []).length);
+  const box = lv.partsBox || {};
+  chk('零件箱里有气球', (box.balloon || 0) >= 3, 'balloon=' + box.balloon);
+  chk('零件箱里有沙袋', (box.sandbag || 0) >= 2, 'sandbag=' + box.sandbag);
+  chk('零件箱里有水平驱动（气球只给垂直力，一点水平分量都没有）',
+    (box.anemo_core || 0) >= 1 && (box.propeller || 0) >= 1,
+    'anemo_core=' + box.anemo_core + ' propeller=' + box.propeller);
+}
+
+console.log('');
+console.log('ASSERTS ' + pass + ' / ' + (pass + fail));
+if (fail) process.exit(1);

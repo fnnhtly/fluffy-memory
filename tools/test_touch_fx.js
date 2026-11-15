@@ -55,12 +55,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   let maxDust = 0, maxShake = 0, shots = 0, sawDust = false, sawShake = false;
   for (let i = 0; i < 90; i++) {
     await sleep(100);
+    /* 读 state.shakePeak（渲染层在每次接触时更新的峰值），
+     * 而不是轮询 state.shake —— 后者每帧按 elapsed*3.2 衰减，
+     * Lv2 的 0.22 只要 70ms 就掉到 0.05 以下，而这里 100ms 才采一次，
+     * 几乎必然错过峰值（实测峰值读到 0.05，卡在阈值线上）。
+     * 断言语义不变（Lv≥2 必须真的震过），只是不再和帧率赛跑。 */
     const d = JSON.parse(await ev(`(()=>{const s=window.__rap.state;
-      return JSON.stringify({dust:(s.dust||[]).length, shake:+(s.shake||0).toFixed(2)});})()`));
+      return JSON.stringify({dust:(s.dust||[]).length, shake:+(s.shake||0).toFixed(2),
+        peakShake:+(s.shakePeak||0).toFixed(3)});})()`));
     if (d.dust > maxDust) maxDust = d.dust;
-    if (d.shake > maxShake) maxShake = d.shake;
+    if (d.peakShake > maxShake) maxShake = d.peakShake;
     if (d.dust >= 3) sawDust = true;
-    if (d.shake > 0.05) sawShake = true;
+    if (d.peakShake > 0.05) sawShake = true;
     if (d.dust >= 3 && shots < 2) { await shot('tf-0' + (shots + 1) + '-dust'); shots++; }
     if ((await ev('window.__rap.state.phase')) === 'resolved') break;
   }

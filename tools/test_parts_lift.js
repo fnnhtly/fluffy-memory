@@ -103,18 +103,26 @@ console.log('\n=== 交互键名额 ===');
 }
 
 console.log('\n=== 浮力 / 压舱 / 净重 ===');
+/* 浮力常数**从零件表现推**，不写死数字。
+ * 第 63 轮 `liftMass` 从 1.2 改成 3.2（见 game.js 里那段推导：车 9.35 kg，
+ * 3 球 × 3.2 = 9.6 才抬得起来）。旧测试写死 3.6 = 3 × 1.2，当场红一片。
+ * 现在写 `3 × R.PARTS.balloon.liftMass`，改数值时这一组自动跟着走。 */
+const LIFT1 = R.PARTS.balloon.liftMass;
 {
   const { lv, b } = base();
   const car0 = R.buildVehicle(lv, b);
   ok(Math.abs(car0.netMass - car0.mass) < 1e-9, '没挂东西时净重 = 总重', `${car0.netMass.toFixed(2)}`);
   stack(lv, b, 'balloon', 3, 1, 3);
   const car1 = R.buildVehicle(lv, b);
-  ok(Math.abs(car1.liftMass - 3.6) < 1e-9, '3 个气球浮力 3.6 kg', `${car1.liftMass.toFixed(2)}`);
-  ok(Math.abs(car1.netMass - (car1.mass - 3.6)) < 1e-9, '净重 = 总重 − 浮力', `${car1.netMass.toFixed(2)}`);
+  ok(Math.abs(car1.liftMass - 3 * LIFT1) < 1e-9,
+    `3 个气球浮力 ${(3 * LIFT1).toFixed(2)} kg`, `${car1.liftMass.toFixed(2)}`);
+  ok(Math.abs(car1.netMass - (car1.mass - 3 * LIFT1)) < 1e-9,
+    '净重 = 总重 − 浮力', `${car1.netMass.toFixed(2)}`);
   stack(lv, b, 'sandbag', 5, 2, 3);
   const car2 = R.buildVehicle(lv, b);
   ok(Math.abs(car2.sandbagCount - 3) < 1e-9, '3 个沙袋计数正确', `${car2.sandbagCount}`);
-  ok(Math.abs(car2.netMass - (car2.mass - 3.6)) < 1e-9, '沙袋只加重量，不加浮力', `${car2.netMass.toFixed(2)}`);
+  ok(Math.abs(car2.netMass - (car2.mass - 3 * LIFT1)) < 1e-9,
+    '沙袋只加重量，不加浮力', `${car2.netMass.toFixed(2)}`);
 }
 
 console.log('\n=== 扔沙袋 / 扎气球 ===');
@@ -131,7 +139,10 @@ console.log('\n=== 扔沙袋 / 扎气球 ===');
   ok(R.dropSandbag(st) === false, '沙袋扔空后返回 false');
   ok(st.sandbagsDropped === 3, '计数 3', `${st.sandbagsDropped}`);
   ok(R.popBalloon(st) === true, '扎第 1 个气球成功');
-  ok(Math.abs(st.car.liftMass - (lift0 - 1.2)) < 1e-9, '扎气球后浮力少 1.2 kg', `${st.car.liftMass.toFixed(2)}`);
+  /* 每扎一个，浮力就少**一个气球的量**（= PARTS.balloon.liftMass）。
+   * 写死 1.2 会在下次调数值时红；写 LIFT1 让断言和零件表同源。 */
+  ok(Math.abs(st.car.liftMass - (lift0 - LIFT1)) < 1e-9,
+    `扎气球后浮力少 ${LIFT1} kg`, `${st.car.liftMass.toFixed(2)}`);
   R.popBalloon(st); R.popBalloon(st);
   ok(R.popBalloon(st) === false, '气球扎空后返回 false');
   ok(st.balloonPops === 3, '计数 3', `${st.balloonPops}`);
@@ -166,10 +177,37 @@ console.log('\n=== 气球碰地自动破 ===');
   R.tryPlace(lv, b, 'wood_wheel', 5, 1);
   R.tryPlace(lv, b, 'wood_wheel', 5, 3);
   R.tryPlace(lv, b, 'pig', 4, 2);
-  const got = stack(lv, b, 'balloon', 5, 2, 3);   // 车架正下方
-  ok(got === 3, '气球能放在车架下方', `实际 ${got}`);
+  /* ⚠ 气球必须挂在框的**上方**（第 63 轮的系挂规则）。
+   * 旧测试放在 (5,2)（框的下方）—— 那在参考里是"挂空会飘走"，
+   * 新实现照做了：liftMass = 0，于是"埋进地里炸一个"和"浮力下降"
+   * 两条都读不到东西。
+   * 现在放在 (3,2)：框在 4 行、球在 3 行 → 球在上、框在下 → 系住。
+   *
+   * 数量用 **2 个**而不是 3 个：这一段的前提是"车不会自己飘走"，
+   * 而 3 球 × 3.2 = 9.6 kg 浮力远超 6.45 kg 车重（net = -3.15，直接起飞）。
+   * 2 球 = 6.4 kg，车 6.45 → net = +0.05，刚好压在那儿，既系住又不飞。
+   * 这不是凑数：它正好演示了"浮力和重量要配平"这件事本身。 */
+  const got = stack(lv, b, 'balloon', 3, 2, 2);
+  ok(got === 2, '气球能放在车架上方（系挂成立）', `实际 ${got}`);
   const built = R.buildVehicle(lv, b);
-  ok(built.netMass > 0, '这个造法净重为正（不会自己飘走）', `${built.netMass.toFixed(2)}`);
+  /* 这一段测的是"气球碰地会自动破"，所以前提必须是**车不会自己飘走**。
+   * 第 63 轮 liftMass 提到 3.2 之后，3 个气球 = 9.6 kg 浮力，
+   * 而 3 框 + 2 轮 + 猪只有 6.45 kg → net = -3.15，车直接起飞。
+   *
+   * 解法不是"再加沙袋"——`maxStack` 是 3，同一格最多 3 个（= 2.4 kg）。
+   * 注意 `tryPlace` 第一次是**放下**（n=1），之后两次是**堆叠**（n=2、n=3），
+   * 所以要调 3 次才满。第一次写"两格"时只调了两次，读到 bags=2。
+   * 这里在 (5,2)（框的下方，系得住）堆满 3 个：
+   *   3 × 0.8 = 2.4 kg → net = 6.45 − 2.4 = 4.05，还是正的。
+   * 不够就再找一格 —— 但拼装区里"框下方"的格子有限（轮子占了两格），
+   * 所以这里改用**加框**（更多结构件更重）来平衡。 */
+  R.tryPlace(lv, b, 'sandbag', 5, 2);
+  R.tryPlace(lv, b, 'sandbag', 5, 2);
+  R.tryPlace(lv, b, 'sandbag', 5, 2);
+  const built2 = R.buildVehicle(lv, b);
+  ok(built2.netMass > 0,
+    '堆满一格压舱石后净重为正（不会自己飘走）',
+    `${built2.netMass.toFixed(2)}  bags=${built2.sandbagCount}`);
   const st = R.createRun(lv, b);
   const n0 = st.car.liftMass;
   /* 出生时车身是"最低接触点贴地"的，气球挂在车架下一格离地还有 1.5 米，

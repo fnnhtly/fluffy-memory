@@ -34,12 +34,32 @@ console.log('=== 1. 关卡文件里的 timeLimit 现在生效吗？ ===');
 {
   /* 造一个"限时 5 秒"的临时关卡：如果引擎读 lv.timeLimit，它必须在 5 秒左右超时；
    * 如果引擎只读全局 60 秒，它就会跑到别的原因（或者跑满 60 秒）。 */
-  const lv = JSON.parse(JSON.stringify(levels[5]));
+  /* ⚠ 挑哪一关来跑这件事**不能写死**。
+   * 第 63 轮重做零件之后，1-6 的标准解从 ~9 秒变成 2.85 秒（气球给了升力、
+   * 风车桨给了推力，一路顺风），于是"限时 5 秒"根本来不及触发 ——
+   * 车在第 2.85 秒就赢了，压根没走到超时判定。
+   *
+   * 这不是引擎坏了，是**选错了被测对象**。判据要的是"有一关最慢的解
+   * 超过 5 秒"，所以这里先量出每关标准解的耗时，挑最慢的那一关来验。 */
+  let slowest = null;
+  levels.forEach((lv) => {
+    const key = Object.keys(R.SPECS).find(k => k === lv.levelId) ||
+                Object.keys(R.SPECS).find(k => k.indexOf(lv.levelId) === 0);
+    if (!key) return;
+    const probe = JSON.parse(JSON.stringify(lv));
+    probe.timeLimit = 120;
+    const rr = R.simulate(probe, R.SPECS[key], { maxTime: 60, params: { progressWindow: 1e9 } });
+    const tt = rr.time || 0;
+    console.log(`  探针 ${lv.levelId}: ${rr.result} @ ${tt.toFixed(2)} s`);
+    if (!slowest || tt > slowest.t) slowest = { lv, key, t: tt };
+  });
+  const lv = JSON.parse(JSON.stringify(slowest.lv));
   lv.timeLimit = 5;
-  const r = R.simulate(lv, R.SPECS['1-6'], { maxTime: 60, params: { progressWindow: 1e9 } });
-  console.log(`  限时 5 秒的 1-6 → ${r.result}/${r.failReason || '-'} @ ${(r.time || 0).toFixed(2)} s`);
+  const r = R.simulate(lv, R.SPECS[slowest.key], { maxTime: 60, params: { progressWindow: 1e9 } });
+  console.log(`  限时 5 秒的 ${slowest.lv.levelId}（最慢的一关，标准解 ${slowest.t.toFixed(2)}s）` +
+              ` → ${r.result}/${r.failReason || '-'} @ ${(r.time || 0).toFixed(2)} s`);
   ck(r.failReason === 'timeout' && r.time <= 5.6,
-    '关卡写 timeLimit=5 时，引擎真的在 5 秒左右判超时',
+    `关卡写 timeLimit=5 时，引擎真的在 5 秒左右判超时（用最慢的一关 ${lv.levelId}）`,
     `${r.failReason} @ ${(r.time || 0).toFixed(2)}s`);
 }
 

@@ -59,15 +59,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(120);
   };
 
-  // ---------- 建造期：托盘的 9 个格子 ----------
+  // ---------- 建造期：托盘 ----------
   await ev(`(()=>{const s=window.__rap.state; s.welcome=0; s.introT=1; window.__rap.startLevel(5); s.welcome=0; s.introT=1; return 1;})()`);
   await sleep(600);
-  const tray = JSON.parse(await ev(`JSON.stringify(window.__rap.TRAY.map((_,i)=>window.__rap.trayRect(i)))`));
+  const trayInfo = JSON.parse(await ev(`(()=>{const R=window.__rap;
+    return JSON.stringify({ids:R.TRAY, rects:R.TRAY.map((_,i)=>R.trayRect(i))});})()`));
+  const tray = trayInfo.rects, trayIds = trayInfo.ids;
   await shot('lu-01-build-tray');
-  A.chk('托盘排出 9 格零件 + 1 格橡皮', tray.length === 10, tray.length + ' 格');
+  /* 托盘格数跟着零件表走，**不能写死**。
+   * 第 63 轮零件从 9 件涨到 13 件（+ 橡皮 = 14 格），
+   * 旧断言写 `tray.length === 10` 当场红 —— 而功能完全正常。 */
+  A.chk('托盘格数 = 零件表长度 + 1（橡皮）',
+    tray.length === (await ev('window.__rap.RAP.TRAY_ORDER.length')) + 1,
+    tray.length + ' 格');
   A.chk('托盘不超出 1280 宽',
     tray[0].x >= 8 && tray[tray.length - 1].x + tray[0].w <= 1272,
     `x ${Math.round(tray[0].x)} → ${Math.round(tray[tray.length - 1].x + tray[0].w)}`);
+  const trayIdxOf = id => trayIds.indexOf(id);
+  A.chk('托盘里能找到热气球和压舱石',
+    trayIdxOf('balloon') >= 0 && trayIdxOf('sandbag') >= 0,
+    'balloon@' + trayIdxOf('balloon') + ' sandbag@' + trayIdxOf('sandbag'));
 
   // ---------- 用真鼠标在建造期放 3 个气球（同格点 3 下 → ×3 徽标） ----------
   /* 目标格必须是**紧贴木框的上方一格**（第 3 行，木框在第 4 行）：
@@ -77,9 +88,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const cell = JSON.parse(await ev(`(()=>{const o=window.__rap.buildOrigin();
     return JSON.stringify({x:o.x+3*window.__rap.BUILD_PX+window.__rap.BUILD_PX/2,
                            y:o.y+3*window.__rap.BUILD_PX+window.__rap.BUILD_PX/2});})()`));
-  // 先点托盘里的气球（index 6），再连点目标格 3 次
-  await click(tray[6].x + tray[6].w / 2, tray[6].y + tray[6].h / 2);
-  A.chk('点托盘选中了气球', (await ev('window.__rap.state.selected')) === 'balloon',
+  /* 托盘索引**按名字查**，不写死数字。
+   * 旧代码写 `tray[6]`，那是旧零件表里气球的位置；新表里 6 是 propeller，
+   * 于是"点托盘选中了气球"读到 selected=propeller —— 测试红，而托盘没错。 */
+  const bi = trayIdxOf('balloon');
+  await click(tray[bi].x + tray[bi].w / 2, tray[bi].y + tray[bi].h / 2);
+  A.chk('点托盘选中了热气球', (await ev('window.__rap.state.selected')) === 'balloon',
     'selected=' + (await ev('window.__rap.state.selected')));
   // 建造期格子需要先有木框；直接走 API 搭好基础车，再用鼠标补气球
   await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[5];
@@ -94,7 +108,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const nBalloon = await ev(`window.__rap.RAP.cellCount(window.__rap.state.build.cells['3,3'])`);
   A.chk('鼠标连点同一格 3 次 → 叠了 3 个气球', nBalloon === 3, 'n=' + nBalloon);
   const liftLine = await ev('window.__rap.liftLineOf()');
-  A.chk('建造 HUD 显示了浮力与净重', /浮力 3\.6/.test(liftLine) && /净重/.test(liftLine), liftLine);
+  /* 浮力数值从**零件表**推：3 个球 × liftMass。
+   * 旧断言写死 3.6（= 3 × 1.2），第 63 轮 liftMass 提到 3.2 之后
+   * 实际是 9.6 —— 功能完全正常（HUD 写着「浮力 9.6　净重 -3.2 kg　会飘起来」），
+   * 只是那个常量和零件表分叉了。 */
+  {
+    const lift1 = await ev('window.__rap.RAP.PARTS.balloon.liftMass');
+    const want = (3 * lift1).toFixed(1);
+    A.chk('建造 HUD 显示了浮力与净重',
+      liftLine.indexOf('浮力 ' + want) >= 0 && /净重/.test(liftLine),
+      liftLine + '（期望含「浮力 ' + want + '」）');
+  }
   await shot('lu-02-build-stacked');
 
   // 徽标像素探针。
@@ -131,9 +155,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     A.chk('×3 徽标画出来了（同背景下，有徽标的格多出深色圆底）',
       withBadge.deep > noBadge.deep + 40,
       `叠 3 个那格 ${withBadge.deep} 暗像素 vs 只放 1 个那格 ${noBadge.deep}`);
-    A.chk('徽标上有暖金圆环和亮色数字',
-      withBadge.warm > noBadge.warm + 15 && withBadge.bright > noBadge.bright + 4,
-      `暖色 ${noBadge.warm}→${withBadge.warm}，亮色 ${noBadge.bright}→${withBadge.bright}`);
+    /* 徽标判据：**暖金圆环**是它唯一的专属信号（drawStackBadge 的
+     * strokeStyle = rgba(232,200,122,.85)，一个整圈描边）。
+     *
+     * 为什么不再断言"亮色数字变多"：叠 3 个气球的那格，气球本身画得
+     * 比只放 1 个的那格**更密**，把采样窗口里的大片亮色盖掉了 ——
+     * 实测亮色反而从 221 掉到 90。那条断言量的是"这格亮不亮"，
+     * 不是"有没有徽标"，在新美术下会稳定误报。
+     * 暖色像素才是徽标独有的（气球是粉 #e0708f，不含 r>190&g>158 的暖金）。 */
+    A.chk('徽标上有暖金圆环（叠满格比对照格明显多出暖金像素）',
+      withBadge.warm > noBadge.warm + 15,
+      `暖色 ${noBadge.warm}→${withBadge.warm}`);
   }
 
   // ---------- 行驶期：点车身扎气球 ----------
@@ -141,11 +173,30 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    * 注意**不能先暂停再点** —— 暂停分支会把所有点击吞掉（那是刻意的防误触），
    * 于是"点不动"会被误读成"坐标算错了"。这里就在跑动中点，
    * 反正 tapAt 用的是点下去那一瞬间的车位。 */
-  await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[5];
-    s.welcome=0; s.introT=1; s.phase='build'; s.paused=false;
-    R.applySpec(lv, s.build, R.SPECS['1-6']);
-    window.__rap.launch(); s.runBanner=0; s.paused=false; return 1;})()`);
+  /* 用 launchSpec（正确入口）而不是 applySpec + launch。
+   *
+   * 第 63 轮重写零件表之后，1-6 的标准解里多了 anemo_core / propeller，
+   * 而 `applySpec` 只负责摆位 —— 它不建 run、不写 actScript。
+   * 旧写法在这一步之后 `state.run` 里没有气球（car.parts 找不到 liftMass），
+   * 于是 `bp.lx` 对 undefined 取值，脚本直接崩：
+   *   TypeError: Cannot read properties of undefined (reading 'lx')
+   * 崩溃连一条断言都跑不到。launchSpec 会走 launch()，车和 run 一起建好。 */
+  await ev(`(()=>{const s=window.__rap.state;
+    s.welcome=0; s.introT=1; s.paused=false;
+    window.__rap.launchSpec(5, '1-6');
+    s.runBanner=0; s.paused=false; return 1;})()`);
   await sleep(400);
+  /* 前提断言：车的**真的**带着气球，否则后面那串读数全是 undefined。 */
+  const pre = JSON.parse(await ev(`(()=>{const s=window.__rap.state;
+    const car = s.run && s.run.car;
+    if (!car) return JSON.stringify({ok:false, why:'no run'});
+    return JSON.stringify({ok:true,
+      hasBalloon: car.parts.some(p=>p.def.liftMass),
+      hasBag: car.parts.some(p=>p.def.dropOne),
+      lift: car.liftMass, n: car.parts.length});})()`));
+  A.chk('前提：1-6 的车上有气球也有沙袋（否则后面的读数没有意义）',
+    pre.ok && pre.hasBalloon && pre.hasBag, JSON.stringify(pre));
+  if (!pre.ok || !pre.hasBalloon) { A.finish(ws, child); return; }
   const before = JSON.parse(await ev(`(()=>{const s=window.__rap.state.run;
     return JSON.stringify({lift:s.car.liftMass, pops:s.balloonPops||0,
       bags:s.car.sandbagCount||0, mass:s.car.mass});})()`));
@@ -166,8 +217,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     return JSON.stringify({lift:s.car.liftMass, pops:s.balloonPops||0});})()`));
   A.chk('用真实鼠标点车身 → 扎破一个气球', after.pops === before.pops + 1,
     `pops ${before.pops} → ${after.pops}（指针 ${Math.round(scr.x)},${Math.round(scr.y)}）`);
-  A.chk('扎破后浮力下降 1.2 kg', Math.abs((before.lift - after.lift) - 1.2) < 1e-6,
-    `${before.lift.toFixed(2)} → ${after.lift.toFixed(2)}`);
+  /* 下降量 = **一个气球**的 liftMass（从零件表现取，不写死 1.2）。 */
+  {
+    const lift1 = await ev('window.__rap.RAP.PARTS.balloon.liftMass');
+    A.chk('扎破后浮力下降 ' + lift1 + ' kg',
+      Math.abs((before.lift - after.lift) - lift1) < 1e-6,
+      `${before.lift.toFixed(2)} → ${after.lift.toFixed(2)}`);
+  }
 
   /* 炸开的橡皮屑必须真的出现了。
    * 没有这条，"点气球只有数字变、画面上什么都不发生"这种回归永远抓不到 ——
@@ -195,7 +251,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await shot('lu-03-run-after-pop');
 
   // ---------- 点沙袋：扔一个 ----------
+  /* ⚠ 必须**重新发一次车**。
+   *
+   * 1-6 的标准解里 `_drops: [{t:1.5, n:2}]` —— 出发 1.5 秒后两个压舱石
+   * 就自动扔掉了（那是标准解写好的动作，走的是 dropSandbag 同一条路径）。
+   * 而这一段跑在点完气球之后，那时早就过了 1.5 秒，
+   * 车上 `sandbagCount` 已经是 0 → 找不到 `p.def.dropOne` 的零件 →
+   * 第一版报「点沙袋 → 扔下去一个 车上没有沙袋」。
+   *
+   * 所以要验"点车身能扔沙袋"，得先有一个**还带着沙袋**的在跑的车：
+   * 用一份把 `_drops` 去掉的 spec 重新发射。 */
+  await ev(`(()=>{const s=window.__rap.state, R=window.__rap.RAP;
+    window.__rap.startLevel(5); s.welcome=0; s.introT=1;
+    const spec = JSON.parse(JSON.stringify(R.SPECS['1-6']));
+    delete spec._drops;                    // 不自动扔，留给鼠标点
+    delete spec._pops;
+    R.applySpec(window.__rap.levels[5], s.build, spec);
+    s.phase='build'; s.run=null;
+    window.__rap.launch(); s.runBanner=0; return 1;})()`);
+  await sleep(600);
   {
+    const pre = JSON.parse(await ev(`(()=>{const c=window.__rap.state.run.car;
+      return JSON.stringify({bags:c.sandbagCount||0});})()`));
+    A.chk('前提：这一局车上确实还带着压舱石', pre.bags > 0, 'bags=' + pre.bags);
     const sb = JSON.parse(await ev(`(()=>{const s=window.__rap.state, cm=s.camLive, car=s.run.car;
       const bp=car.parts.find(p=>p.def.dropOne && (p.n||0) > 0);
       if(!bp) return JSON.stringify({none:true});
@@ -217,15 +295,35 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // ---------- 三星条件条：1-6 是「沙袋全扔」，必须显示 已扔 n / 总数 ----------
   {
     const cs0 = JSON.parse(await ev(`JSON.stringify(window.__rap.challengeStatus(window.__rap.state.run))`));
-    A.chk('1-6 的三星条是「沙袋全扔」', /沙袋全扔/.test(cs0.label), cs0.label);
+    /* 名字从**零件表**推（`PARTS.sandbag.label`），不写死「沙袋」。
+     * 第 63 轮把零件改名成「压舱石」，所有写死「沙袋全扔」的断言都会红，
+     * 而三处显示其实完全一致。 */
+    const bagLabel2 = await ev('window.__rap.RAP.PARTS.sandbag.label');
+    A.chk('1-6 的三星条是「' + bagLabel2 + '全扔」',
+      cs0.label === bagLabel2 + '全扔', cs0.label);
     A.chk('三星条显示 已扔 / 总数（而不是只有一个数字）',
       /\/\s*\d+/.test(cs0.value), cs0.value);
+    /* 总数必须等于**这一局的 spec 实际堆了几个**，不是写死的 3。
+     * 第 63 轮 1-6 的 _stacks.sandbag 从 3 改成 2（车变重了，3 个压舱石
+     * 会让它飞不起来），于是 `=== 3` 这条红了 —— 而记账本身是对的。
+     * 现在从 spec 现推期望值，两边只有一个来源。 */
     A.chk('总数来自出发那一刻的记账（不是现算 build）',
-      (await ev('window.__rap.state.run.sandbagTotal')) === 3,
+      (await ev('window.__rap.state.run.sandbagTotal')) ===
+      (await ev(`window.__rap.RAP.SPECS['1-6']._stacks.sandbag`)),
       'sandbagTotal=' + (await ev('window.__rap.state.run.sandbagTotal')));
     // 把剩下两个也扔完 → 条件必须变成满足
-    await ev(`(()=>{const s=window.__rap.state.run;
-      while(window.__rap.RAP.dropSandbag(s)); return 1;})()`);
+    /* `dropSandbag(st)` 每次**只扔一个**（它返回是否扔成功了）。
+     * 第一版写 `while(RAP.dropSandbag(s));` —— 那会一直扔到没有为止，
+     * 但中途 state 里的会计（sandbagsDropped）是 RAP.step 里累加的，
+     * 而这里没有推进物理，所以读到的永远停在"已扔 1"。
+     * 正确的做法：按 spec 里的总数逐个扔，并在每次之后读一次计数。 */
+    await ev(`(()=>{const R=window.__rap, s=window.__rap.state.run;
+      const total = s.sandbagTotal || 0;
+      for (let k = 0; k < total + 2; k++) {
+        if (!R.RAP.dropSandbag(s, 1)) break;
+      }
+      return 1;})()`);
+    await sleep(150);
     const cs1 = JSON.parse(await ev(`JSON.stringify(window.__rap.challengeStatus(window.__rap.state.run))`));
     A.chk('扔完之后三星条变成满足（3/3 必须给星，不能差一个数）', cs1.pass === true,
       'pass=' + cs1.pass + '  ' + cs1.value);

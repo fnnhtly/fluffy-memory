@@ -115,14 +115,25 @@ const PATCH = `(() => {
     return await recsNow();
   }
 
-  // ---------- 1. 1-6 造好车但一点不动 ----------
+  /* ---------- 1. 1-6 造好车但**不给气球** → 飞不起来，必然失败 ----------
+   *
+   * 旧写法用的是 1-6 的**完整**标准解，然后"什么都不做"期待它失败。
+   * 第 63 轮重建 1-6 之后，那个造法光靠浮力就能飘到终点 ——
+   * 于是 `r1 === 'fail'` 红，而后面四条「还能试」的断言全都读不到卡。
+   *
+   * 真正的意图是"造一个**注定失败**的车，看失败卡会不会归因"。
+   * 所以这里显式地把气球去掉（去掉升力 = 爬不上高台），
+   * 而不是指望"不动"能制造失败 —— 那是旧物理的巧合，不是这条测试要验的东西。 */
   await ev(`(()=>{const s=window.__rap.state,R=window.__rap.RAP,lv=window.__rap.levels[5];
     window.__rap.startLevel(5); s.welcome=0; s.introT=1;
-    R.applySpec(lv, s.build, R.SPECS['1-6']);
+    const spec = JSON.parse(JSON.stringify(R.SPECS['1-6']));
+    delete spec.balloon; delete spec._pops;
+    if (spec._stacks) delete spec._stacks.balloon;
+    R.applySpec(lv, s.build, spec);
     s.phase='build'; s.run=null; window.__rap.launch(); return 1;})()`);
   const r1 = await waitResult(200);
   const recs1 = await waitCard(20000);
-  A.chk('1-6 什么都不做真的会失败', r1 === 'fail', r1);
+  A.chk('1-6 不给气球 → 爬不上高台，真的会失败', r1 === 'fail', r1);
 
   const tip1 = recs1.find(t => t.indexOf('还能试') >= 0);
   A.chk('失败卡上出现「还能试」', !!tip1, tip1 || '没有这句');
@@ -136,8 +147,13 @@ const PATCH = `(() => {
       bal:(c.parts||[]).filter(p=>p.def&&p.def.liftMass).reduce((a,p)=>a+(p.n||0),0)});})()`));
   console.log('    车上实际剩余：沙袋 ' + actual.bags + '，气球 ' + actual.bal);
   if (actual.bags > 0) {
-    A.chk('「还能试」点名沙袋，且数量与车上一致',
-      !!tip1 && tip1.indexOf('还剩 ' + actual.bags + ' 个沙袋没扔') >= 0, tip1 || '');
+    /* 文案里的零件名跟着**零件表**走（第 63 轮把「沙袋」改名成「压舱石」）。
+     * 写死 '个沙袋' 会在改名后永远红 —— 而信息一点没少。
+     * 这里从 PARTS.sandbag.label 现取，改名时自动跟着。 */
+    const bagLabel = await ev('window.__rap.RAP.PARTS.sandbag.label');
+    A.chk('「还能试」点名压舱石，且数量与车上一致',
+      !!tip1 && tip1.indexOf('还剩 ' + actual.bags + ' 个' + bagLabel + '没扔') >= 0,
+      (tip1 || '') + '（零件名应为「' + bagLabel + '」）');
   } else {
     A.chk('车上没有沙袋时，不许点名沙袋',
       !!tip1 && tip1.indexOf('沙袋') < 0, tip1 || '');

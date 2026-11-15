@@ -58,12 +58,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     test(1, {pumpPress:0, car:{energy:100}}, '1-2 一次没按');
     test(1, {pumpPress:1, car:{energy:100}}, '1-2 按了一次');
     test(1, {pumpPress:2, car:{energy:100}}, '1-2 按了两次');
-    test(2, {car:{energy:45}}, '1-3 能量 45');
-    test(2, {car:{energy:12}}, '1-3 能量 12');
+    // 1-3 的第三星从「能量剩 ≥30」改成「动力余量 ≥1」—— 容量不会耗尽
+    test(2, {car:{powerSupply:2, powerDemand:1}}, '1-3 余量 1');
+    test(2, {car:{powerSupply:2, powerDemand:2}}, '1-3 余量 0');
     test(3, {maxAngle:0.3, car:{energy:100}}, '1-4 倾角 17°');
     test(3, {maxAngle:1.4, car:{energy:100}}, '1-4 倾角 80°');
-    test(4, {motorUse:0, car:{energy:100}}, '1-5 没用马达');
-    test(4, {motorUse:3.2, car:{energy:100}}, '1-5 用了 3.2s');
+    // 1-5 从「不用马达」改成「不用驱动件」：noTool 读车上有没有 tool
+    test(4, {car:{parts:[{def:{structure:true}}]}}, '1-5 没有驱动件');
+    test(4, {car:{parts:[{def:{structure:true}},{def:{tool:true}}]}}, '1-5 装了驱动件');
     test(0, {hullBroken:false, pigEjected:false, car:{energy:100}}, '1-1 结构完好');
     test(0, {hullBroken:true, pigEjected:false, car:{energy:100}}, '1-1 木框碎了');
     return JSON.stringify(out);
@@ -75,12 +77,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('1-2 没按打气筒时条件满足（≤1 次）', byTag('1-2 一次没按').pass === true);
   A.chk('1-2 按了一次仍满足（这颗星叫「只按一下」）', byTag('1-2 按了一次').pass === true);
   A.chk('1-2 按了两次后条件不满足', byTag('1-2 按了两次').pass === false);
-  A.chk('1-3 能量 45 满足（≥30）', byTag('1-3 能量 45').pass === true);
-  A.chk('1-3 能量 12 不满足', byTag('1-3 能量 12').pass === false);
+  A.chk('1-3 动力余量 1 满足（≥1）', byTag('1-3 余量 1').pass === true);
+  A.chk('1-3 动力余量 0 不满足', byTag('1-3 余量 0').pass === false);
   A.chk('1-4 倾角 17° 满足', byTag('1-4 倾角 17').pass === true);
   A.chk('1-4 倾角 80° 不满足（翻车了）', byTag('1-4 倾角 80').pass === false);
-  A.chk('1-5 没用马达满足', byTag('1-5 没用马达').pass === true);
-  A.chk('1-5 用了 3.2s 不满足', byTag('1-5 用了 3.2s').pass === false);
+  A.chk('1-5 没装驱动件满足', byTag('1-5 没有驱动件').pass === true);
+  A.chk('1-5 装了驱动件不满足', byTag('1-5 装了驱动件').pass === false);
   A.chk('1-1 的第三星是「不散架」，结构完好时满足', byTag('1-1 结构完好').pass === true &&
     byTag('1-1 结构完好').type === 'noBreak');
   A.chk('1-1 木框碎了时不满足', byTag('1-1 木框碎了').pass === false);

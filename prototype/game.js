@@ -23,53 +23,111 @@
    * 所以四个字段全部删掉。要加回来，请同时加一个读它的人 ——
    * `audit_parts_spec.js` 会盯着。
    */
+  /* ══════════════ 零件表（第 63 轮重做）══════════════
+   *
+   * 用户原话：「你做的马达，电池，打气筒，气球，沙袋太反人类直觉了，
+   * 你应该把底层机制改成捣蛋猪那样的」+「要有原神的特色，比如蒙德可以做
+   * 热气球，璃月可以做仙术机关」。
+   *
+   * ── 旧设计错在哪（三条，都是"概念合并"）──
+   *
+   * 1) `motor` 把**动力源**和**驱动工具**焊成了一件东西：自带推力、自带 12 电量、
+   *    再靠 `battery` 扩容。参考里这是两件不同的东西：
+   *      · 动力源（电机/柴油/涡轮）= 只提供"容量"，自己不动；
+   *      · 驱动工具（螺旋桨/风扇）= 只消耗容量产生推力。
+   *    合并的后果是玩家没法表达"我动力够但推力不够"或反过来 ——
+   *    而**这正是参考里最大的取舍**。
+   *
+   * 2) `balloon` / `sandbag` 是"格子里一个图标，浮力/质量直接加到车心"。
+   *    参考里气球必须**系在框的下方**、重物必须**系在框的上方**，
+   *    否则"气球会直接飘走""重物会直接落地，不起任何作用"。
+   *    位置是玩法，不是装饰 —— 我们把它变成纯数值，等于删掉了半个玩法。
+   *
+   * 3) `pump` 叫"打气筒"，是现实里推轮胎的工具，跟"往前推车"没有直觉联系。
+   *    参考里这个位置叫**气阀**（手动喷气）。名字本身就在误导。
+   *
+   * ── 新结构：五类，每类至少两件 ──
+   *
+   *   结构 structure  —— 木框 / 铁框（璃月岩造物）
+   *   轮   wheel      —— 木轮 / 铁轮
+   *   动力源 powerSrc —— 风种（蒙德）/ 岩种（璃月）：只给容量，必须放框里
+   *   驱动 tool       —— 风车桨（蒙德）/ 喷气口（枫丹）：耗容量出推力，要连通
+   *   浮力/配重       —— 热气球（蒙德）/ 压舱石
+   *   一次性 thrust   —— 霄灯（璃月）：点一次烧完，不要连通
+   *   手动 manual     —— 仙术机关（璃月）：不耗容量，按才动
+   *
+   * 皮肤是次要的，机制是主要的：每一条 `desc` 都必须写清"它到底干什么"，
+   * 而不是"它是什么国家的"。
+   */
   var PARTS = {
-    wood_frame: { label: '木框', mass: 1.2, hp: 3, maxHp: 3, structure: true, color: '#c08a4a', desc: '中空结构件。四边都能挂东西，中间能塞一件（小猪/电池）。耐久 3 段：完好→裂纹→破损→碎。'},
-    wood_wheel: { label: '木轮', mass: 0.6, wheel: true, radius: 0.34, grip: 1.0, iceGrip: 0.15, color: '#3a4048', desc: '木轮，便宜。泥地抓地正常，冰面几乎打滑（0.15），冰坡上不去。'},
-    iron_wheel: { label: '铁轮', mass: 0.9, wheel: true, radius: 0.30, grip: 0.9, iceGrip: 0.8, color: '#5a6672', desc: '铁轮，重 0.9 kg（比木轮重一半）。冰面抓地 0.8，是过冰坡的唯一办法。'},
-    motor: { label: '马达', mass: 1.8, motor: true, color: '#e06a4a' , desc: '持续驱动力（6 m/s²），耗能 4/秒，自带 12 电量；没电池只能跑约 3 秒。'},
-    battery: { label: '电池', mass: 1.0, energy: 100, inner: true, color: '#8fd66a' , desc: '只能放进木框里。+100 能量，供马达使用。'},
-    /* 打气筒的冲量**不在**这张表里 —— 它是 `Params.pumpImpulse`，
-     * 因为那是玩家能在调参面板里改的运行时旋钮。表里只留"是不是交互件、
-     * 有没有方向"这类**结构性**事实。 */
-    pump: { label: '打气筒', mass: 0.8, interactive: true, dir: true, color: '#4f8fb0' , desc: '手动交互件。按住蓄力、松开喷出冲量；喷气方向 = 组装时箭头的方向。同色同类零件算一组，按一下整组一起喷。'},
-    /* 气球与沙袋是参考里最漂亮的一对：气球给浮力、沙袋给配重，
-     * 玩家靠"什么时候抛沙袋、什么时候扎气球"控制高度。
-     *
-     * 和参考的**有意差异**：参考里一格能放 1/2/3 个，是三种独立道具（三个独立预算槽）。
-     * 我们做成一个零件 + 叠加数量（再点一次同一格 → 数量 +1，到 3 回绕到 1），
-     * 因为托盘已经有 7 项、再塞 5 项会挤爆；而"一格多个"的语义、以及总预算按个数算，
-     * 这两条都保住了。预算里 `balloon: 6` 就是"总共 6 个气球，随便怎么分布"。
-     *
-     * liftMass = 每个气球能"举起"多少 kg（浮力 = liftMass · n · G）。
-     * 用 kg 而不是牛顿，是因为玩家心里的秤是 kg（HUD 上写着总重）。
-     * 1.2 是量出来的：4 个气球能举起 4.8 kg，正好让"最轻的车 + 丢掉沙袋"浮起来，
-     * 而 6 个气球配轻车会直接冲进暴风层（这就是关卡要教的那件事）。
-     *
-     * **操作方式是"行驶中点车身"，不是面板按钮**（`tapOnBody`）——
-     * 面板那三个键位要留给打气筒/风扇这些真正的驱动件。文案必须照实说，
-     * 这里曾经写"按按钮主动扎"，和实现对不上，玩家会一直找那个不存在的按钮。
-     *
-     * 碰地自破的判定在 game.js 里是按 `def.liftMass` 走的（凡是给浮力的
-     * 都会在接地时泄掉），所以这张表里没有 `popOnGround` 这个开关 ——
-     * 有它的时候它是个幌子，改了不生效。 */
-    balloon: { label: '气球', stack: true, maxStack: 3, liftMass: 1.2, mass: 0.05,
-               interactive: true, tapOnBody: true, color: '#e0708f',
-               desc: '每格最多 3 个（再点一次同一格 → +1，到 3 换回 1）。每个能把 1.2 kg 举起来。行驶中点车身就能扎破一个；碰地也会自己破。' },
-    sandbag: { label: '沙袋', stack: true, maxStack: 3, mass: 0.8,
-               interactive: true, tapOnBody: true, dropOne: true, color: '#b79b6a',
-               desc: '每格最多 3 个。纯粹是重量（每个 0.8 kg）——压住气球不让它飞、顺便压住车少弹。行驶中点车身就能扔一个，重量立刻变小。' },
-    pig: { label: '小猪', mass: 1.5, hp: 3, pig: true, inner: true, color: '#6fc25a' , desc: '胜负判定对象。必须放进木框里；木框碎了它会掉出来摔在地上，滚停就算失败。'}
+    /* ---------- 结构 ---------- */
+    /* ⚠ desc 长度上限约 40 字（第 63 轮量出来的）。
+     * 零件页一行只有 ~510 px 放说明，12px 字体大约 40 个汉字；
+     * 超了就会顶出卡片右边（tools/test_layout_audit 会红）。
+     * 第一版我写了 72~80 字的详细说明，排版审计当场报 16 条「出卡」。
+     * 详细原理写在 docs/parts-redesign.md，表里只留**玩家需要的那一句**。 */
+    wood_frame: { label: '木框', mass: 1.2, hp: 3, maxHp: 3, structure: true, color: '#c08a4a',
+                  desc: '中空结构件，也是动力导线。四边可挂东西，中间能塞一件。耐久 3 段。'},
+    iron_frame: { label: '岩框', mass: 2.4, hp: 9, maxHp: 9, structure: true, color: '#7a8278',
+                  desc: '璃月的岩造物。重一倍，耐久 9 段（木框只有 3）。也是导线。' },
+
+    /* ---------- 轮 ---------- */
+    wood_wheel: { label: '木轮', mass: 0.6, wheel: true, radius: 0.34, grip: 1.0, iceGrip: 0.15,
+                  color: '#3a4048',
+                  desc: '便宜、轻。泥地正常，冰面几乎打滑（0.15）。轮子自己不会转。' },
+    iron_wheel: { label: '铁轮', mass: 0.9, wheel: true, radius: 0.30, grip: 0.9, iceGrip: 0.8,
+                  color: '#5a6672',
+                  desc: '重 0.9 kg。冰面抓地 0.8，是过冰坡的办法。' },
+
+    /* ---------- 动力源：只给容量，自己不产生推力 ---------- */
+    anemo_core: { label: '风种', mass: 0.8, powerSrc: 2, inner: true, color: '#7fd4c0',
+                  desc: '蒙德的风之种。只能放进框里。全车 +2 动力容量，自己不推。' },
+    geo_core: { label: '岩种', mass: 2.2, powerSrc: 5, inner: true, color: '#d8b25a',
+                desc: '璃月的岩之种。只能放进框里。全车 +5 动力容量，但重 2.2 kg。' },
+
+    /* ---------- 驱动件：消耗容量产生推力，必须连通 ---------- */
+    propeller: { label: '风车桨', mass: 0.5, tool: true, dir: true, thrust: 5.0, drawPower: 1,
+                 color: '#8fd6e8',
+                 desc: '蒙德风车桨。沿箭头持续推力 5.0 m/s²，占 1 点动力容量。必须接动力源。' },
+    jet: { label: '喷气口', mass: 0.7, tool: true, dir: true, thrust: 9.0, drawPower: 2,
+           color: '#e08a5a',
+           desc: '枫丹蒸汽喷口。推力 9.0 m/s²，要占 2 点容量。动力紧张时不划算。' },
+
+    /* ---------- 浮力 / 配重：位置决定生死 ---------- */
+    balloon: { label: '热气球', stack: true, maxStack: 3, liftMass: 3.2, mass: 0.05,
+               interactive: true, tapOnBody: true, color: '#e0708f', tether: 'below',
+               desc: '蒙德热气球。每格最多 3 个，每个举起 3.2 kg。必须挂在框的上方。' },
+    sandbag: { label: '压舱石', stack: true, maxStack: 3, mass: 0.8,
+               interactive: true, tapOnBody: true, dropOne: true, color: '#b79b6a', tether: 'above',
+               desc: '纯重量（每个 0.8 kg）。必须挂在框的下方，否则落地。点车身扔一个。' },
+
+    /* ---------- 一次性推力 ---------- */
+    firework: { label: '霄灯', mass: 0.4, thrust: 6.5, burnTime: 1.2,
+                interactive: true, dir: true, color: '#f0a05a', oneShot: true,
+                desc: '璃月霄灯。点一次沿箭头推 1.2 秒（6.5 m/s²）然后烧完。不用接动力。' },
+
+    /* ---------- 手动件 ---------- */
+    pump: { label: '仙术机关', mass: 0.8, interactive: true, dir: true, color: '#4f8fb0',
+            desc: '璃月仙术机关。按住蓄力、松开喷冲量，不耗容量。方向看箭头。' },
+
+    /* ---------- 载荷 ---------- */
+    pig: { label: '小猪', mass: 1.5, hp: 3, pig: true, inner: true, color: '#6fc25a',
+           desc: '胜负判定对象。必须放进框里；框碎了它会掉出来，滚停就算失败。' }
   };
 
-  var TRAY_ORDER = ['wood_frame', 'wood_wheel', 'iron_wheel', 'motor', 'battery', 'pump', 'balloon', 'sandbag', 'pig'];
+  var TRAY_ORDER = ['wood_frame', 'iron_frame', 'wood_wheel', 'iron_wheel',
+                    'anemo_core', 'geo_core', 'propeller', 'jet',
+                    'balloon', 'sandbag', 'firework', 'pump', 'pig'];
 
   // ---------------- 可调参数（HTML 面板里能改，也是真机的数值基线） ----------------
   var DEFAULTS = {
     gravity: 16.0,
     subSteps: 4,
-    motorAccel: 6.0,
-    motorEnergy: 4.0,
+    /* `motorAccel` / `motorEnergy` 已随马达一起删除（第 63 轮）。
+     * 它们曾经是"装个马达、轮子凭空获得牵引力"的两个旋钮；
+     * 新机制下推力全部来自驱动件的 `thrust`（在 PARTS 表里，按零件分），
+     * 而容量是恒定的、不消耗 —— 没有"每秒耗多少"这回事。
+     * tools/audit_params.js 会盯着"写了没人读"的旋钮。 */
     pumpImpulse: 6.0,
     wheelGrip: 1.2,
     rollResist: 0.06,   // 高速滚动阻力（低速另有慢速阻力）
@@ -162,7 +220,9 @@
     touchLvl4: 6.0,
   };
 
-  var MOTOR_BASE_ENERGY = 12;   // 马达自带一点电：只装马达也能跑 7~10 秒
+  /* `MOTOR_BASE_ENERGY` 已删（第 63 轮）：它是"马达自带 12 点电"的常数，
+   * 而马达这个零件整个不存在了。留着它只会是一份**假的规格** ——
+   * 下一个改数值的人会先改这里，然后发现毫无反应。 */
 
   var Params = Object.assign({}, DEFAULTS);
 
@@ -284,6 +344,112 @@
   var DIRV = [[1, 0], [0, 1], [-1, 0], [0, -1]];
   function dirVec(dir) { return DIRV[(dir || 0) % 4]; }
   function isDirectional(part) { return !!(PARTS[part] && PARTS[part].dir); }
+
+  /* ══════════════ 动力连通性（第 63 轮新增，参考的核心机制）══════════════
+   *
+   * 参考原话：「除了雀斑猪外，（动力源）必须放在木框或者铁框里」、
+   *          「只要中间有动力连接件（框/可乐/火箭/分离器/弹簧都算，绳子不算），
+   *            动力可以叠加」。
+   *
+   * 也就是：**驱动件必须通过结构件连到动力源**。这条一旦缺席，
+   * "把风车桨装在离动力源三格远的地方照样转" —— 那这个游戏就只剩堆数量了。
+   *
+   * 实现：把 build.cells 看成一张图，相邻（上下左右）的格子有边。
+   * **只有结构件能当导线**（参考里明确说了绳子不算，我们这里没有绳子，
+   * 但气球/沙袋显然也不该导电）。
+   * 从每个动力源出发做 BFS，走到的所有格子记入 `powered`。
+   * 驱动件落在 `powered` 里才算接通。
+   *
+   * 返回 { powered: Set(key), sources: n, demand: n, supply: n, short: bool }
+   *   supply = 全部动力源的 powerSrc 之和
+   *   demand = 全部**已接通**驱动件的 drawPower 之和
+   *   short  = demand > supply（接通的驱动件太多，带不动）
+   *
+   * "接通但超载"和"没接通"是两种不同的失败，HUD 必须分开说 ——
+   * 玩家看到的应该是「差 2 点动力」，不是笼统的"不工作"。
+   */
+  function powerGrid(build) {
+    var cells = build.cells || {};
+    var keys = Object.keys(cells);
+    var inSet = {};
+    keys.forEach(function (k) { inSet[k] = cells[k]; });
+
+    /* 结构件是导线。注意：内嵌件（inner）不单独成格，它在宿主格里，
+     * 所以动力源（inner）天然和它的宿主框连通 —— 这正是参考要的语义
+     * （"必须放在框里"才生效）。 */
+    function isWire(k) {
+      var c = inSet[k];
+      if (!c) return false;
+      var d = PARTS[c.part];
+      return !!(d && d.structure);
+    }
+
+    var powered = {};
+    var supply = 0, sources = 0;
+    // 每个动力源从它**所在的格子**开始 BFS；inner 件供能时从宿主格开始
+    keys.forEach(function (k) {
+      var c = inSet[k];
+      var d = PARTS[c.part];
+      var innerD = c.inner ? PARTS[c.inner] : null;
+      var src = (d && d.powerSrc) || (innerD && innerD.powerSrc) || 0;
+      if (!src) return;
+      sources++; supply += src;
+      // BFS
+      var q = [k], seen = {};
+      seen[k] = 1;
+      while (q.length) {
+        var cur = q.shift();
+        powered[cur] = 1;
+        var rc = cur.split(','), r = +rc[0], cc = +rc[1];
+        [[r - 1, cc], [r + 1, cc], [r, cc - 1], [r, cc + 1]].forEach(function (nb) {
+          var nk = nb[0] + ',' + nb[1];
+          if (seen[nk] || !inSet[nk]) return;
+          seen[nk] = 1;
+          // 只有结构件继续传；非结构件本身算"被供到"（它是叶子），但不往下传
+          powered[nk] = 1;
+          if (isWire(nk)) q.push(nk);
+        });
+      }
+    });
+
+    var demand = 0;
+    keys.forEach(function (k) {
+      var c = inSet[k];
+      var d = PARTS[c.part];
+      if (d && d.tool && d.drawPower && powered[k]) demand += d.drawPower;
+    });
+
+    return { powered: powered, sources: sources, supply: supply,
+             demand: demand, short: demand > supply };
+  }
+
+  /* 浮力/配重的**系挂校验**（第 63 轮新增）。
+   *
+   * 参考原话（萌娘百科）：
+   *   · 气球「会被系在其下方最靠近自身的方框上；否则会直接飘走」
+   *   · 重物「会系在其上方最接近自身的方框上；否则会直接落地，不起任何作用」
+   *
+   * ⚠ 坐标系：建造网格 **row 越大越靠下**（partPos: y = (ROWS−1)/2 − r）。
+   *   所以"气球在框的**上方**"= 气球的 row 更小 = 往 r+1 方向能找到框。
+   *   "沙袋在框的**上方**"= 沙袋的 row 更小 = 往 r−1 方向能找到框。
+   *
+   * 注意这两者的方向**都朝同一个地方看**（气球找它下方的框、沙袋找它上方的框），
+   * 但它们的 dir 是相反的 —— 这才是容易写反的地方。
+   */
+  function tetherCheck(build, r, c, kind) {
+    var cells = build.cells || {};
+    // 气球：框必须在它下方 → 沿 row 增大方向找
+    // 沙袋：框必须在它上方 → 沿 row 减小方向找
+    var dir = kind === 'below' ? 1 : -1;
+    for (var rr = r + dir; rr >= 0 && rr < BUILD_ROWS; rr += dir) {
+      var cell = cells[rr + ',' + c];
+      if (!cell) continue;
+      var d = PARTS[cell.part];
+      if (d && d.structure) return { ok: true, row: rr };
+    }
+    return { ok: false, row: -1 };
+  }
+
 
   function isInnerPart(part) { return !!(PARTS[part] && PARTS[part].inner); }   // 只能放进中空木框
 
@@ -491,9 +657,12 @@
 
   function buildVehicle(level, build) {
     var parts = [];
-    var mass = 0, energy = 0, interactives = [];
+    var mass = 0, interactives = [];
     var hasPig = false;
     var groups = [];        // 同种（同色）可启动零件 = 一个组
+    /* 动力图（第 63 轮）。这一步必须在遍历零件**之前**算好，
+     * 因为每个驱动件要立刻知道自己接没接通。 */
+    var grid = powerGrid(build);
     Object.keys(build.cells).forEach(function (k) {
       var cell = build.cells[k];
       var rr = parseInt(k.split(',')[0], 10);
@@ -501,19 +670,23 @@
       var def = PARTS[cell.part];
       var p = partPos(rr, cc);
       var cnt = cellCount(cell);
-      /* 可叠零件（气球/沙袋）：一个格子代表 cnt 个物理件。
-       * 质量按个数算；气球还要记下自己 lifts 多少 kg（浮力）。
-       * 这里把 cnt 存到零件上，是为了"扔一个"之后能就地减一，
+      /* 可叠零件（热气球/压舱石）：一个格子代表 cnt 个物理件。
+       * 质量按个数算；热气球还要记下自己 lifts 多少 kg（浮力）。
+       * 这里把 cnt 存到零件上，是为了"扎破一个"之后能就地减一，
        * 而不必重建整车（重建会丢速度、丢 HP，也会让回放跳变）。 */
       var isStack = !!def.stack;
       var pm = def.mass * (isStack ? cnt : 1);
+      /* 系挂校验：气球必须有下方的框、沙袋必须有上方的框。
+       * 挂空的不算数 —— 见 `tetherCheck()` 的注释（参考的原始规则）。 */
+      var tethered = true;
+      if (def.tether) tethered = tetherCheck(build, rr, cc, def.tether).ok;
       parts.push({ part: cell.part, def: def, r: rr, c: cc, lx: p.x, ly: p.y, dir: cell.dir,
-                   hp: def.hp || 1, n: isStack ? cnt : 1, key: k });
+                   hp: def.hp || 1, n: isStack ? cnt : 1, key: k,
+                   powered: !!grid.powered[k], tethered: tethered });
       mass += pm;
-      if (def.energy) energy += def.energy;
       if (def.interactive) {
-        // 只有"占面板键位"的交互件才进 groups；气球/沙袋走点车身
-        if (!def.tapOnBody) {
+        // 只有"占面板键位"的交互件才进 groups；气球/沙袋/霄灯走车身点击
+        if (!def.tapOnBody && !def.oneShot) {
           interactives.push(cell.part);
           var g0 = groups.filter(function (g) { return g.part === cell.part; })[0];
           if (!g0) { g0 = { part: cell.part, color: def.color, list: [], on: false }; groups.push(g0); }
@@ -525,7 +698,6 @@
         parts.push({ part: cell.inner, def: idf, r: rr, c: cc, lx: p.x, ly: p.y, dir: 0,
                      hp: idf.hp || 1, inner: true, host: k });
         mass += idf.mass;
-        if (idf.energy) energy += idf.energy;     // 内嵌电池也要供电
         if (idf.pig) hasPig = true;
       }
     });
@@ -540,18 +712,24 @@
     });
     if (minX > maxX) { minX = -0.5; maxX = 0.5; minY = -0.5; maxY = 0.5; }
     var wheels = parts.filter(function (p) { return p.def.wheel; });
-    var motor = parts.some(function (p) { return p.def.motor; });
     var w = maxX - minX, h = maxY - minY;
     var inertia = mass * (w * w + h * h) / 12;
     var car = {
-      parts: parts, wheels: wheels, motor: motor,
+      parts: parts, wheels: wheels,
       mass: mass, inv: 1 / mass, invI: 1 / Math.max(0.4, inertia),
       hull: { minX: minX, maxX: maxX, minY: minY, maxY: maxY },
       center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
       hasPig: hasPig,
       groups: groups,
-      energyMax: energy + (motor ? MOTOR_BASE_ENERGY : 0),
-      energy: energy + (motor ? MOTOR_BASE_ENERGY : 0),
+      /* 动力系统的三个读数（第 63 轮）。
+       * 旧设计这里是 `energyMax/energy`（会耗尽的电量），
+       * 新设计是 `supply/demand`（**容量**，不会耗尽）——
+       * 这是"反人类直觉"那条反馈的核心修正：
+       * 玩家该算的是"我装得下几个驱动件"，不是"还能跑几秒"。 */
+      powerSupply: grid.supply,
+      powerDemand: grid.demand,
+      powerSources: grid.sources,
+      powerShort: grid.short,
       interactives: interactives,
       pumpCharge: 0, pumpHeld: false, braking: false, odo: 0
     };
@@ -559,18 +737,25 @@
     return car;
   }
 
-  /* 浮力：气球每个 lifts `liftMass` kg，等效"负重量"。
+  /* 浮力：热气球每个 lifts `liftMass` kg，等效"负重量"。
    * 存成 `liftMass`（kg）而不是力（N），是因为重力是可调参数 ——
    * 用 kg 表达的话，改重力时气球和车一起变重变轻，浮沉关系不乱。
-   * netMass = 真实质量 - 浮力质量：>0 会往下掉，<0 会往上飘。 */
+   * netMass = 真实质量 - 浮力质量：>0 会往下掉，<0 会往上飘。
+   *
+   * ⚠ **没系住的球不提供浮力**（第 63 轮）。参考的规则是"否则会直接飘走"，
+   * 不是"照样给你浮力"。同理所未被系住的重物也不给重量。 */
   function recomputeLift(car) {
-    var lift = 0, bags = 0;
+    var lift = 0, bags = 0, loose = 0;
     car.parts.forEach(function (p) {
-      if (p.def.liftMass) lift += p.def.liftMass * (p.n || 1);
-      if (p.def.dropOne) bags += (p.n || 1);
+      if (p.def.liftMass) {
+        if (p.tethered === false) { loose += (p.n || 1); return; }   // 飘走的球不算
+        lift += p.def.liftMass * (p.n || 1);
+      }
+      if (p.def.dropOne && p.tethered !== false) bags += (p.n || 1);
     });
     car.liftMass = lift;
     car.sandbagCount = bags;
+    car.looseBalloons = loose;
     car.netMass = car.mass - lift;
     return car;
   }
@@ -725,16 +910,28 @@
    * 为什么不做成面板按钮：面板已经有"交互键上限 3"，而参考里这两件是
    * 直接在车身上点破/点掉的消耗品，不是驱动器。做成按钮会把打气筒/电风扇
    * 那些真正的控制键挤掉。也正因为如此它们**不占** interactCap 额度。 */
+  /* 点车身：扎气球 / 扔沙袋 / 点霄灯（第 63 轮加入霄灯）。
+   *
+   * 霄灯和气球/沙袋同一套入口，因为它们的语义都是"什么时候动手"，
+   * 都该由玩家直接点那个零件，而不是占面板键位。 */
   function tapAt(state, wx, wy) {
     if (state.phase !== 'run' || !state.car) return null;
     var best = null, bestD = 1e9;
     state.car.parts.forEach(function (p) {
-      if (!p.def.stack) return;
+      if (!p.def.stack && !p.def.oneShot) return;
       var wp = worldOf(state.car, p.lx, p.ly);
       var d = Math.hypot(wp.x - wx, wp.y - wy);
       if (d < bestD) { bestD = d; best = p; }
     });
     if (!best || bestD > 0.85) return null;
+    /* 霄灯：点一次点火，烧 1.2 秒。已经烧着/烧完的不再响应 ——
+     * 否则玩家连点会把"一次性"变成"无限"。 */
+    if (best.def.oneShot) {
+      if (best.burn > 0 || best.burnLogged) return null;
+      best.burn = best.def.burnTime || 1.2;
+      log(state, 'firework_light at=' + best.r + ',' + best.c);
+      return { ok: true, kind: 'firework', part: best };
+    }
     var kind = best.def.liftMass ? 'balloon' : 'sandbag';
     var ok = kind === 'balloon' ? popBalloon(state) : dropSandbag(state);
     return ok ? { ok: true, kind: kind, part: best } : null;
@@ -896,7 +1093,10 @@
       log(state, 'win stars=' + state.stars + ' goals=arrive' +
         (state.starGoals.boxes ? ',boxes' : '') + (state.starGoals.challenge ? ',challenge' : '') +
         ' box=' + state.boxesGot +
-        ' energy=' + Math.round(state.car ? state.car.energy : 0) + ' time=' + state.time.toFixed(1));
+        /* 「能量剩 ≥ N」这条三星条件（1-3）随电量一起删了 ——
+         * 容量不会耗尽，也就没有"剩多少"。这里改记动力余量。 */
+        ' power=' + (state.car ? (state.car.powerSupply - state.car.powerDemand) : 0) +
+        ' time=' + state.time.toFixed(1));
     } else {
       state.result = 'fail';
       state.failReason = reason;
@@ -913,9 +1113,17 @@
     switch (ch.type) {
       case 'none': return false;                      // 1-1 没有 ★★★，最多 2 星
       case 'pumpPress': return state.pumpPress <= (ch.max || 0);
-      case 'energyLeft': return state.car && state.car.energy >= (ch.min || 0);
+      /* `energyLeft`（1-3「能量剩 ≥30」）随电量一起删了。
+       * 容量不会耗尽，"还剩多少"这个问题在新机制下不存在。
+       * 1-3 的第三星改成 `powerSpare`：出发时动力余量 ≥ N
+       * —— 它考的是"你有没有乱装驱动件"，和"算除法"是两件事。 */
+      case 'powerSpare': return state.car &&
+        (state.car.powerSupply - state.car.powerDemand) >= (ch.min || 0);
       case 'noFlip': return (state.maxAngle || 0) <= (ch.maxAngle || 0.785);
-      case 'motorUse': return state.motorUse <= (ch.max || 0);
+      /* `motorUse` 也随马达删了。1-5 的「不用马达」改成「不用驱动件」：
+       * 一辆一个 tool 都没有的车跑通这一关。 */
+      case 'noTool': return !state.car ||
+        !state.car.parts.some(function (p) { return p.def && p.def.tool; });
       /* 「限时」——参考里是最常见的第三颗星（秒表图标）。用关卡自己的 timeLimit
        * 之外再给一个更紧的 max，两档时间在参考里就是"疾驶猪"的 A/B 档。 */
       case 'time': return state.time <= (ch.max || 0);
@@ -1032,26 +1240,95 @@
     if (state.wallCooldown > 0) state.wallCooldown -= dt;
     if (car.pumpHeld) car.pumpCharge = Math.min(0.8, car.pumpCharge + dt);
 
-    /* 马达耗能。
+    /* ══════════ 动力输出（第 63 轮重写）══════════
      *
-     * 这里原来有**两个**写 `motor_out` 的地方：
-     *   · `energy <= 0 && !motorOutLogged` → 写一条并置位；
-     *   · `energy > 0` 分支里扣到 0 时 → 直接写一条，**没有置位**。
-     * 于是"正常跑着把电用光"这条最常见的路径会写**两条**：第二条来自
-     * 下一帧那个"没电池时第一帧就报"的分支（因为第一条没置位）。
-     * 渲染层一旦按事件弹提示，玩家就会被同一件事提示两次。
-     * 现在把"跨过零点"收敛成唯一出口。 */
-    if (car.motor && car.energy > 0) {
-      car.energy = Math.max(0, car.energy - Params.motorEnergy * dt);
-      state.motorUse += dt;
+     * 旧实现：`motor` 是一个布尔 + 一个会耗尽 `energy` 池，每帧扣电。
+     * 新实现：**容量是恒定的**，驱动件只要"接通且不超载"就一直出力。
+     *
+     * 三种状态必须分开（HUD 要按这三种分别提示）：
+     *   · 接通了、容量够 → 出满推力
+     *   · 接通了、容量不够 → 按超载比例打折（`powerShort`）
+     *   · 没接通         → 完全不出力（零件 p.powered === false）
+     *
+     * 为什么超载是"打折"而不是"不转"：参考里动力源太多反而更慢，
+     * 但那是因为重量。让超载直接停机太硬（玩家会觉得"我明明装了"），
+     * 按比例降功率既保留了"要算容量"的压力，又不至于让人一头雾水。
+     *
+     * **一次性推力（霄灯）也在这里**：它不要连通、不要容量，只认 `burn` 计时。
+     */
+    var tools = [];
+    car.parts.forEach(function (p) {
+      if (p.def.tool && p.powered) tools.push(p);
+    });
+    var shortFactor = 1;
+    if (car.powerShort && car.powerDemand > 0) {
+      shortFactor = car.powerSupply / car.powerDemand;      // <1
     }
-    if (car.motor && car.energy <= 0 && !state.motorOutLogged) {
-      state.motorOutLogged = true;
-      log(state, 'motor_out');
+    if (car.powerShort && !state.powerShortLogged) {
+      state.powerShortLogged = true;
+      log(state, 'power_short supply=' + car.powerSupply + ' demand=' + car.powerDemand);
     }
+
+    /* 一次性推力：点一次 → burn 计时开始 → 每帧出推力 → 烧完 */
+    car.parts.forEach(function (p) {
+      if (!p.def.oneShot) return;
+      if (p.burn > 0) {
+        p.burn = Math.max(0, p.burn - dt);
+        if (p.burn === 0 && !p.burnLogged) {
+          p.burnLogged = true;
+          log(state, 'firework_out at=' + p.r + ',' + p.c);
+        }
+      }
+    });
 
     for (var s = 0; s < sub; s++) {
       var fx = 0, fy = -G * car.mass, tq = 0;
+
+      /* ---------- 驱动件推力（沿各自箭头方向，随车体旋转） ----------
+       *
+       * ⚠ 力矩这一项踩过一个大坑（第 63 轮）：
+       *
+       * 第一版按"推力作用在零件的真实位置上"算力矩：
+       *     tq += (tp.lx * (f * twy)) - (tp.ly * (f * twx))
+       * 物理上当然是对的 —— 装车顶往前推就会让车**前翻**。
+       * 但实测 1-3 的标准解：风车桨在框上方一格（ty=+1），
+       * 水平推力 5 m/s² 配上这个力臂，车在 1.5 秒内转到 -110°，
+       * 2 秒后 -178.8°（整台车翻了个面，桨变成朝后），然后 permanent stuck。
+       *
+       * 两件事同时出了问题：
+       *   1) 力矩臂太大 —— 一格 = 1 米，而车只有 3 米宽，
+       *      水平推力作用在车顶就等于一根 1 米的撬棍；
+       *   2) 玩家**没有工具抵抗它** —— 参考里靠"配重/尾翼"平衡，
+       *      而我们这一版没有尾翼，沙袋还只能挂框下面。
+       *
+       * 所以现在把力矩**折到 0.25 倍**并夹在合理范围内：
+       * 保留"装得太高会抬头"的手感，但不至于把车掀翻。
+       * 这是一个**手感参数**，不是物理常数 —— 记在这里，免得以后被当成 bug 改回去。 */
+      for (var ti = 0; ti < tools.length; ti++) {
+        var tp = tools[ti];
+        var f = (tp.def.thrust || 0) * shortFactor * car.mass;
+        var tv = dirVec(tp.dir || 0);
+        var tca = Math.cos(car.a), tsa = Math.sin(car.a);
+        var twx = tv[0] * tca - tv[1] * tsa;
+        var twy = tv[0] * tsa + tv[1] * tca;
+        fx += f * twx;
+        fy += f * twy;
+        var tqRaw = (tp.lx * (f * twy)) - (tp.ly * (f * twx));
+        tq += tqRaw * 0.25;
+      }
+      /* ---------- 一次性推力（霄灯） ---------- */
+      for (var oi = 0; oi < car.parts.length; oi++) {
+        var op = car.parts[oi];
+        if (!op.def.oneShot || !(op.burn > 0)) continue;
+        var of = (op.def.thrust || 0) * car.mass;
+        var ov = dirVec(op.dir || 0);
+        var oca = Math.cos(car.a), osa = Math.sin(car.a);
+        var owx = ov[0] * oca - ov[1] * osa;
+        var owy = ov[0] * osa + ov[1] * oca;
+        fx += of * owx;
+        fy += of * owy;
+        tq += (op.lx * (of * owy)) - (op.ly * (of * owx));
+      }
 
       // 空气阻力
       var sp = Math.hypot(car.vx, car.vy);
@@ -1076,9 +1353,17 @@
       if (car.liftMass > 0) fy += G * car.liftMass;
 
       // 轮子
+      /* ⚠ 轮子**自己不再产生驱动力**（第 63 轮）。
+       *
+       * 旧设计有 `motorAccel` —— 装了马达，轮子就凭空获得 6 m/s² 的牵引力，
+       * 和轮子接不接地、有没有动力连通都无关。这也是"反人类直觉"的一部分：
+       * 一个装在车顶的马达能让地面上的轮子转，中间没有任何传动件。
+       *
+       * 新设计：轮子只负责**把已有的水平推力变成滚动力**（通过抓地力上限），
+       * 推力全部来自驱动件（风车桨/喷气口）的一次性施加。
+       * `perWheel = 0` 让下面那一段的 `drive` 恒为 0，只保留摩擦/滚动阻力的正确语义。 */
       var groundWheels = 0;
-      var driveCap = (car.motor && car.energy > 0) ? car.mass * Params.motorAccel : 0;
-      var perWheel = car.wheels.length ? driveCap / car.wheels.length : 0;
+      var perWheel = 0;
       for (var i = 0; i < car.wheels.length; i++) {
         var w = car.wheels[i];
         var wp = worldOf(car, w.lx, w.ly);
@@ -1149,13 +1434,53 @@
         }
       }
 
-      // 贴地稳定器：两个轮子都在地上时，把车体角度拉向地面坡度（避免一直俯仰、车头蹭地）
-      if (groundWheels >= 2) {
-        var targetA = Math.atan(ter.surfaceSlope(car.x));
-        // 弹簧 + 临界阻尼：拉角度 + 压掉角速度（避免落地后晃两下）
+      /* 贴地稳定器：把车体角度拉向**两个轮子接触点连成的线**。
+       *
+       * ⚠ 目标角不能用 `atan(surfaceSlope(car.x))`（车身中心的坡度）。
+       *
+       * 那是第一版的写法，它让车稳定在一个**错误的姿态**上：
+       * 车身中心在一个位置、两个轮子在另外两个位置，而地形是弯的 ——
+       * 中心点的切线根本不是"两个轮子连线"的角度。
+       * 实测 1-2：车稳定在 −24°，而车身中心处的坡度只有 0~2°，
+       * 玩家看到的就是用户截图里那个"横在坡上的车"。
+       *
+       * 正确做法：取两个（或任一对）着地轮子的**接触点**，
+       * 用它们的连线定目标角 —— 这才是"轮子压在地形上时，车身应该是什么姿态"。
+       *
+       * 判据同时从 `groundWheels >= 2` 放宽到 `>= 1`：
+       * 原来的 `>= 2` 有个恶性循环 —— 车一旦歪到让一个轮子离地，
+       * 稳定器立刻**停止工作**，而那时恰恰最需要它，于是车越翻越快，
+       * 最后整台翻过来（1-2 实测 t=2.27 还是 −33°，t=3.52 已经 −172°）。 */
+      if (groundWheels >= 1) {
+        var targetA;
+        var cont = [];
+        for (var wi = 0; wi < car.wheels.length; wi++) {
+          var ww = car.wheels[wi];
+          var wwp = worldOf(car, ww.lx, ww.ly);
+          var wwy = ter.surfaceY(wwp.x);
+          // 只算"真的贴着地"的轮子（轮底与地表的缝隙 < 5 cm）
+          var wBottom = wwp.y - ww.def.radius;
+          if (wwy - wBottom > -0.05) {
+            cont.push({ x: wwp.x, y: wwy });
+          }
+        }
+        if (cont.length >= 2) {
+          // 取 x 最小/最大的两个当左右支点
+          cont.sort(function (a, b) { return a.x - b.x; });
+          var lo = cont[0], hi = cont[cont.length - 1];
+          if (hi.x - lo.x > 0.2) {
+            targetA = Math.atan2(hi.y - lo.y, hi.x - lo.x);
+          } else {
+            targetA = Math.atan(ter.surfaceSlope(car.x));
+          }
+        } else {
+          /* 只有一个轮子着地：退回到"车身中心坡度"这个近似。
+           * 虽然粗，但比完全不管好 —— 而且这时阻尼会把角速度吃掉。 */
+          targetA = Math.atan(ter.surfaceSlope(car.x));
+        }
         var err = targetA - car.a;
-        car.w += err * 7.5 * h;
-        car.w *= (1 - Math.min(0.9, 2.2 * h));
+        car.w += err * 11.0 * h;
+        car.w *= (1 - Math.min(0.9, 3.6 * h));
       }
 
       // 车壳四角（含无轮子时的支撑）
@@ -1213,8 +1538,9 @@
           var mat = ter.matAt(car.x);
           var gMul = mat === 'ice' ? 0.08 : (mat === 'stone' ? 0.75 : 1.0);
           var gf = Params.groundFriction * (Params.groundGrip || 1) * gMul;
-          // 有动力输出/刹车时不要额外钉住（马达要能推动车、刹车已有自己的减速度）
-          var powered = (car.motor && car.energy > 0) ||
+          // 有推力输出/刹车时不要额外钉住（推力要能推得动车、刹车已有自己的减速度）
+          var powered = tools.length > 0 ||
+            car.parts.some(function (p) { return p.burn > 0; }) ||
             (car.groups || []).some(function (gr) { return gr.on; }) || car.braking;
           if (!powered) {
             var dec = Math.min(vh, gf * h);
@@ -1256,7 +1582,8 @@
        * 正确语义：这条刹车是为了抹掉**平地上**的残余抖动（用户把 groundFriction 定为 0）。
        * 斜坡上重力是真实的驱动力，不该被它抵消 —— 坡度超过 rollResist 就不再施加。 */
       var spNow = Math.hypot(car.vx, car.vy);
-      var driving = (car.motor && car.energy > 0) ||
+      var driving = tools.length > 0 ||
+        car.parts.some(function (p) { return p.burn > 0; }) ||
         (car.groups || []).some(function (g) { return g.on; });
       var onSlope = Math.abs(ter.surfaceSlope(car.x)) > Params.creepMinSlope;
       if (!driving && !onSlope && spNow < 1.5) {
@@ -1414,27 +1741,93 @@
    *   _presses: [{t:0.8,k:'press'},{t:1.5,k:'release'}] —— 运行期按下/松开的时刻
    * 1-2 从"按不按都行"改成"必须按一下"之后，标准解就不再是一组摆位了，
    * 它必须包含"什么时候按" —— 否则任何一条用 SPECS 自动跑关的测试都会误判失败。 */
+  /* ══════════════ 标准解（第 63 轮随零件表重写）══════════════
+   *
+   * 每一关的标准解都必须证明**这一关要教的那件事**能用一个具体造法做到。
+   * 零件换了之后，下面每一行都要重推 —— 不能只把 `motor` 改名成 `anemo_core`，
+   * 因为它们的质量、推力、占用都不同（旧马达 1.8 kg / 6 m/s²，
+   * 新风种 0.8 kg + 风车桨 0.5 kg / 5 m/s²）。
+   *
+   * 摆位约定（六关通用）：第 4 行是车身、第 5 行挂轮子、第 3 行是车顶。
+   * 动力源必须**塞进框里**（inner），驱动件必须**紧贴框**才通电。
+   */
   var SPECS = {
-    // 每关的标准解（与 tests/cases.md 的点击序列一致）
+    /* 1-1「放个轮子」：纯重力下坡，不要任何动力件。
+     * 教的是"框+轮+猪"这个最小可动体。 */
     '1-1': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]], pig: [[4, 2]] },
-    '1-2': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]], pump: [[3, 2]], pig: [[4, 2]],
-             _dirs: { pump: 0 },                                  // 打气筒朝右
+
+    /* 1-2「推一把」：要有推力才能到终点。
+     * 教的是**仙术机关**（手动件，不耗容量）—— 所以车上一个动力源都没有。
+     * 这正好和 1-3 形成对照：那关才教动力源+驱动件。 */
+    '1-2': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]],
+             pump: [[3, 2]], pig: [[4, 2]],
+             _dirs: { pump: 0 },                                  // 机关朝右
              _presses: [{ t: 0.8, k: 'press' }, { t: 1.5, k: 'release' }] },
-    '1-3': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], wood_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
-    '1-4i': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], iron_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
-    '1-4w': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]], wood_wheel: [[5, 1], [5, 4]], motor: [[4, 0]], battery: [[4, 3]], pig: [[4, 2]] },
-    '1-5m': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]], motor: [[4, 4]], pig: [[4, 1]] },
-    '1-5n': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]], pig: [[4, 1]] },
-    /* 1-6 的标准解不只是摆位，还包含两个"什么时候动手"的时刻：
-     *   扔沙袋 @3.0s —— 沙袋是起飞开关，早扔会飘、晚扔冲进沟
-     *   扎 1 个 @7.0s —— 扎太多会砸下去，一个才够把"上升"变成"缓降"
-     * 这两个动作必须走和玩家点击同一条代码路径（dropSandbag / popBalloon），
-     * 否则测试通过而实际玩不通。 */
+
+    /* 1-3「动力接上了吗」：教**动力源 + 驱动件 + 连通性**。
+     *
+     * ⚠ 一格只能塞一件内嵌件（`inner`）。风种和猪都要"放在框里"，
+     * 所以必须占**两个不同的框**：风种进 c2、猪进 c1。
+     * 第一版两件都写了 [[4,2]]，于是猪被拒（occupied）→ 车装不上。
+     * 第三星是「动力余量 ≥ 1」，所以不能装第二个驱动件。 */
+    '1-3': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]],
+             anemo_core: [[4, 2]], pig: [[4, 1]], propeller: [[3, 2]],
+             _dirs: { propeller: 0 } },
+
+    /* 1-4「冰面」：两个变体，靠轮子抓地通过。
+     * 冰面上木轮几乎打滑（0.15），铁轮才有 0.8 —— 这一关教的就是换轮子。
+     *
+     * ⚠ 这里必须用**喷气口**（9 m/s²）而不是风车桨（5 m/s²），
+     * 这是算出来的，不是试出来的：
+     *   1-4 最陡的一段是 0.44 的冰坡（23.7°），G=16，
+     *   沿坡的重力分量 = 16·sin(23.7°) = **6.44 m/s²**。
+     *   风车桨只有 5.0 → 净加速度 -1.44，物理上**爬不上去**。
+     *   喷气口 9.0 → 净 +2.56，能爬。
+     * 第一版用风车桨，实测车在 x=11.98 停住（tools/dbg 里逐帧看到的
+     * 就是 22.7° 处 vx → 0）。
+     *
+     * 资源上正好形成取舍：风种有 2 点容量，喷气口占 2 点 → 只能装一个，
+     * 余量 0。而 1-3 用风车桨（占 1）留 1 点余量拿第三星 ——
+     * 两关的容量算法因此不同，这就是"动力"这个系统的意义。 */
+    '1-4i': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]],
+              iron_wheel: [[5, 1], [5, 4]], anemo_core: [[4, 2]],
+              pig: [[4, 1]], jet: [[3, 2]], _dirs: { jet: 0 } },
+    '1-4w': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]],
+              wood_wheel: [[5, 1], [5, 4]], anemo_core: [[4, 2]],
+              pig: [[4, 1]], jet: [[3, 2]], _dirs: { jet: 0 } },
+
+    /* 1-5「第一道坡」：第三星是「不用驱动件」。
+     * 所以标准解故意**一个 tool 都没有** —— 靠仙术机关喷过去。
+     * `1-5m` 是"装了驱动件所以拿不到第三星"的对照解。 */
+    '1-5n': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]],
+              pump: [[3, 1]], pig: [[4, 1]],
+              _dirs: { pump: 0 },
+              _presses: [{ t: 0.6, k: 'press' }, { t: 1.4, k: 'release' },
+                         { t: 3.0, k: 'press' }, { t: 3.8, k: 'release' }] },
+    '1-5m': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]],
+              anemo_core: [[4, 2]], propeller: [[3, 2]], pig: [[4, 1]],
+              _dirs: { propeller: 0 } },
+
+    /* 1-6「抬个头」：教**浮力 + 配重 + 位置系挂**。
+     *
+     * ⚠ 这一关暴露过一次真设计漏洞（第 63 轮）：
+     * 气球只提供**向上的力**，一点水平分量都没有。旧地形靠"先下坡"给初速
+     * 所以还能跑；新地形起点是平的 → 车原地垂直起飞然后飞出地图
+     * （实测 vx 恒为 0，fail=flew_away）。
+     * 所以标准解必须同时带一个水平驱动件 —— 这正是参考里气球关的形态：
+     * **气球管高度，螺旋桨管前进**。
+     *
+     * 摆位遵守系挂规则：
+     *   · 热气球在框的**上方**（球 r=3、框 r=4）→ 系住
+     *   · 压舱石在框的**下方**（框 r=4、石 r=5）→ 系住
+     * 参数由 tools/gen_level_06_r63.js 搜出来：3 球 + 2 沙袋 @1.5s 扔，
+     * 峰值 11.87 m（终点地表 7.71），**真的飞过去了**而不是贴地跑过去。 */
     '1-6': { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]],
-             balloon: [[3, 1], [3, 2]], sandbag: [[5, 2]], pig: [[4, 2]],
-             _stacks: { balloon: 3, sandbag: 3 },
-             _drops: [{ t: 4.5, n: 3 }],
-             _pops: [{ t: 8.0, n: 1 }] }
+             balloon: [[3, 2]], sandbag: [[5, 2]],
+             anemo_core: [[4, 1]], propeller: [[3, 1]], pig: [[4, 2]],
+             _dirs: { propeller: 0 },
+             _stacks: { balloon: 3, sandbag: 2 },
+             _drops: [{ t: 1.5, n: 2 }] }
   };
 
   function applySpec(level, build, spec) {
@@ -1530,6 +1923,9 @@
     newBuild: newBuild, tryPlace: tryPlace, canPlace: canPlace, removeAt: removeAt, undo: undo,
     dropHistory: dropHistory, pushHistory: pushHistory, rotateAt: rotateAt, clearBuild: clearBuild, budgetLeft: budgetLeft,
     interactiveCount: interactiveCount, buildVehicle: buildVehicle,
+    /* 第 63 轮新机制：动力图与系挂校验。测试要能直接调它们，
+     * 否则"连通/系挂"只能通过 buildVehicle 的间接读数验证。 */
+    powerGrid: powerGrid, tetherCheck: tetherCheck,
     createRun: createRun, step: step, stepLoose: stepLoose, damageCar: damageCar, setBrake: setBrake, pressInteract: pressInteract,
     pressInteract: pressInteract,
     releaseInteract: releaseInteract, cancelInteract: cancelInteract, challengePass: challengePass,

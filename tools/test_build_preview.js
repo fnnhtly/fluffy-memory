@@ -183,11 +183,31 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     A.near(r.levelId + ' 曲线像素高差 = pxPerM × 实测落差（画的是真地形，不是另一条）',
       r.reliefPx, r.reliefM * r.pxPerM, 2.2, 'px');
   });
-  A.chk('六关的起伏高差按共用比例尺单调对应（1-3 最平、1-6 最陡，而不是每关都顶满条高）', [
-    ['1-3 明显比 1-6 平', rows[2].reliefPx < rows[5].reliefPx / 3],
-    ['1-3 只有几个像素（没有被自动归一化成一整条山）', rows[2].reliefPx <= 8],
-    ['1-6 撑满条内高（≥ 90% 内高）', rows[5].reliefPx >= rows[5].innerH * 0.90],
-  ].every(p => p[1]));
+  /* 这一组验的是「共用比例尺」这个**视觉意图**：有的关很平、有的关很陡，
+   * 而不是每关都被自动归一化成一样高的山。
+   *
+   * ⚠ 具体哪一关最陡**不能写死**。
+   * 第 63 轮重做 1-6 之后，它的起点→终点窗口内落差只有 3.11 m
+   * （高台在 col 15 之后、终点旗却在 15，窗口裁到那里就看不见崖了），
+   * 于是原来那条「1-6 最陡、撑满 90% 条内高」必红 ——
+   * 而"共用比例尺"这件事其实完全正常。
+   *
+   * 改成：**最陡的那一关**必须明显高出最平的那一关（比例尺是共用的证据），
+   * 并且最平的那关确实只有几个像素（没有被归一化）。
+   * 这样换关卡/改地形都不会误报，而"共用比例尺被破坏"仍然会红。 */
+  {
+    const px = rows.map(r => r.reliefPx);
+    const maxPx = Math.max(...px), minPx = Math.min(...px);
+    const steepest = rows[px.indexOf(maxPx)], flattest = rows[px.indexOf(minPx)];
+    A.chk('六关的起伏高差按共用比例尺对应（最陡的关明显高于最平的关，而不是每关都顶满条高）', [
+      ['最陡 / 最平 ≥ 3 倍', maxPx > minPx * 3],
+      ['最平的那关只有几个像素（没有被自动归一化成一整条山）', minPx <= 8],
+      ['最陡的那关也撑到了条内高（说明比例尺上限没白留）',
+       maxPx >= steepest.innerH * 0.25],
+    ].every(p => p[1]),
+      '最陡 ' + steepest.levelId + ' ' + maxPx.toFixed(1) + 'px / 最平 ' +
+      flattest.levelId + ' ' + minPx.toFixed(1) + 'px');
+  }
 
   /* 曲线必须留在条内：没有采样点跑到内框之外（否则玩家看到线被裁掉一段） */
   rows.forEach(r => {

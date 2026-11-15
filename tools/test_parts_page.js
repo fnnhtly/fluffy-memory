@@ -67,12 +67,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(SHOTS, 'pp-01-parts-page.png'), Buffer.from(shot.data, 'base64'));
 
+  /* 几何必须**从渲染器读**，不能在这里重算一遍。
+   *
+   * 旧代码写死 `C.y + 100 + i * 32 + 13` —— 那是零件页还是"一栏 32px 行高"
+   * 时的常量。第 63 轮把这一页改成两栏（13 件零件塞不进一栏的 720 屏）之后，
+   * 行高变 24、起点变 92，于是这个探针量的是一串**不存在的坐标**，
+   * 报「最后一行到卡片底留白 -90px」和「图标未绘制 1」——
+   * 两条都是量具自己错位，不是页面坏了。
+   *
+   * 现在渲染器把每行真实的 y 记进 `state.partsPageRows`，探针只读它。
+   * 这类"几何与绘制各算一遍"的坑本项目踩过很多次。 */
   const geom = JSON.parse(await ev(`(() => {
     const C = window.__rap.welcomeCard();
-    const n = window.__rap.RAP.TRAY_ORDER.length;   // 行数跟着零件表走，别写死 7
-    const rows = [];
-    for (let i = 0; i < n; i++) rows.push({ i, x: C.x + 36 + 20, y: C.y + 100 + i * 32 + 13 });
-    return JSON.stringify({ card: C, rows, n });
+    const rows = (window.__rap.state.partsPageRows || []).slice();
+    return JSON.stringify({ card: C, rows: rows, n: rows.length,
+      rowH: window.__rap.state.partsPageRowH || 0 });
   })()`));
   const expectRows = await ev('window.__rap.RAP.TRAY_ORDER.length');
 

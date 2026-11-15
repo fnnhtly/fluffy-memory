@@ -801,10 +801,29 @@
       case 'pumpPress':
         return { type: ch.type, label: '不按打气筒', value: '已按 ' + (st.pumpPress || 0) + ' 次',
                  pass: (st.pumpPress || 0) <= (ch.max || 0) };
-      case 'energyLeft':
-        return { type: ch.type, label: '能量剩 ≥' + (ch.min || 0),
-                 value: '现在 ' + Math.round(car.energy || 0),
-                 pass: (car.energy || 0) >= (ch.min || 0) };
+      /* `energyLeft` 分支已删（第 63 轮）：电量机制不存在了，
+       * 留着它就是在读一个引擎从不赋值的 `car.energy`（audit_dead_reads 抓到的
+       * 第 1 条）。现在 1-3 用下面的 `powerSpare`。 */
+      /* 1-3「动力余量 ≥N」（第 63 轮）。
+       * 取代旧的 `energyLeft` —— 容量不会耗尽，"还剩多少电"这个问题
+       * 在新机制下不存在了。现在考的是"你有没有乱装驱动件"。
+       * HUD 上必须同时显示供给和需求，否则玩家不知道差在哪。 */
+      case 'powerSpare': {
+        const sup = car.powerSupply || 0, dem = car.powerDemand || 0;
+        const spare = sup - dem;
+        return { type: ch.type, label: '动力余量 ≥' + (ch.min || 0),
+                 value: sup + ' − ' + dem + ' = ' + spare,
+                 pass: spare >= (ch.min || 0) };
+      }
+      /* 1-5「不用驱动件」（第 63 轮，取代 `motorUse`）。
+       * 旧版写"已用 N 秒"，那是电量时代的话术；现在驱动件是**恒定的**，
+       * 没有"用了多久"这回事，只有"装了没有"。 */
+      case 'noTool': {
+        const tools = (car.parts || []).filter(p => p.def && p.def.tool);
+        return { type: ch.type, label: '不用驱动件',
+                 value: tools.length ? '装了 ' + tools.length + ' 件' : '一件没装',
+                 pass: tools.length === 0 };
+      }
       case 'noFlip':
         return { type: ch.type, label: '全程不翻车',
                  value: '最大倾角 ' + Math.round((st.maxAngle || 0) * 180 / Math.PI) + '°',
@@ -858,7 +877,12 @@
                  value: '已扎 ' + (st.balloonPopsBurst || 0) + ' 个',
                  pass: (st.balloonPopsBurst || 0) === 0 };
       case 'allSandbags':
-        return { type: ch.type, label: '沙袋全扔',
+        /* 名字必须和 challengeNameOf() / 选关卡面**逐字一致**。
+         * 第 63 轮把零件名从「沙袋」改成「压舱石」时，这条状态条漏了 ——
+         * 于是同一个条件在三处显示成两个名字（状态条「沙袋全扔」、
+         * 卡面与结算「压舱石全扔」），test_lift_ui 因此报红。
+         * 这类"三份手抄表"在本项目已经出过三次，所以这里留注释提醒。 */
+        return { type: ch.type, label: '压舱石全扔',
                  value: '已扔 ' + (st.sandbagsDropped || 0) + ' / ' + (st.sandbagTotal || 0),
                  pass: (st.sandbagsDropped || 0) >= (st.sandbagTotal || 0) && (st.sandbagTotal || 0) > 0 };
       default:
@@ -882,14 +906,18 @@
     const ch = (lvx || {}).challenge || { type: 'none' };
     const m = {
       none: '无特殊条件',
-      pumpPress: '不按打气筒',
-      energyLeft: '能量剩 ≥ ' + (ch.min || 30),
+      pumpPress: '不按仙术机关',
+      /* 第 63 轮：`energyLeft` / `motorUse` 随电量与马达一起删掉，
+       * 换成下面两条（`powerSpare` = 动力余量、`noTool` = 不用驱动件）。
+       * 这里曾经留着旧 key，于是新关卡的类型落到 `|| ch.type` 兜底，
+       * 玩家在选关卡面上看到的是英文原名 `powerSpare`。 */
+      powerSpare: '动力余量 ≥ ' + (ch.min || 1),
+      noTool: '不用驱动件',
       noFlip: '不翻车',
-      motorUse: '不用马达',
       noBreak: '不散架（KRAK SNAP）',
       time: '限时 ≤ ' + (ch.max || 0).toFixed(1) + ' s',
       noPop: '一个气球都不扎',
-      allSandbags: '沙袋全扔'
+      allSandbags: '压舱石全扔'
     };
     return m[ch.type] || '—';
   }
@@ -1694,9 +1722,15 @@
   }
 
 const BIOMES = {
-  field: { rock: [96, 112, 120], grass: '#79c94f', grass2: '#4f9e3c', grass3: '#a6e070',
+  /* 下方每个 biome 的 `rock` 是**缩略图的主色**（缩略图 60% 以上的面积是岩体），
+   * 所以它必须让六关在选关页上一眼可分。原来六关的 rock 都挤在
+   * [58,74,84] ~ [186,122,78] 之间，压暗之后最大差只有 8~16（阈值 18）。
+   * 现在把每一套的 rock 往各自的方向拉开：
+   *   草地 青灰 / 峡谷 暖橙 / 洞穴 冷暗蓝 / 冰面 浅青白 / 黄昏 紫褐 / 高空 亮青
+   * 这些数只影响"看起来像哪一关"，不参与任何物理。 */
+  field: { rock: [120, 138, 128], grass: '#79c94f', grass2: '#4f9e3c', grass3: '#a6e070',
     edge: '#12201a', skyTop: '#8FC4E0', skyMid: '#CFE6D8', skyLow: '#F2F0C0',
-    hill: '#6E93A6', jungle: ['#3f7f5c', '#2f6b4a', '#22503a'], cave: false, dim: 0.26 },
+    hill: '#6E93A6', jungle: ['#3f7f5c', '#2f6b4a', '#22503a'], cave: false, dim: 0.13 },
   canyon: { rock: [186, 122, 78], grass: '#d8a24f', grass2: '#a8763a', grass3: '#f0cc84',
     edge: '#4a2a16', skyTop: '#E8A96B', skyMid: '#F4D8A8', skyLow: '#FBF0D2',
     hill: '#B07A5A', jungle: ['#7d5a3a', '#63452c', '#4a3320'], cave: false, dim: 0.26 },
@@ -1706,9 +1740,33 @@ const BIOMES = {
   ice: { rock: [150, 178, 198], grass: '#cfeef8', grass2: '#9ed4e8', grass3: '#f0ffff',
     edge: '#4a7286', skyTop: '#9FCBE8', skyMid: '#D8EEF8', skyLow: '#F4FCFF',
     hill: '#8FB6CC', jungle: ['#7FA8BE', '#6B95AC', '#5A8199'], cave: false, dim: 0.26 },
-  dusk: { rock: [96, 86, 108], grass: '#7a6a4a', grass2: '#544832', grass3: '#a89468',
+  /* 黄昏（1-5）。岩体往**紫**推，和 1-1 的绿灰、1-6 的沙黄都分开。
+   * 这三个 biome 的 rock 是缩略图主色，所以它们的 RGB 必须两两差 ≥ 18，
+   * 否则选关页上分不出谁是谁（tools/test_level_thumbs 把守）。 */
+  dusk: { rock: [128, 84, 132], grass: '#7a6a4a', grass2: '#544832', grass3: '#a89468',
     edge: '#1a1420', skyTop: '#3B3560', skyMid: '#9A6A72', skyLow: '#E8A870',
-    hill: '#5A4A6A', jungle: ['#2E3A42', '#25303a', '#1C2630'], cave: false, dim: 0.17 }
+    hill: '#5A4A6A', jungle: ['#2E3A42', '#25303a', '#1C2630'], cave: false, dim: 0.17 },
+  /* 「高空」（1-6 用）。原来是共享 `dusk` 的，但 1-5 也是 dusk ——
+   * 两张缩略图的平均色几乎一样，选关页上分不出谁是谁
+   * （tools/test_level_thumbs 的阈值是 18，实测只差 17）。
+   *
+   * 1-6 是"抬头"的浮力关：它要飞到 10 米以上，视觉上必须让人**想往上**。
+   * 所以这一套刻意做得**亮**：浅青的天、明亮的地表草、
+   * 和 1-3/1-5 那两种暗调彻底拉开。
+   * （第一版只是把 dusk 的色相往青绿挪了一点，平均色仍然只有 34,46,56 ——
+   *   和 1-3 的 34,49,52 差 4，等于没分开。改配色时要看**平均色**这个数，
+   *   不是看着"感觉不一样"。） */
+  /* 「高空」那一套（1-6 用，键名 skyBiome —— 不能叫 `sky`，
+   * 因为 BIOMES 里已经有一个 `skyTop`/`skyMid`/`skyLow` 参数系列，
+   * 而 tools/audit_level_fields 用正则从这段源码里抠"顶层键"，
+   * 一个叫 `sky` 的 biome 会让它把注释里的字样也算成一个参数并判"没人读"）。
+   *
+   * 这一套刻意走**浅色岩体**（沙岩那种），和 1-1 的青灰、
+   * 1-5 的紫褐、1-3 的暗蓝都拉开距离 —— 缩略图主色是 rock，
+   * 三个颜色必须两两差 ≥ 18，否则选关页上分不出谁是谁。 */
+  skyBiome: { rock: [214, 198, 158], grass: '#88c070', grass2: '#5fa05a', grass3: '#bfe8a8',
+    edge: '#1e3a30', skyTop: '#5FB4D8', skyMid: '#B8E4EC', skyLow: '#F0FBF2',
+    hill: '#7FB8C8', jungle: ['#3E7A62', '#2F6350', '#244E40'], cave: false, dim: 0.12 }
 };
 
   function drawWorld(ter, cam) {
@@ -2513,15 +2571,31 @@ const BIOMES = {
     }
 
     if (def.structure) {
-      /* ---------- 中空木框：木纹 + 铁角包边 + 内壁阴影 ---------- */
-      const bw = size * 0.22;
-      // 四条边框（木色，带一点渐变感：上浅下深）
-      ctx.fillStyle = '#c99354';
-      ctx.fillRect(-h, -h, size, bw);
-      ctx.fillRect(-h, -h, bw, size);
-      ctx.fillStyle = '#b57f42';
-      ctx.fillRect(-h, h - bw, size, bw);
-      ctx.fillRect(h - bw, -h, bw, size);
+      /* ---------- 结构框：木框 / 岩框 ----------
+       * 岩框（璃月岩造物）走同一套拓扑，但换材质与配色：
+       * 灰绿石色、更厚的边、并有凿痕。玩家必须**一眼分出哪个更结实**，
+       * 因为两者只差耐久（3 vs 9）和质量（1.2 vs 2.4）——
+       * 画得一样的话，那组取舍就只剩数值了。 */
+      const isStone = (def.hp || 0) >= 6;
+      const bw = size * (isStone ? 0.26 : 0.22);
+      if (isStone) {
+        ctx.fillStyle = '#8b9288'; ctx.fillRect(-h, -h, size, bw); ctx.fillRect(-h, -h, bw, size);
+        ctx.fillStyle = '#6e7568'; ctx.fillRect(-h, h - bw, size, bw); ctx.fillRect(h - bw, -h, bw, size);
+        // 凿痕
+        ctx.strokeStyle = 'rgba(40,46,40,.5)'; ctx.lineWidth = Math.max(1, size * 0.03);
+        ctx.beginPath();
+        ctx.moveTo(-h + bw * 0.4, -h + bw * 2.2); ctx.lineTo(-h + bw * 2.4, -h + bw * 0.5);
+        ctx.moveTo(h - bw * 2.2, h - bw * 0.5); ctx.lineTo(h - bw * 0.5, h - bw * 2.2);
+        ctx.stroke();
+      } else {
+        // 四条边框（木色，带一点渐变感：上浅下深）
+        ctx.fillStyle = '#c99354';
+        ctx.fillRect(-h, -h, size, bw);
+        ctx.fillRect(-h, -h, bw, size);
+        ctx.fillStyle = '#b57f42';
+        ctx.fillRect(-h, h - bw, size, bw);
+        ctx.fillRect(h - bw, -h, bw, size);
+      }
       // 木纹
       ctx.strokeStyle = 'rgba(110,72,34,.45)'; ctx.lineWidth = Math.max(1, size * 0.032);
       ctx.beginPath();
@@ -2655,6 +2729,103 @@ const BIOMES = {
       ctx.lineTo(0, -h * 0.1); ctx.lineTo(h * 0.12, h * 0.3);
       ctx.lineTo(-h * 0.24, -h * 0.04); ctx.lineTo(-h * 0.02, -h * 0.04);
       ctx.closePath(); ctx.fill();
+
+    } else if (def.powerSrc) {
+      /* ---------- 动力源（风种 / 岩种）：一颗发光的晶体 ----------
+       * 这两种是"只给容量、自己不产生推力"的件，所以画成**一颗宝石**，
+       * 和会转的驱动件（桨/喷口）在视觉上完全分开。玩家一眼就能分辨
+       * "哪个是油箱、哪个是发动机" —— 这正是旧设计（马达+电池合并）丢失的信息。 */
+      const isGeo = def.powerSrc >= 5;          // 岩种容量 5，风种 2
+      const glow = isGeo ? '#ffd77a' : '#8ff0dc';
+      // 外发光
+      ctx.save();
+      ctx.globalAlpha = 0.30;
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(0, 0, h * 0.92, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      // 晶体：六边形，岩种更厚重（多一圈描边）
+      const R1 = h * (isGeo ? 0.60 : 0.54);
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
+        const px2 = Math.cos(a) * R1, py2 = Math.sin(a) * R1;
+        k === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+      }
+      ctx.closePath();
+      const cg = ctx.createLinearGradient(-R1, -R1, R1, R1);
+      cg.addColorStop(0, isGeo ? '#ffe9b0' : '#c8f6ea');
+      cg.addColorStop(0.55, def.color);
+      cg.addColorStop(1, isGeo ? '#a8762a' : '#2f8a78');
+      ctx.fillStyle = cg; ctx.fill();
+      ctx.strokeStyle = isGeo ? 'rgba(110,74,20,.9)' : 'rgba(20,74,66,.9)';
+      ctx.lineWidth = Math.max(1.4, size * 0.045); ctx.stroke();
+      // 内部亮核
+      ctx.fillStyle = 'rgba(255,255,255,.72)';
+      ctx.beginPath(); ctx.arc(-R1 * 0.18, -R1 * 0.22, R1 * 0.22, 0, Math.PI * 2); ctx.fill();
+      /* 容量点数：岩种 5 点、风种 2 点。
+       * 形态本身画不出"它能带几个"，而那是这一关唯一的算术。 */
+      for (let k = 0; k < def.powerSrc; k++) {
+        ctx.fillStyle = isGeo ? '#7a5a18' : '#1f6a5c';
+        ctx.beginPath();
+        ctx.arc(-R1 * 0.5 + k * (R1 * 0.25), h * 0.70, Math.max(1.4, size * 0.045), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+    } else if (def.tool) {
+      /* ---------- 驱动件（风车桨 / 喷气口） ----------
+       * 这两个件必须一眼看出"它朝哪边出力"，所以画成**带叶片的轮**（风车桨）
+       * 或**带口的喷管**（喷气口），箭头由 drawDirArrow 另外加。 */
+      const isJet = (def.thrust || 0) >= 8;
+      if (isJet) {
+        // 喷气口：一段短管 + 一圈口沿
+        ctx.fillStyle = '#8a6a5a';
+        roundRect(-h * 0.55, -h * 0.34, size * 0.50, size * 0.68, 5); ctx.fill();
+        ctx.fillStyle = def.color;
+        roundRect(h * 0.02, -h * 0.30, size * 0.26, size * 0.60, 4); ctx.fill();
+        ctx.strokeStyle = '#5a3a2a'; ctx.lineWidth = Math.max(1.3, size * 0.04);
+        roundRect(h * 0.02, -h * 0.30, size * 0.26, size * 0.60, 4); ctx.stroke();
+        // 喷出的三股气（静态，方向朝右 = dir 0）
+        ctx.strokeStyle = 'rgba(255,220,180,.75)'; ctx.lineWidth = Math.max(1.2, size * 0.038);
+        for (let k = -1; k <= 1; k++) {
+          ctx.beginPath();
+          ctx.moveTo(h * 0.32, k * h * 0.22);
+          ctx.lineTo(h * 0.82, k * h * 0.30);
+          ctx.stroke();
+        }
+      } else {
+        // 风车桨：三片叶 + 中心轴
+        ctx.strokeStyle = 'rgba(30,60,70,.85)'; ctx.lineWidth = Math.max(1.3, size * 0.04);
+        for (let k = 0; k < 3; k++) {
+          const a = (k / 3) * Math.PI * 2 + (spin || 0) * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.quadraticCurveTo(Math.cos(a + 0.5) * h * 0.55, Math.sin(a + 0.5) * h * 0.55,
+                               Math.cos(a) * h * 0.78, Math.sin(a) * h * 0.78);
+          ctx.stroke();
+          ctx.fillStyle = def.color;
+          ctx.beginPath();
+          ctx.ellipse(Math.cos(a) * h * 0.55, Math.sin(a) * h * 0.55,
+                      h * 0.26, h * 0.13, a, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = '#2f5a66';
+        ctx.beginPath(); ctx.arc(0, 0, h * 0.20, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#bfeaf4';
+        ctx.beginPath(); ctx.arc(0, 0, h * 0.10, 0, Math.PI * 2); ctx.fill();
+      }
+
+    } else if (def.oneShot) {
+      /* ---------- 霄灯：一盏会烧完的纸灯 ---------- */
+      ctx.fillStyle = def.color;
+      roundRect(-h * 0.42, -h * 0.52, size * 0.42, size * 0.72, 6); ctx.fill();
+      ctx.strokeStyle = 'rgba(120,60,20,.85)'; ctx.lineWidth = Math.max(1.3, size * 0.04);
+      roundRect(-h * 0.42, -h * 0.52, size * 0.42, size * 0.72, 6); ctx.stroke();
+      // 灯芯的光
+      ctx.fillStyle = 'rgba(255,240,180,.90)';
+      ctx.beginPath(); ctx.arc(0, h * 0.02, h * 0.16, 0, Math.PI * 2); ctx.fill();
+      // 底部开口
+      ctx.fillStyle = '#7a4a20';
+      ctx.fillRect(-h * 0.30, h * 0.20, size * 0.30, size * 0.10);
 
     } else if (def.motor) {
       /* ---------- 马达：机身 + 散热槽 + 出轴 ---------- */
@@ -2841,10 +3012,19 @@ const BIOMES = {
       } else {
         drawPartShape(part, cx, cy, rect.w * 0.46, 0);
       }
-      // 数量：用完的用暗红，但必须仍然看得清（原来是 #ff9c86，压在浅地面上对比只有 3.9）
+      /* 数量：**一律白色**，用"有没有货"区分靠的是滑条/透明度，不是颜色。
+       *
+       * 颜色历史（三次都栽在同一件事上）：
+       *   #ff9c86 → 3.9；#ffd0c4 → 4.18；#ff8f78 → 2.62。
+       * 根因是托盘的底不是纯深色：它是半透明深色叠在**草地**上，
+       * 实测 bg ≈ rgb(87,105,98) —— 中等亮度、带绿。
+       * 在这种底上，任何"浅红/珊瑚色"都比白色暗，反而更糊。
+       *
+       * 白色在这个底上 5.83，稳稳过线；而"用完"的语义已经由
+       * 数字本身（0）和槽位的暗色表达，不需要再靠颜色重复一遍。 */
       text(part === 'eraser' ? '' : String(left),
         rect.x + rect.w / 2, rect.y + rect.h + 14, 12,
-        left > 0 || part === 'eraser' ? '#ffffff' : '#ffd0c4', 'center');
+        '#ffffff', 'center');
       // 悬停 / 选中 → 在槽上方显示零件名（"选了什么"必须一眼看到）
       if (i === hoverIdx || state.selected === part) {
         const nm = part === 'eraser' ? '橡皮' : RAP.PARTS[part].label;
@@ -2873,16 +3053,10 @@ const BIOMES = {
     return -1;
   }
 
-  /* 车上电池的剩余比例（0~1）。没有电池时返回 -1。
-   * 和 pumpChargeOf 同一个套路：抽成纯函数，测试读的就是渲染读的那个数。 */
-  function batteryPctOf(run) {
-    if (!run || !run.car) return -1;
-    var has = (run.car.parts || []).some(function (p) { return p.def && p.def.energy; });
-    if (!has) return -1;
-    var mx = run.car.energyMax || 0;
-    if (mx <= 0) return 1;
-    return Math.max(0, Math.min(1, (run.car.energy || 0) / mx));
-  }
+  /* `batteryPctOf` 已删（第 63 轮）：电量机制不存在了。
+   * 它读的 `car.energyMax` / `car.energy` 引擎从不赋值 ——
+   * audit_dead_reads 把它列成"读空"的第 2 条。
+   * 现在要显示的是**动力供给/需求**，见 hudPowerLine()。 */
 
   function drawButtons() {
     if (state.phase === 'build') {
@@ -3294,8 +3468,16 @@ const BIOMES = {
   function drawHud() {
     const built = RAP.buildVehicle(level(), state.build);
     const mass = built ? built.mass : 0;
-    const energy = built ? built.energyMax : 0;
-    let line = `${level().levelId} ${level().name}　总重 ${mass.toFixed(1)} kg　能量 ${Math.round(energy)}　交互键 ${built ? built.interactives.length : 0}/${RAP.Params.interactCap}`;
+    /* 建造期顶栏显示**动力配置**（第 63 轮）。
+     * 旧版这里写 `能量 ${Math.round(energy)}`，而 `built.energyMax`
+     * 在引擎里已经不存在 → 玩家看到的是「能量 NaN」（真机截图里就是这行）。
+     * 现在显示"驱动件要几点 / 动力源给几点"，这才是这一版真正要算的账。 */
+    const pSup = built ? (built.powerSupply || 0) : 0;
+    const pDem = built ? (built.powerDemand || 0) : 0;
+    const powTxt = (pSup === 0 && pDem === 0) ? '无动力件'
+      : (pDem > pSup ? ('动力不足 ' + pDem + '/' + pSup) : ('动力 ' + pDem + ' / ' + pSup));
+    let line = `${level().levelId} ${level().name}　总重 ${mass.toFixed(1)} kg　${powTxt}` +
+      `　交互键 ${built ? built.interactives.length : 0}/${RAP.Params.interactCap}`;
     /* 建造期就把"净重"算给玩家看 —— 气球/沙袋的全部意义都在这个数上：
      * 净重 > 0 贴地跑，净重 < 0 才飞得起来。不显示的话，
      * 玩家只能靠反复发射去试"到底挂几个气球能飞"。 */
@@ -3307,14 +3489,19 @@ const BIOMES = {
     }    let boxLine = '';
     if (state.phase === 'run' && state.run) {
       const car = state.run.car;
-      /* 能量那一栏在断电后必须**自己说话**。
-       * 玩家能看到的只有一个数字 `能量 0`，后面跟着速度还在往下掉；
-       * 车为什么不动了全靠猜。1-3 的三星条件就是「能量剩 ≥ 30」，
-       * 也就是说这一关的注意力全在这个数上 —— 它归零却不吭声，
-       * 玩家只会以为物理坏了或者车太沉。 */
-      const dead = car.motor && (car.energy || 0) <= 0;
-      line = `总重 ${car.mass.toFixed(1)} kg　能量 ` +
-        (dead ? '用光（马达停）' : String(Math.round(car.energy))) +
+      /* 顶栏第二行改成显示**动力**（第 63 轮）。
+       *
+       * 旧版这里写「能量 N」，读的是 `car.energy` —— 一个引擎从不赋值的字段
+       * （audit_dead_reads 抓到的第 3 条）。电量机制删掉之后，
+       * 玩家该看的数是「供给 / 需求」：
+       *   · 够用 → 绿字 动力 2 / 1
+       *   · 超载 → 红字并写明缺多少（这正是 HUD 唯一能解释"为什么转得慢"的地方）
+       */
+      const sup = car.powerSupply || 0, dem = car.powerDemand || 0;
+      const short = car.powerShort;
+      const powText = sup === 0 && dem === 0 ? '无动力'
+        : (short ? ('动力 ' + sup + ' / ' + dem + ' 不足') : ('动力 ' + dem + ' / ' + sup));
+      line = `总重 ${car.mass.toFixed(1)} kg　${powText}` +
         `　速度 ${Math.hypot(car.vx, car.vy).toFixed(1)} m/s`;
       boxLine = `木箱 ${state.run.boxesGot}/${state.run.boxes.length}`;
       if (car.liftMass > 0 || car.sandbagCount > 0) {
@@ -3474,7 +3661,11 @@ const BIOMES = {
         }
         const rows2 = [
           ['质量', mass.toFixed(1) + ' kg', false],
-          ['能量', String(Math.round(energy)), false],
+          /* 「能量」这一行改成**动力**（第 63 轮）。旧版读 `built.energyMax`，
+           * 那个字段已经不存在 → 面板上显示「能量 NaN」，
+           * 而这是玩家建造时最常盯的一块。 */
+          ['动力', (pSup === 0 && pDem === 0) ? '—' : (pDem + ' / ' + pSup),
+           pDem > pSup],
           ['交互键', (built ? built.interactives.length : 0) + ' / ' + RAP.Params.interactCap, false],
           ['零件数', String(built ? built.parts.length : 0), false],
           ['重心偏移', hasCar ? ((cgOff >= 0 ? '+' : '−') + Math.abs(cgOff).toFixed(2) + ' m') : '—', Math.abs(cgOff) > 0.7]
@@ -3494,7 +3685,11 @@ const BIOMES = {
         const wheelY = built.wheels.length ? built.wheels.reduce((a, w) => a + w.ly, 0) / built.wheels.length : built.hull.minY;
         const tall = (my / mm) - wheelY;
         const cgText = `重心 前后${cgx >= 0 ? '+' : '−'}${Math.abs(cgx).toFixed(2)}　轮上高度 ${tall.toFixed(2)} m`;
-        text(cgText, 96, 168, 12, Math.abs(cgx) > 0.7 ? '#ff8f77' : '#a8cbe0');
+        /* 重心读数：`#a8cbe0` 压在 bg rgb(73,87,87) 上只有 4.43（阈值 4.5）。
+         * 这是**紧贴草地**的一行，底部那层信息带的底色不够深，
+         * 所以文字必须更亮一档。`#d8e8f4` 在同一底色上是 6.01。
+         * （告警色 #ff8f77 不动 —— 它是"重心偏了"的语义色，且本身够亮。） */
+        text(cgText, 96, 168, 12, Math.abs(cgx) > 0.7 ? '#ff8f77' : '#d8e8f4');
       }
       // 操作提示（画布内，放最底部一行，不与零件槽重叠）
       // 操作提示：加深色底衬，保证在任何地貌上都看得清
@@ -3513,10 +3708,13 @@ const BIOMES = {
       const boxParts = Object.keys(level().partsBox || {})
         .map(k => (RAP.PARTS[k] ? RAP.PARTS[k].label : k) + '×' + level().partsBox[k]).join('　');
       text('零件箱：' + (boxParts || '无') + '　　分数：★★ 拿木箱　★★★ ' +
-        ({ none: '本关没有', pumpPress: '不按打气筒', energyLeft: '能量剩≥30', noFlip: '不翻车', motorUse: '不用马达',
-           noPop: '一个气球都不扎', allSandbags: '沙袋全扔' }
-          [(level().challenge || {}).type] || (level().challenge || {}).type || '—'),
-        96, 148, 12, '#b9cbd8');
+        /* 第三星的名字必须走**共用的** challengeNameOf()，不能在这里自己抄一份表。
+         * 原来这里是一份手抄的 map，第 63 轮改挑战类型之后它就漏了 `noBreak`，
+         * 于是建造页把这串字原样印出来：「★★★ noBreak」——
+         * 玩家看到的是一个内部枚举名。
+         * （项目里早就记过这条：第三颗星的名字曾经有三份手抄表在各说各话。） */
+        challengeNameOf(level()),
+        96, 148, 12, '#d8e8f4');
     }
 
     if (state.phase === 'run' && state.run) {
@@ -3819,11 +4017,14 @@ const BIOMES = {
         spin = (car.odo || 0) / r;            // 里程 / 半径 = 弧度
       }
       const baseRot = p.def.wheel ? 0 : ((p.dir || 0) + (car.a * 180 / Math.PI) / 90);
-      /* 电池电量条：把车上剩余电量喂给图元（见 drawPartShape 里 `def.energy` 那一支）。
-       * 不传的话默认满格 —— 那正是"马达没电了电量条还是满的"的旧样子。
-       * 读数走 batteryPctOf()，测试读的是同一个函数，不会各说各话。 */
-      const batPct = p.def.energy ? batteryPctOf(state.run) : undefined;
-      drawPartShape(p.part, s.x, s.y, size, baseRot, p.hp, spin, batPct);
+      /* 电池电量条已删（第 63 轮）：`def.energy` 不存在了，`batteryPctOf` 也不存在了。
+       * 这里曾经读它 → `ReferenceError: batteryPctOf is not defined`，
+       * 而那是一个**在渲染循环里抛的异常**：整个页面初始化失败，
+       * canvas 都没画出来（tools/dbg_page_init.js 抓到的就是这个）。
+       * 也就是说一个删掉零件留下的悬空引用，能让整个游戏白屏。
+       * 现在第 8 个参数固定传 undefined —— drawPartShape 对它的默认值是 1，
+       * 而 `def.energy` 这一支已经没有任何零件走得到了。 */
+      drawPartShape(p.part, s.x, s.y, size, baseRot, p.hp, spin, undefined);
       /* 行驶期也要看得到"这一格还挂着几个气球 / 还有几个沙袋"。
        * 用和建造期同一个徽标，视觉上是同一套语言；≤1 不画，免得满屏数字。
        * 可点提示：还活着的气球画一圈淡金虚线，告诉玩家"这个能点"。 */
@@ -3968,15 +4169,18 @@ const BIOMES = {
     const bal = (st.car.parts || []).filter(p => p.def && p.def.liftMass)
       .reduce((a, p) => a + (p.n || 0), 0);
     const tips = [];
-    /* 电池用光：这一条排在最前面，因为它和另外两条是**互斥方向**的。
-     * 装了马达、电量归零时，车停下 / 没进展的真实原因就是没电了；
+    /* 「动力不足」这条排在最前面，因为它和另外两条是**互斥方向**的。
+     *
+     * 旧版这里判的是"装了马达 + 电量 ≤ 0"—— 两个字段现在都不存在。
+     * 新机制下同一件事的形状是：**装了驱动件但容量不够**（powerShort），
+     * 于是驱动件按比例打折，车走得比预期慢。
      * 这时候还让玩家"去想想动力或重心"，等于把人往错误方向推 ——
-     * 玩家会去加轮子、改配重，全都白费（1-3 只有一辆车、没有第二个马达位）。
-     * 判据只看两件事实：装了马达 + 电量 ≤ 0，不需要任何新状态。 */
-    if (st.car.motor && (st.car.energy || 0) <= 0) {
-      tips.push('电池用光了（马达已停）');
+     * 他会去加轮子、改配重，全都白费。 */
+    if (st.car.powerShort) {
+      tips.push('动力不够（装 ' + st.car.powerDemand + ' 点，只供 ' +
+                st.car.powerSupply + ' 点）');
     }
-    if (bags > 0) tips.push('还剩 ' + bags + ' 个沙袋没扔（点车身）');
+    if (bags > 0) tips.push('还剩 ' + bags + ' 个压舱石没扔（点车身）');
     if (bal > 0) tips.push('还剩 ' + bal + ' 个气球没扎（点车身）');
     return tips.join('，');
   }
@@ -4148,7 +4352,15 @@ const BIOMES = {
 
     text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 400, 16, '#cfe0ec', 'left');
     text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 400, 16, '#cfe0ec', 'center');
-    text(`能量剩 ${Math.round(st.car.energy)}`, X + W - 42, cardY + 400, 16, '#cfe0ec', 'right');
+    /* 结算卡右侧原来是「能量剩 N」—— 电量机制删掉之后那是个恒等于 NaN 的读数。
+     * 现在显示**动力配置**（需求 / 供给），它才是这一版真正影响成败的数。 */
+    {
+      const sup = (st.car && st.car.powerSupply) || 0;
+      const dem = (st.car && st.car.powerDemand) || 0;
+      const txt = (sup === 0 && dem === 0) ? '无动力件'
+        : ('动力 ' + dem + ' / ' + sup + (st.car && st.car.powerShort ? ' 不足' : ''));
+      text(txt, X + W - 42, cardY + 400, 16, '#cfe0ec', 'right');
+    }
 
     // 这一关的累计星数 —— 让"还差一颗"变成一件看得见的事
     text('本关 ★ ' + starsOf(tgoals) + ' / 3　总计 ★ ' + totalStars() + ' / ' + (levels.length * 3),
@@ -4355,17 +4567,24 @@ const BIOMES = {
    * 手抄的版本在加气球/沙袋那一轮漏掉了两件 —— 玩家看完引导仍然不知道新零件干什么。
    * 类别用标志位拼，说明直接用 def.desc，两边只有一份来源。 */
   function welcomePartRows() {
+    /* 类别按**新零件表**的标志位拼（第 63 轮重做）。
+     *
+     * 旧的判断读 `d.motor` / `d.energy` —— 那两个字段已经不存在了，
+     * 于是所有驱动件和动力源都会掉进 '零件' 这个兜底桶，
+     * 玩家看到的分类等于没有。
+     * 现在按"它在动力链上干什么"分类，这正是这一版零件重做要说清楚的事。 */
     const CAT = p => {
       const d = RAP.PARTS[p];
       if (d.pig) return '乘客';
       const t = [];
       if (d.structure) t.push('结构');
       if (d.wheel) t.push('轮');
-      if (d.motor) t.push('动力');
-      if (d.energy) t.push('能量');
+      if (d.powerSrc) t.push('动力源');
+      if (d.tool) t.push('驱动');
       if (d.liftMass) t.push('浮力');
       if (d.dropOne) t.push('压舱');
-      if (d.interactive && !d.liftMass && !d.dropOne) t.push('手动');
+      if (d.oneShot) t.push('一次性');
+      if (d.interactive && !d.liftMass && !d.dropOne && !d.oneShot) t.push('手动');
       return t.join(' / ') || '零件';
     };
     return RAP.TRAY_ORDER.map(p => [p, CAT(p), RAP.PARTS[p].desc || '']);
@@ -4374,20 +4593,30 @@ const BIOMES = {
   // 引导卡几何：绘制与点击共用，按钮放到卡片下方（和结算页同一套"对话框 + 底部动作"）
   function welcomeCard() {
     const page = WELCOME_PAGES[(state.welcome || 1) - 1] || WELCOME_PAGES[0];
-    /* 零件一览的高度必须跟着行数走：9 件零件 × 32 行 = 288，加首行 100 与底部留白，
-     * 卡高 408。写死 380 会让最后一行压出卡外（排版审计会红）。 */
+    /* 卡高必须跟着行数走，而且**必须留出按钮的位置**。
+     *
+     * 第 63 轮零件从 9 件涨到 13 件（新表把动力源/驱动件/一次性推力拆开了），
+     * 于是 100 + 13×32 + 20 = 536 → 卡底 668 → 按钮底 744，**冲出 720 的屏幕**。
+     * tools/test_welcome 报「第 2 页按钮仍在画面内 y+h=744.0」。
+     *
+     * 修法不是把卡挪上去（上面是标题，挪了会顶到屏幕边），而是：
+     *   1) 行高 32 → 24（13 行省下 104 px，仍够一行文字 + 分隔线）；
+     *   2) 卡顶 132 → 96（多看 36 px）；
+     *   3) 底部按钮间距 22 → 14。
+     * 三者合起来：96 + (100 + 13×24 + 20) + 14 + 54 = 596，稳稳在屏内。 */
+    const rowH = page.art === 'parts' ? 24 : 0;
     const h = page.art === 'parts'
-      ? 100 + welcomePartRows().length * PART_ROW_H + 20
+      ? 92 + welcomePartRows().length * rowH + 16
       : 306;
-    return { x: (DW - 760) / 2, y: 132, w: 760, h: h };
+    return { x: (DW - 760) / 2, y: page.art === 'parts' ? 96 : 132, w: 760, h: h };
   }
   function welcomeBtnRect() {
     const C = welcomeCard();
-    return { x: DW / 2 + 120, y: C.y + C.h + 22, w: 180, h: 54 };
+    return { x: DW / 2 + 120, y: C.y + C.h + 14, w: 180, h: 54 };
   }
   function welcomeSkipRect() {
     const C = welcomeCard();
-    return { x: DW / 2 - 300, y: C.y + C.h + 22, w: 180, h: 54 };
+    return { x: DW / 2 - 300, y: C.y + C.h + 14, w: 180, h: 54 };
   }
 
   function drawWelcome() {
@@ -4425,39 +4654,56 @@ const BIOMES = {
       drawPartShape('wood_wheel', cx2 + 46, cy2 + 40, 46 * 0.7, 0);
     } else if (page.art === 'parts') {
       // 零件一览：一行一件 —— 图标 + 名称/类别 + 一句话职责（内容由 PARTS 现推）
-      const rowsX = X + 36, rowW = W - 72, rowH = PART_ROW_H;
+      /* ⚠ 行高必须和 welcomeCard() 算高度时用的**同一个数**。
+       * 第一版几何里写 24、这里写 PART_ROW_H(32)，于是卡算出来 424 高，
+       * 而画的内容需要 13×32=416 + 100 → 最后一行直接画到卡外。
+       * 这类"几何与绘制各算一遍"的坑本项目记过好几次（第三颗星名字、
+       * 关卡卡片、零件行数），所以这里改成从卡片自己推导。 */
+      const C2 = welcomeCard();
+      const rowH = Math.max(18, Math.floor((C2.h - 92 - 16) / Math.max(1, welcomePartRows().length)));
+      const rowsX = X + 36, rowW = W - 72;
+      /* 把每行的真实坐标记下来给测试读（`state.partsPageRows`）。
+       * 没有这一份的话，测试只能自己再算一遍坐标 —— 而
+       * "几何与绘制各算一遍"在这个项目里**每次都分叉**
+       * （第三颗星名字、关卡卡片、零件行数，全是同一个根因）。 */
+      state.partsPageRows = [];
+      state.partsPageRowH = rowH;
       welcomePartRows().forEach((it, i) => {
-        const ry = Y + 100 + i * rowH;
+        const ry = Y + 92 + i * rowH;
         const [pid, cat, desc] = it;
+        state.partsPageRows.push({ i: i, part: pid,
+          x: rowsX + 20, y: ry + rowH / 2, row: ry, h: rowH });
         // 隔行淡底，长列表更好追
         if (i % 2 === 0) {
           ctx.fillStyle = 'rgba(255,255,255,.035)';
-          roundRect(rowsX - 6, ry - 4, rowW + 12, rowH - 4, 8); ctx.fill();
+          roundRect(rowsX - 6, ry - 3, rowW + 12, rowH - 2, 7); ctx.fill();
         }
         // 图标
+        const iconS = Math.min(24, rowH - 4);
         if (pid === 'pig') {
-          drawPig(rowsX + 20, ry + 12, 11, 0, 'normal');
+          drawPig(rowsX + 20, ry + rowH / 2, iconS * 0.46, 0, 'normal');
         } else if (RAP.PARTS[pid].maxStack > 1) {
           // 可叠件画两个，一眼看出"这是能叠的"
-          drawPartShape(pid, rowsX + 13, ry + 10, 22, 0);
-          drawPartShape(pid, rowsX + 27, ry + 14, 22, 0);
+          drawPartShape(pid, rowsX + 13, ry + rowH / 2 - 2, iconS, 0);
+          drawPartShape(pid, rowsX + 27, ry + rowH / 2 + 2, iconS, 0);
           drawStackBadge(rowsX + 36, ry + 4, 3);
         } else {
-          drawPartShape(pid, rowsX + 20, ry + 12, 24, 0,
+          drawPartShape(pid, rowsX + 20, ry + rowH / 2, iconS, 0,
             pid === 'wood_frame' ? 3 : undefined);
         }
         // 名称 + 类别
-        text(RAP.PARTS[pid].label, rowsX + 48, ry + 17, 14, '#ffe9b0', 'left', true);
-        text(cat, rowsX + 134, ry + 17, 11, 'rgba(176,208,230,.92)', 'left');
+        const ty = ry + rowH / 2 + 4;
+        text(RAP.PARTS[pid].label, rowsX + 48, ty, 13, '#ffe9b0', 'left', true);
+        text(cat, rowsX + 134, ty, 10.5, 'rgba(176,208,230,.92)', 'left');
         // 职责：长说明会被卡右边挤出去，先量再缩
-        let ds = 12.5;
+        let ds = 12;
         const maxW = X + W - 30 - (rowsX + 186);
         ctx.font = `${ds}px "Microsoft YaHei", sans-serif`;
-        while (ds > 9 && ctx.measureText(desc).width > maxW) {
+        while (ds > 8.5 && ctx.measureText(desc).width > maxW) {
           ds -= 0.5;
           ctx.font = `${ds}px "Microsoft YaHei", sans-serif`;
         }
-        text(desc, rowsX + 186, ry + 17, ds, '#c9dae8', 'left');
+        text(desc, rowsX + 186, ty, ds, '#c9dae8', 'left');
       });
     } else {
       // 三个按钮图标竖排，互不重叠
@@ -4544,7 +4790,16 @@ const BIOMES = {
     };
     const sky = ctx.createLinearGradient(0, y, 0, y + h);
     sky.addColorStop(0, 'rgba(' + hex2rgb(bh.skyTop).join(',') + ',.5)');
-    sky.addColorStop(1, 'rgba(8,14,20,.55)');
+    /* 底部那层暗色只压到 0.35（原来是 0.55）。
+     *
+     * 缩略图的"可辨识度"就靠这一步：0.55 的暗色把所有 biome 一起拉暗，
+     * 于是 1-1（草地）、1-3（洞穴）、1-5（黄昏）的平均色挤到只差 8~16，
+     * 而 tools/test_level_thumbs 的阈值是 18 —— 选关页上根本分不出哪张是哪关
+     * （实测 1-1 rgb(49,65,65) vs 1-5 rgb(55,60,73)）。
+     *
+     * 压到 0.35 之后，`skyTop` 那个"每关不同"的颜色才真的透得出来。
+     * 代价是缩略图整体亮一点 —— 但它本来就该像关卡，而不是像夜视画面。 */
+    sky.addColorStop(1, 'rgba(8,14,20,.35)');
     ctx.fillStyle = sky;
     roundRect(x, y, w, h, 6); ctx.fill();
 
@@ -4782,44 +5037,64 @@ const BIOMES = {
 
   function drawHelp() {
     if (!state.helpOpen) return;
-    /* 高度跟着零件数走：托盘已有 9 款零件，固定 540 会把最后一行（小猪）挤到框外。
-     * 行高 62、首行留 84、底部再留 56 给关闭按钮。 */
-    const W = 920, ROWH = 58;
-    const H = 84 + RAP.TRAY_ORDER.length * ROWH + 46, X = (DW - W) / 2, Y = Math.max(58, (DH - H) / 2 - 8);
+    /* 零件说明面板 —— 第 63 轮改成**两栏**。
+     *
+     * 旧版是一栏、每件一行、行高 58。零件从 9 件涨到 13 件之后：
+     *   84 + 13×58 + 46 = 884 高，而屏幕只有 720 —— 最后三件
+     *   （霄灯 / 仙术机关 / 小猪）连同"点任意处关闭"一起画到了屏幕外。
+     *   tools/test_layout_audit 报 10 条「越界」，其中 9 条在这一页。
+     *
+     * 两栏的代价是每行更窄，所以说明文字要更短 —— 这也是为什么
+     * PARTS 里的 desc 统一压到 ~40 字（见 game.js 那段注释）。
+     * 详细原理在 docs/parts-redesign.md，面板只负责"一眼看懂它干什么"。 */
+    const W = 1060, ROWH = 46;
+    const perCol = Math.ceil(RAP.TRAY_ORDER.length / 2);
+    const H = 76 + perCol * ROWH + 44;
+    const X = (DW - W) / 2;
+    const Y = Math.max(40, (DH - H) / 2 - 6);
     fillScreen('rgba(6,12,14,.78)');
     ctx.fillStyle = '#132430'; roundRect(X, Y, W, H, 16); ctx.fill();
     ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 2; ctx.stroke();
-    text('零件说明 —— 搭之前先知道每个东西干什么', X + 26, Y + 40, 19, '#ffe9b0', 'left', true);
+    text('零件说明 —— 搭之前先知道每个东西干什么', X + 26, Y + 36, 19, '#ffe9b0', 'left', true);
 
     const order = RAP.TRAY_ORDER;
+    const colW = (W - 52) / 2;
     order.forEach((part, i) => {
       const def = RAP.PARTS[part];
-      const yy = Y + 84 + i * ROWH;
-      drawPartShape(part, X + 58, yy + 6, 34, 0);
-      text(def.label, X + 92, yy, 14, '#e6f0f8', 'left', true);
+      const col = i < perCol ? 0 : 1;
+      const row = i < perCol ? i : i - perCol;
+      const cx0 = X + 26 + col * colW;
+      const yy = Y + 76 + row * ROWH;
+      drawPartShape(part, cx0 + 22, yy + 6, 30, 0);
+      text(def.label, cx0 + 48, yy, 13.5, '#e6f0f8', 'left', true);
+      /* 标签按**新零件表的标志位**拼（第 63 轮）。
+       * 旧版读 def.motor / def.energy —— 那两个字段已经不存在，
+       * 于是动力源和驱动件的标签是空的，玩家看不出它们是什么。 */
       const tags = [def.mass + ' kg'];
       if (def.structure) tags.push('结构');
       if (def.wheel) tags.push('轮子');
-      if (def.motor) tags.push('动力');
-      if (def.energy) tags.push('能量 +' + def.energy);
+      if (def.powerSrc) tags.push('动力 +' + def.powerSrc);
+      if (def.tool) tags.push('驱动 ' + def.thrust + ' · 耗' + def.drawPower);
       if (def.liftMass) tags.push('浮力 +' + def.liftMass + ' kg');
       if (def.dropOne) tags.push('压舱');
-      if (def.interactive) tags.push('交互件');
+      if (def.oneShot) tags.push('一次性');
+      if (def.interactive && !def.tapOnBody && !def.oneShot) tags.push('交互件');
       if (def.inner) tags.push('只能放框里');
       if (def.dir) tags.push('有方向');
       if (def.maxStack > 1) tags.push('同格可叠 ' + def.maxStack);
-      text(tags.join(' · '), X + 92, yy + 17, 11, '#8fb6c9', 'left');
-      // 说明文字自动换行
+      text(tags.join(' · '), cx0 + 48, yy + 15, 10.5, '#8fb6c9', 'left');
+      // 说明文字自动换行（栏内宽度）
+      const maxW = colW - 60;
       const chars = (def.desc || '').split('');
-      let line = '', ly = yy + 2, lx = X + 250;
+      let line = '', ly = yy + 2, lx = cx0 + 196;
       for (let k = 0; k < chars.length; k++) {
         const test = line + chars[k];
-        if (ctx.measureText(test).width > X + W - 30 - lx) {
-          text(line, lx, ly, 12.5, '#cfe0ee', 'left');
-          line = chars[k]; ly += 18;
+        if (ctx.measureText(test).width > maxW && line) {
+          text(line, lx, ly, 11.5, '#cfe0ee', 'left');
+          line = chars[k]; ly += 16;
         } else line = test;
       }
-      if (line) text(line, lx, ly, 12.5, '#cfe0ee', 'left');
+      if (line) text(line, lx, ly, 11.5, '#cfe0ee', 'left');
     });
     // 右上角关闭按钮
     const cb = { x: X + W - 56, y: Y + 16, w: 34, h: 34 };
@@ -5149,6 +5424,25 @@ const BIOMES = {
                 SFX.pop();
               } else if (evs[i].indexOf('sandbag_drop') === 0) {
                 SFX.bagDrop();
+              } else if (evs[i].indexOf('firework_light') === 0) {
+                /* 霄灯被点亮（第 63 轮新增零件）。玩家点它一下 → 开始烧 1.2 秒。
+                 * 没有这条的话，点一下之后画面上除了灯身闪一下什么都不发生，
+                 * 而"它到底点着了没有"是这一关最关键的判断。 */
+                SFX.place(0.5);
+                state.fireworkFlash = 1;
+              } else if (evs[i].indexOf('firework_out') === 0) {
+                /* 霄灯烧完。这一刻玩家必须知道 —— 推力没了，
+                 * 从此这盏灯只是配重。用轻的一声 + 一点烟。 */
+                SFX.bagDrop();
+              } else if (evs[i].indexOf('power_short') === 0) {
+                /* 动力超载（第 63 轮新机制）。
+                 * 这条必须在**出发后第一次**超载时提示一次：
+                 * 玩家装了 3 个喷气口但只有 2 点容量，驱动件会按比例降功率，
+                 * 而"为什么转得慢"在画面上没有任何别的解释。 */
+                const ms = evs[i].match(/supply=(\d+) demand=(\d+)/);
+                if (ms) {
+                  toast('动力不足：需要 ' + ms[2] + ' 点，只有 ' + ms[1] + ' 点');
+                }
               } else if (evs[i].indexOf('part_broken') === 0) {
                 /* 木框碎了：这局的「不散架」已经没了，必须有一声和"裂缝"完全不同的音。
                  * 原来这里什么都不做 —— 碎框唯一的表现是通用撞击音 + 木框耐久条消失，
@@ -5188,6 +5482,17 @@ const BIOMES = {
                 const px = mx ? parseFloat(mx[1]) : state.run.car.x;
                 const strengths = [0, 0.10, 0.22, 0.42, 0.85];
                 state.shake = Math.min(1.2, state.shake + strengths[lv]);
+                /* 记下"这一局震到过的最大值"（第 63 轮加）。
+                 *
+                 * 为什么需要：`state.shake` 每帧按 elapsed*3.2 衰减，
+                 * Lv2 的 0.22 只要 70 ms 就掉到 0.05 以下。任何
+                 * **按固定间隔轮询**的测试（100 ms 一次）几乎必然错过峰值 ——
+                 * tools/test_touch_fx 就是这么误报的："Lv≥2 出现 1 次，
+                 * 震屏峰值 0.05"，而实际上它确实震过。
+                 *
+                 * 记一个峰值字段，测试读它，就不用和帧率赛跑。
+                 * 这个字段是**纯观测值**，不参与任何物理/玩法判定。 */
+                state.shakePeak = Math.max(state.shakePeak || 0, state.shake);
                 if (lv >= 3) { state.flash = Math.max(state.flash, 0.35); }
                 if (lv >= 2) { state.vignette = Math.max(state.vignette, lv >= 3 ? 0.7 : 0.25); }
                 // 尘土：级别 1~2 个小，3~4 用碎片
@@ -5314,7 +5619,7 @@ const BIOMES = {
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
                    progressWarning, failText, failCulprit, chapterDone, resultNextBtn, frameHpOf, frameSegRects,
-                   pumpChargeOf, batteryPctOf, muteRect, toggleMute,
+                   pumpChargeOf, muteRect, toggleMute,
                    /* 提示（第 62 轮）：测试要读的必须是渲染读的那一份 ——
                     * hintFor 就是 drawHintCard 用的那个函数，不是另抄的文案表。 */
                    hintRect, hintFor, HINTS, DEFAULT_HINTS,

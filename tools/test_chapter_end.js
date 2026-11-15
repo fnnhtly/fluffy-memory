@@ -127,7 +127,16 @@ const PATCH = `(() => {
   const r2 = await recsNow();
   A.chk('六关全通后，1-6 结算卡上出现「整章通关」', has(r2, '整章通关'),
     has(r2, '整章通关') ? '' : '卡上：' + r2.join(' | '));
-  A.chk('并说明总共几颗星（不发明新指标）', has(r2, '颗星'), r2.filter(t => t.indexOf('颗星') >= 0).join(' '));
+  /* 说清"总共几颗星"。两种写法都合格：
+   *   · 全亮时：'六关 N 颗星全亮'
+   *   · 还有星没补时：'全章 ★ got / tot'
+   * 旧断言只认「颗星」两个字，而这一轮跑出来的是**未满星那条分支**
+   * （`★ 15 / 18` 不含"颗星"），于是永远红 —— 但信息一点都不缺。
+   * 判据改成"必须出现总数"，两种格式都算。 */
+  const starLine = r2.filter(t => /颗星|★\s*\d+\s*\/\s*\d+/.test(t)).join(' ');
+  A.chk('并说明总共几颗星（不发明新指标）',
+    /颗星/.test(starLine) || /★\s*\d+\s*\/\s*\d+/.test(starLine),
+    starLine || '没找到星星总数那一行');
   const nb2 = JSON.parse(await ev('JSON.stringify(window.__rap.resultNextBtn())'));
   A.chk('右按钮变成「章节总览」且可点',
     nb2.label === '章节总览' && nb2.disabled === false, JSON.stringify(nb2));

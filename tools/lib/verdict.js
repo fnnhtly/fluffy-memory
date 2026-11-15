@@ -9,10 +9,26 @@
  *   1. 进程退出码 0；
  *   2. 输出里有 `errors: (none)`；
  *   3. 输出里有 `ASSERTS n / n`（n>0 且相等），**没有这一行就算失败**。
+ *
+ * ── 第 63 轮补充：纯 Node 脚本 ──
+ *
+ * 新增了两种**不开浏览器**的测试（test_power_tether / test_specs_r63），
+ * 它们直接 require game.js 跑语义断言。它们没有 `errors: (none)` 这一行 ——
+ * 因为它们根本没连浏览器，没有控制台可言。
+ *
+ * 第一版直接把它们丢进 SCRIPTS 列表，于是 verdict 判「有页面异常」，
+ * 而实际上一个异常都没有。**量具在量一个不存在的东西。**
+ *
+ * 正确做法：脚本用 `RUNTIME: node` 自报运行环境（输出任意位置），
+ * verdict 按环境决定第二条要不要查。这样：
+ *   · 浏览器脚本仍然必须证明"0 控制台异常"；
+ *   · Node 脚本不必伪造一个它无从知道的 (none)。
  */
 
 function verdict(out, exitOk) {
   const text = out || '';
+  /* 自报环境：不写就按浏览器算（保持旧行为，不放松任何既有脚本）。 */
+  const nodeOnly = /^RUNTIME:\s*node\b/m.test(text);
   const hasErr = /errors: \(none\)/.test(text);
   const m = text.match(/ASSERTS (\d+) \/ (\d+)/);
   if (!m) {
@@ -21,7 +37,7 @@ function verdict(out, exitOk) {
   const pass = Number(m[1]);
   const total = Number(m[2]);
   if (!exitOk) return { ok: false, reason: '退出码非 0' };
-  if (!hasErr) return { ok: false, reason: '有页面异常' };
+  if (!nodeOnly && !hasErr) return { ok: false, reason: '有页面异常' };
   if (total === 0) return { ok: false, reason: '断言数为 0' };
   if (pass !== total) return { ok: false, reason: `半成功 ${pass}/${total}` };
   return { ok: true, reason: `断言 ${pass}/${total}` };

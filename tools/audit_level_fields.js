@@ -127,7 +127,14 @@ console.log('\n=== C. BIOMES：每个 biome 的每个视觉参数都被画出来
   } else {
     const block = m[0];
     const keys = [...block.matchAll(/\b([A-Za-z][A-Za-z0-9_]*)\s*:/g)].map(x => x[1]);
-    const BIOME_NAMES = ['field', 'canyon', 'cave', 'ice', 'dusk'];
+    /* biome 名要**从 BIOMES 自己推导**，不能写死一份。
+     * 第一版写死 `['field','canyon','cave','ice','dusk']`，于是第 63 轮
+     * 新增 `skyBiome` 时，这个审计把 biome 名本身当成"视觉参数"，
+     * 报「skyBiome 读取 0 次」—— 而它根本不是参数，是**键**。
+     *
+     * 推导法：biome 名的值是 `{` 开头，视觉参数的值是数字/字符串/数组。
+     * 只看"值以 { 开头"的那些键即可。 */
+    const BIOME_NAMES = [...block.matchAll(/\b([A-Za-z][A-Za-z0-9_]*)\s*:\s*\{/g)].map(x => x[1]);
     const uniq = [...new Set(keys)].filter(k => !BIOME_NAMES.includes(k));
     /* 读者不止一个别名：drawWorld 里是 `PAL`，选关缩略图里是 `bh`，压暗层里是 `bm`。
      * 第一版只数了 `bm.`/`b.`，于是 9 个键全判"没人读"—— 量具自己瞎了。

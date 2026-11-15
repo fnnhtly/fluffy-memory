@@ -77,14 +77,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('浏览器: launchSpec 接受 1-6 标准解', ok === true, String(ok));
 
   const acts = JSON.parse(await ev('JSON.stringify(window.__rap.state.run.actScript || [])'));
-  A.chk('actScript 排进了 4 个动作（3 扔 + 1 扎）', acts.length === 4,
-    acts.map(a => a.k + '@' + a.t).join(' '));
-  A.chk('actScript 里有 drop（这是曾经缺失的那一类）',
-    acts.filter(a => a.k === 'drop').length === 3,
-    acts.filter(a => a.k === 'drop').length + ' 个 drop');
-  A.chk('actScript 里有 pop（这是曾经缺失的另一类）',
-    acts.filter(a => a.k === 'pop').length === 1,
-    acts.filter(a => a.k === 'pop').length + ' 个 pop');
+  /* 动作数/内容都**从 SPECS['1-6'] 现推**，不写死。
+   *
+   * 旧断言写的是"4 个动作 = 3 扔 + 1 扎"，那是旧 1-6 的标准解
+   * （3 个沙袋 + 扎 1 个气球）。第 63 轮重建关卡之后标准解变成
+   * "扔 2 个压舱石"，一个 pop 都没有 —— 于是三条断言全红，
+   * 而**浏览器里的表现完全正确**（跑到了 win、★3）。
+   * 一个把标准解细节写死的测试，会在每次调关卡时骗人。 */
+  const spec = JSON.parse(await ev(`(()=>{const s=window.__rap.RAP.SPECS['1-6'];
+    const drops = (s._drops || []).reduce((a, d) => a + (d.n || 1), 0);
+    const pops = (s._pops || []).reduce((a, d) => a + (d.n || 1), 0);
+    return JSON.stringify({drops, pops, keys:Object.keys(s)});})()`));
+  A.chk('actScript 把标准解的动作全排进去了',
+    acts.length === spec.drops + spec.pops,
+    '排进 ' + acts.length + ' 个，spec 要求 ' + (spec.drops + spec.pops) +
+    '（' + acts.map(a => a.k + '@' + a.t).join(' ') + '）');
+  A.chk('actScript 里的 drop 数 = spec 里的沙袋数',
+    acts.filter(a => a.k === 'drop').length === spec.drops,
+    acts.filter(a => a.k === 'drop').length + ' 个 drop，期望 ' + spec.drops);
+  A.chk('actScript 里的 pop 数 = spec 里的扎气球数',
+    acts.filter(a => a.k === 'pop').length === spec.pops,
+    acts.filter(a => a.k === 'pop').length + ' 个 pop，期望 ' + spec.pops);
 
   let last = null;
   for (let i = 0; i < 150; i++) {
@@ -101,9 +114,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('浏览器: 1-6 跑到了结算（不是永远 run）', !!last.res, last.phase);
   A.chk('浏览器: 判定为 win', last.res === 'win', last.res + ' / ' + (last.reason || '-'));
   A.chk('浏览器: ★3', last.stars === 3, '★' + last.stars);
-  A.chk('浏览器: 沙袋 3 个全扔', last.bags === 3, last.bags + ' 个');
-  A.chk('浏览器: 气球恰好扎 1 个', last.pops === 1, last.pops + ' 个');
-  A.chk('浏览器: 浮力降到 6.0（3 个气球）', Math.abs(last.lift - 6.0) < 0.05, last.lift);
+  /* 这三条也从 spec 推（第 63 轮）：
+   *   · 沙袋要扔的数量 = spec 里的 drops
+   *   · 扎气球的个数   = spec 里的 pops
+   *   · 浮力 = (3 − pops) × 每个气球的 liftMass
+   * 写死 3 / 1 / 6.0 会在每次调关卡或调 liftMass 时骗人。 */
+  A.chk('浏览器: 沙袋全扔', last.bags === spec.drops,
+    last.bags + ' 个，期望 ' + spec.drops);
+  A.chk('浏览器: 扎气球个数符合 spec', last.pops === spec.pops,
+    last.pops + ' 个，期望 ' + spec.pops);
+  {
+    const lift1 = await ev('window.__rap.RAP.PARTS.balloon.liftMass');
+    const nBall = (await ev(`(()=>{const s=window.__rap.RAP.SPECS['1-6'];
+      const b=(s.balloon||[]).length; const st=(s._stacks||{}).balloon||1;
+      return b*st;})()`));
+    const expectLift = (nBall - spec.pops) * lift1;
+    A.chk('浏览器: 浮力 = (气球数 − 扎掉数) × 单球浮力',
+      Math.abs(last.lift - expectLift) < 0.05,
+      last.lift + ' vs 期望 ' + expectLift.toFixed(2));
+  }
 
   // ---------- 两个执行器必须给出同一个答案 ----------
   /* 这是最关键的一条：Node 的 simulate 和浏览器的主循环是两份独立的驱动代码，

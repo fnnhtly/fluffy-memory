@@ -49,24 +49,33 @@ ok('1-2 的 pumpPress 恰好 = 1（「只按一下」这颗星是可达的）', 
 
 // ---------------- 1-3 ----------------
 s = run('1-3', '1-3');
-ok('1-3 马达+电池通关', s.result === 'win', summary(s));
-ok('1-3 能量剩余 ≥ 30 → 3 星', s.stars === 3, summary(s));
+// 第 63 轮：马达+电池换成"动力源+驱动件"。第三星从「能量剩 ≥30」改成「动力余量 ≥1」。
+ok('1-3 风种+风车桨通关', s.result === 'win', summary(s));
+ok('1-3 动力余量 ≥ 1 → 3 星', s.stars === 3, summary(s));
 
 // ---------------- 1-4 ----------------
 const iceIron = run('1-4', '1-4i');
 ok('1-4 铁轮能上冰面台阶并通关', iceIron.result === 'win', summary(iceIron));
 ok('1-4 铁轮零撞墙 → 3 星', iceIron.stars === 3, summary(iceIron));
 const iceWood = run('1-4', '1-4w');
-ok('1-4 木轮在冰面过不去（打滑/撞墙）',
-  iceWood.result !== 'win' || iceWood.wallHits > 0,
-  summary(iceWood));
+/* 第 63 轮改判据：木轮在冰面上**也能赢**了。
+ * 旧判据（"必须打滑/撞墙过不去"）是针对"轮子抓地决定一切"那套物理写的；
+ * 现在推力来自喷气口（9 m/s²，直接加在车体上），打滑只影响滚动摩擦。
+ * 轮子的差别体现在**余量和时间**上，不是"过不过得去"。
+ * 所以这条改成"能跑完"——而"必须换轮子"的教学靠 1-5 的 noTool 那条承担。 */
+ok('1-4 木轮也能跑完（差别在余量，不在能否）',
+  iceWood.result === 'win', summary(iceWood));
 
 // ---------------- 1-5 ----------------
 const g5m = run('1-5', '1-5m');
-ok('1-5 带马达能过沟并拿木箱 → 2 星', g5m.result === 'win' && g5m.stars === 2, summary(g5m));
+/* 第 63 轮：`motorUse` 随马达一起删了，1-5 的第三星改成 `noTool`。
+ * 所以 `g5m` 是"装了驱动件"的对照解 —— 能通关但**拿不到**第三星；
+ * `g5n` 用仙术机关（不装驱动件）→ 拿满三星。 */
+ok('1-5 装驱动件能过沟并拿木箱 → 2 星',
+  g5m.result === 'win' && g5m.stars === 2, summary(g5m));
 const g5n = run('1-5', '1-5n');
-ok('1-5 不用马达也能通关 → 3 星（重力即动力）',
-  g5n.result === 'win' && g5n.motorUse === 0 && g5n.stars === 3, summary(g5n));
+ok('1-5 不装驱动件也能通关 → 3 星（仙术机关就够了）',
+  g5n.result === 'win' && g5n.stars === 3, summary(g5n));
 
 // ---------------- 建造规则 ----------------
 {
@@ -219,13 +228,28 @@ ok('1-5 不用马达也能通关 → 3 星（重力即动力）',
   RAP.tryPlace(lv, b, 'wood_frame', 4, 1);
   RAP.tryPlace(lv, b, 'wood_frame', 4, 2);
   RAP.tryPlace(lv, b, 'wood_frame', 4, 3);
-  const a = RAP.tryPlace(lv, b, 'pump', 3, 1);
-  const c = RAP.tryPlace(lv, b, 'pump', 3, 2);
-  const d = RAP.tryPlace(lv, b, 'pump', 3, 3);
-  const e = RAP.tryPlace(lv, b, 'pump', 5, 1);
-  ok('交互件上限 3：第 4 个被拒', a.ok && c.ok && d.ok && !e.ok && e.reason === 'interact_limit',
+  /* 交互件上限（Params.interactCap = 3）是**规则**，而 1-2 的 partsBox
+   * 只给 2 个 pump —— 预算是**关卡**。两者是两道独立的锁，谁先撞上
+   * 取决于关卡数据。第 63 轮把 1-2 的 pump 从 4 降到 2 之后，
+   * 第三次放置会先撞 **budget**，于是原来那条"必须是 interact_limit"
+   * 就红了 —— 而规则本身完全正常。
+   *
+   * 正确的验法是**把预算拉高到不再是瓶颈**，再验上限：
+   * 这样"上限 3"才是真的被验到，而不是被预算顺带挡住。 */
+  const lvLoose = JSON.parse(JSON.stringify(lv));
+  lvLoose.partsBox = Object.assign({}, lvLoose.partsBox, { pump: 9 });
+  const bL = RAP.newBuild();
+  RAP.tryPlace(lvLoose, bL, 'wood_frame', 4, 1);
+  RAP.tryPlace(lvLoose, bL, 'wood_frame', 4, 2);
+  RAP.tryPlace(lvLoose, bL, 'wood_frame', 4, 3);
+  const a = RAP.tryPlace(lvLoose, bL, 'pump', 3, 1);
+  const c = RAP.tryPlace(lvLoose, bL, 'pump', 3, 2);
+  const d = RAP.tryPlace(lvLoose, bL, 'pump', 3, 3);
+  const e = RAP.tryPlace(lvLoose, bL, 'pump', 5, 1);
+  ok('交互件上限 3：预算充足时第 4 个仍被拒（reason=interact_limit）',
+    a.ok && c.ok && d.ok && !e.ok && e.reason === 'interact_limit',
     JSON.stringify([a.ok, c.ok, d.ok, e]));
-  ok('运行期只生成 3 个交互键', RAP.buildVehicle(lv, b).interactives.length === 3);
+  ok('运行期只生成 3 个交互键', RAP.buildVehicle(lvLoose, bL).interactives.length === 3);
 }
 
 // ---------------- 反例：没有轮子 ----------------
@@ -237,13 +261,30 @@ ok('1-5 不用马达也能通关 → 3 星（重力即动力）',
     st.result === 'fail', summary(st));
 }
 
-// ---------------- 反例：没有电池 ----------------
+// ---------------- 反例：没有动力源 ----------------
+/* 第 63 轮：电池删了，"开局 motor_out" 这个反例不存在了。
+ * 但**同一类反例**仍然成立、而且更贴新机制：
+ *   · 装了驱动件却没有动力源 → 驱动件断电（powered=false），车走不动；
+ *   · 装了驱动件但超载      → 出 power_short 事件，推力按比例打折。
+ * 两条都是"你装错了，所以不走"，正是旧 motor_out 想表达的东西。 */
 {
   const lv = byId['1-3'];
-  const spec = { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]], motor: [[3, 2]] };
+  // 只有桨、没有风种 → supply=0
+  const spec = { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]],
+                 propeller: [[3, 2]], pig: [[4, 2]] };
   const st = RAP.simulate(lv, spec, {});
-  const sawMotorOut = st.events.some(e => e.indexOf('motor_out') === 0);
-  ok('没有电池 → 开局 motor_out，且拿不到 3 星', sawMotorOut && st.stars < 3, summary(st));
+  ok('没有动力源 → 驱动件断电，跑不到终点', st.result !== 'win', summary(st));
+}
+{
+  const lv = byId['1-3'];
+  /* 容量刚好够：风种 2 点 + 一个喷气口 2 点 → 不超载。
+   * 这一条是上面那条的**对照**：证明"不超载"不是恒假。 */
+  const spec2 = { wood_frame: [[4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 1], [5, 3]],
+                  anemo_core: [[4, 2]], jet: [[3, 2]], pig: [[4, 1]] };
+  const st = RAP.simulate(lv, spec2, {});
+  ok('风种(2 点) 带一个喷气口(2 点) → 刚好够，不写 power_short',
+    !st.events.some(e => e.indexOf('power_short') === 0),
+    summary(st));
 }
 
 // ---------------- 参数面板可用 ----------------
