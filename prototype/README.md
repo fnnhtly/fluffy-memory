@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：67 项（47 个脚本 + 20 项静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：68 项（47 个脚本 + 21 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -72,6 +72,7 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `test_battery_icon.js` | 1-3 车上的电池电量条随电量变短（曾因读一个从没被写过的 `def.__pct` 而永远满格） |
 | `test_motor_out.js` | 电池用光时 HUD 弹提示、能量栏改写「用光」、失败归因点名电池；一次断电只写一条 `motor_out` |
 | `audit_state_fields.js` | 静态对账：引擎写的字段渲染层读没读、渲染层读的 `def.__X` 有没有人写、事件标签有没有人听（纯 Node） |
+| `audit_dead_reads.js` | 反向静态对账：渲染层读的 run 状态字段**引擎到底写过没有**。第 57 轮靠它查出 `lastImpactAt` / `lastBoxAt` 从来没被写过 —— 猪的 dizzy 表情和"吃到木箱就笑"两个分支从写下的那天起就是死的（`undefined \|\| -9` 恒为 -9，把"字段不存在"伪装成"条件不成立"） |
 | `audit_parts_spec.js` | 零件表对账：`PARTS` 里每个字段都得有人读；说明文字里的每个数字都得和引擎常数一致（纯 Node） |
 | `test_time_limit.js` | 限时归谁：关卡 `timeLimit` 真的生效（不是死字段），没写时才回落 `Params.demoTimeLimit`（纯 Node） |
 | `audit_params.js` | 可调参数对账：`DEFAULTS` 里每个"旋钮"在 game.js 里都真的有人读它（纯 Node） |
@@ -104,3 +105,5 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 8. **1-6 的解法是一条时间轴，不是纯摆件**：气球升速固定在 2.5 m/s、水平 1.8–2.2 m/s，斜率的倒数约 1.4:1 —— "飞多远"实际是"要升多高"。所以 1-6 的地形是按这条斜率倒推画的：先扔沙袋减重起飞，途中扎掉 1 个气球降低浮力才能不被吹过头。
 9. **终点有一个高度门槛（2.2 m）**：不然气球会把车直接飘过终点而不算到达。2.2 m 是六关静止车高的最大值（1-6 = 2.18 m），再高就有关卡会误判。
 10. **关卡数据里的 9 个字段被删了**（第 56 轮）：`physics`（整块 4 个子键）、`buildArea`、`grid.cell`、`grid.px`、`start.row`、`goal.row`、`materials[].surfaceRow`、`chapter`、`note`。它们全都**有人写、没人读** —— 而 `surfaceRow` 更糟：9 段材质声明里 6 段说的是假的（1-1 声明地表在第 8 行，实际是 5~8 行的缓坡）。现在 `mapRows` 是地形的唯一真相，`game.js` 的 `BUILD_COLS/BUILD_ROWS/CELL` 与 `index.html` 的 `PPM` 是尺寸的唯一真相，出口 `tools/build_levels_js.js` 会拒绝任何一份带这些字段的 JSON。
+11. **猪的 dizzy（撞晕）和"吃到木箱就笑"两个表情，直到第 57 轮才真的会触发**：渲染层一直在读 `state.run.lastImpactAt` / `lastBoxAt`，但引擎从来没写过这两个字段，`undefined || -9` 恒为 -9，两个分支永远进不去。修法是让引擎在 `damageCar` 返回 true 时写 `lastImpactAt`、在拾起木箱时写 `lastBoxAt` —— 判"撞没撞到"本来就是物理的事，渲染层拿事件流重算一遍就成了第二份真相。
+12. **`mood` 的优先级会让 happy 被 scared 盖住**：`dead > dizzy > hurt > scared > happy`，而 `scared` 的条件是"离地 > 1.2 m 或速度 > 9 m/s"。1-2 吃到木箱那一帧车速 **11.53 m/s**，所以它永远是 scared；1-3、1-6 同理。这不是 bug，是"跑太快或在空中时不该笑"的设计 —— 但验 happy 必须用 1-1（吃到箱子时 4.76 m/s、离地 0.63 m）。

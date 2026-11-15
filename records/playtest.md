@@ -3198,7 +3198,188 @@ C 组查 `BIOMES` 的 11 个视觉参数、D 组五条量具自证。
 - 关卡数据本身**一个像素都没变**：`mapRows` 逐行相同、`partsBox` 相同、`challenge` 相同、
   `timeLimit` 相同 —— 这轮删的全是没人读的东西。
 
+---
+
+# 第 57 轮 · 渲染层读了、引擎从来没写过的字段
+
+这一轮从"猪有三条命"这条代码线索出发，最后抓到的是**完全另一件事**。
+
+## 出发点：`pigHP` 是不是又一个死机制
+
+`damageCar` 里有：
+
+```js
+if (vn > 10 && now - (state.lastPigHurt || -9) > 0.6) { state.pigHP -= 1; ... }
+```
+
+而结构伤害的门槛是 `Params.damageMin = 4.5`，`vn >= 11` 直接扣 9 点 = 散架。
+`Params.maxSpeed = 12` 又给整车速度封了顶。量出来的结果：
+
+```
+=== 六关标准解 ===          pig_hurt 次数 0，pigHP 全部 = 3
+=== 204 局单点扰动 ===      pig_hurt 次数 0
+=== 自由落体专查（damageMin=0，最容易受伤的配置）===
+  54 次尝试，pig_dead 命中 0 次（全部以 pig_lost 收场）
+```
+
+原因是同一次撞击里结构判定先跑：`vn ≥ 8` 扣 2 点，木框耐久 3 → 两次就碎；
+`vn ≥ 11` 直接碎。**猪受伤和车散架几乎同时发生**，而散架会把猪弹出去，
+一局就以 `pig_lost` 结束 —— `pigHP <= 0 → pig_dead` 这一支永远轮不到。
+
+结论：`pigHP` 是个**到不了的三条命**（和 `damageMin ≥ 2.5` 那批"永远碰不到的档位"
+同一形状）。但它不属于这一轮要动的东西 —— 它需要一关专门的"硬着陆"设计，
+而用户说了「先不管关卡」。**记录在案，不动。**
+
+## 真问题：`lastImpactAt` / `lastBoxAt` 从来没被写过
+
+顺手把"渲染层读的 run 字段"整张表对了一遍（`audit_state_fields.js` 只管反方向，
+这一半一直没人查）。结果：
+
+```
+index.html:3015  lastImpactAt  （via state.run）
+index.html:3018  lastBoxAt     （via state.run）
+```
+
+引擎里 grep 这两个名字：**各 0 次**。渲染层是这么读的：
+
+```js
+else if ((state.run.lastImpactAt || -9) > now2 - 0.7) mood = 'dizzy';
+else if ((state.run.lastBoxAt    || -9) > now2 - 1.0) mood = 'happy';
+```
+
+`undefined || -9` 恒为 -9，永远小于 `now2 - 0.7`。于是：
+
+- 撞到掉耐久的那一下 —— 猪的表情一动不动，"撞晕"这个表情从写下的那天起就是死的；
+- 吃到木箱 —— 画面上唯一的反馈是 HUD 那个数字 +1。
+
+`drawPig` 里六种表情（`normal / happy / scared / hurt / dizzy / dead`）画得挺细，
+其中**两种从来没被显示过**。
+
+这类 bug 最阴的地方是它的形状：`(x || 兜底) > 阈值` 让"字段不存在"伪装成"条件不成立"。
+不报错、不红任何测试、截图也看不出异常。它和第 52 轮那个 `def.__pct`
+（读一个从没被写过的字段 → 电池永远满格）是同一类。
+
+## 修法：撞没撞到是物理的判断
+
+```js
+// game.js damageCar() 末尾
+state.lastImpactAt = now;
+return true;   // "这一下真的扣了耐久"
+```
+
+```js
+// game.js 木箱拾取
+state.lastBoxAt = state.time;
+```
+
+写引擎而不是写渲染层，是因为 `damageCar` 的返回值本来就是"真的扣了耐久"这个判断，
+渲染层再拿事件流重算一遍就成了**第二份真相**（第 56 轮刚清掉 9 个这类字段）。
+
+## 量具：`tools/audit_dead_reads.js`（11/11）
+
+反向静态对账，三组判定 + 六条自证：
+
+| 组 | 查什么 |
+|---|---|
+| D | 渲染层读的 run 字段里，哪些引擎从未赋值（白名单只放渲染层自己的表演量：`pigMood`/`pigShake`/`pigEarSwing`/`actScript`，每条写理由） |
+| E1 | **别名表本身要被量**：`state.run` / `st` / `car2` / `car` 四个别名，每一个都要在源码里找到赋值证据 |
+| E2 | 对象字面量的 `:` 形式也算写（拿 `pigHP: 3` 验） |
+| E3 | 量具能通过：给引擎副本加一句 `state.lastImpactAt = 1`，它必须立刻从名单消失 |
+| E4 | 量具能失败：把 `lastBoxAt` 的赋值删掉，必须重新报出来（并确认渲染层还在读它） |
+| E6 | 注释里的字样不算证据（删掉赋值、只在注释里保留 → 仍判"读空"） |
+
+E3/E4 是这一轮的重点：**修好之后量具必须会说"没东西可量"，删掉修复之后必须重新报警。**
+两条都验，才算这把尺子是活的。
+
+### 第十七个坑：锚点钉在元素上，整张表全污染
+
+第一版用 `boxesGot: 0` 往前找最近的 `{` 来取 `createRun` 的 state 字面量。
+但 `boxes:` 那一行是
+
+```js
+boxes: (level.boxes || []).map(function (b, i) { return { i: i + 1, col: b.col, … }; }),
+```
+
+—— 最近的 `{` 是**内层**那个元素字面量。配平出来只有 4 个键（`i col row got`），
+`pigHP` / `sandbagTotal` / `events` / `replay` 等全部被判成"引擎没写过"，
+嫌疑名单从 3 条膨胀到 **64 条**。锚点必须钉在 `var state = {` 这个**声明**上。
+
+同一版还有两个假阳性来源：
+
+- 只认 `state.X =`，不认 `car.X =` / `car { … }` → `car.groups`、`car.energyMax`、
+  `car.hull`、`car.motor` 全被误报；
+- 别名只登记了 `state.run`，漏了 `st`（第 2884 行的 `const st = state.run`）
+  → `terrain` / `boxes` / `sandbagTotal` 全被误报。
+
+**教训**：静态对账的假阳性几乎全部来自"量具不认识代码的写法"。
+所以别名表、锚点、字面量形式这三件事都要**带自证**，不能靠"我看了源码觉得对"。
+
+### 第十八个坑：验定时器不用仿真时钟，等于验了个没等
+
+`test_pig_mood.js` 里验 happy 的那段，第一版写 `for (let i = 0; i < 90; i++) sleep(30)`，
+也就是 2.7 秒。而 1-1 通关要 6.17 秒、木箱在 **5.17 秒**才吃到 ——
+循环早就退出了，读到 `lastBoxAt = null`，看起来像"引擎没写"，其实是"没等"。
+改成按**仿真时刻**退出（等到 `lastBoxAt` 出现或跑到 `resolved`），一次就绿。
+
+这和"硬编码 sleep 是对机器速度的假设"是同一条：**别拿墙钟去等一个仿真事件。**
+
+### 第十九个坑：验 dizzy 那条，第一次把车抬到 6 米
+
+第一版直接抬 6 米。量出来（`tools/probe_dizzy_window.js`）：
+
+```
+落差  峰值接触  伤害档    hp最小  散架  猪在车上  结果
+ 2 m   2.27     -          3     false   true    fail/stuck      ← 没到 damageMin，根本没有 impact
+ 3 m   6.05     v=6.0      2     false   true    fail/stuck      ← 1 点耐久，框没碎 → dizzy 可达
+ 3.5m  7.23     v=7.2      2     false   true    fail/stuck
+ 4 m   8.29     v=8.3      1     false   true    fail/stuck      ← 2 点耐久
+ 4.5m  9.21     v=9.2    no-frame  true   false   fail/pig_lost    ← 框碎、猪弹出 → mood 走 dead
+```
+
+**3 米**是那个窗口：撞得够狠（扣 1 点耐久、有 `impact`），但框没碎、猪还在车上。
+6 米只会得到 `pig_lost`，`mood` 被 `dead` 盖住 —— 验出一个假的失败。
+
+## 顺带：`applySpecRuntime` 在"造废了"的车上会抛异常
+
+```js
+state.car.parts.forEach(...)   // TypeError: Cannot read properties of null
+```
+
+`createRun` 在车造不出来时（空车 / 没猪 / 零件不连通）会提前 `resolve` 并 return，
+`car` 保持 `null`。而"带方向的 spec + 造废了的车"恰好是**测试造失败局最常用的入口**
+（`probe_fail_reasons.js` 撞到了）。加了 `if (!state.car) return state;` ——
+车都不存在了，方向自然无处可写。
+
+## 另一个副产品：失败原因表里有 3 种到不了
+
+`failLabel` 登记 8 种失败原因。跑 121 局（六关标准解 + 空车 + 只有猪 + 只挂气球 +
+每关 10 种单点扰动 + 抬高砸地 + 极慢车）：
+
+```
+✗ pig_dead          0 次     ← 见本文开头：散架总是先发生
+✓ pig_lost          首个命中：1-1 抬高 6 m
+✗ out_of_bounds     0 次     ← 地形左右都是山，出界前就撞死了
+✓ flew_away         首个命中：1-6 只挂气球
+✓ stuck             首个命中：1-1 只挂气球
+✓ empty             首个命中：1-1 空车
+✗ timeout           0 次     ← 已知的兜底，0/1440 局触发（第 54 轮记录过）
+✓ no_progress       首个命中：1-1 扰动#3
+```
+
+`pig_dead` 与 `out_of_bounds` 是**真到不了**（不是"罕见"）。它们的文案
+已经在结算卡上翻好，但玩家永远看不到。这个和 `pigHP` 是同一条账：
+记下来，等做"硬着陆关"的时候一起处理，不在这轮动。
+
+## 结果
+
+- `tools/audit_dead_reads.js` **11/11**（新增，接进 `verify.mjs` 的 `3l` 快组）
+- `tools/test_pig_mood.js` 从 **5/9**（红）到 **9/9**（绿），新增 4 条断言：
+  引擎写了 `lastImpactAt` / `lastBoxAt`、以及玩家真的看到了 dizzy / happy
+- `verify.mjs` 全套 **68 项全绿**（47 个脚本 + 21 项静态/度量尺自检）
+- 六关标准解、三星判定、金币、结算卡全部未变（这轮只补写了两个时间戳）
+
 ## 待用户试玩（runtime=html）
 
 - 浏览器这一项由用户打开 `prototype/index.html` 验证；AI 侧只做了 `node --check` 语法检查与数值校核，
   **不代表浏览器里的手感已通过**。
+

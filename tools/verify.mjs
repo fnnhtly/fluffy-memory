@@ -216,6 +216,16 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
 }
 
+// 3l) 读空对账（状态字段对账的反向：渲染层读了，引擎真的写过吗）
+//     第 57 轮的两个 bug（lastImpactAt / lastBoxAt 从没被写过，dizzy 与
+//     "吃到木箱就笑"两个分支从写下的那天起就是死的）就是这一支抓到的。
+{
+  const r = run(process.execPath, [path.join('tools', 'audit_dead_reads.js')], '读空对账');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
 // 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字 / 出卡）
 if (!fast) {
   const r = run(process.execPath, [path.join('tools', 'test_layout_audit.js')], '排版审计');

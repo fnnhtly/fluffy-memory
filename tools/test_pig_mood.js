@@ -88,5 +88,75 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('猪不在车上时表情切到 dead', phDead === 'dead', 'mood=' + phDead);
   await shot('pm-forced-dead');
 
+  /* ---------- dizzy / happy：这两个分支以前是**死路** ----------
+   *
+   * 渲染层的判定是
+   *   else if ((state.run.lastImpactAt || -9) > now2 - 0.7) mood = 'dizzy';
+   *   else if ((state.run.lastBoxAt    || -9) > now2 - 1.0) mood = 'happy';
+   * 而引擎**从来没写过这两个字段**（tools/audit_dead_reads.js 查出来的）。
+   * `undefined || -9` 恒为 -9，永远小于 now2-0.7 —— 两个分支静悄悄地死了：
+   * 撞得掉耐久的那么一下，猪的表情不变；吃到木箱，也不笑。
+   *
+   * 这里不伪造 mood，只造场景：
+   *   · dizzy：把车抬到 6 米高再放手，让物理真的撞一下（会扣耐久 → 引擎应写 lastImpactAt）
+   *   · happy：跑 1-2 的标准解，它必经那个木箱（引擎应写 lastBoxAt）
+   * 然后读渲染层每帧算出来的 state.pigMood —— 也就是玩家真正看到的那个值。 */
+  await ev(`(()=>{const R=window.__rap.RAP,s=window.__rap.state;
+    window.__rap.startLevel(0); s.welcome=0; s.introT=1;
+    R.applySpec(window.__rap.levels[0], s.build, R.SPECS['1-1']);
+    window.__rap.launch();
+    const run=s.run;
+    /* 落差 3 米 —— 这个数是量出来的（tools/probe_dizzy_window.js）：
+     *   3 米 → 接触 6.05 m/s，扣 1 点耐久（木框 3→2，没碎），猪还在车上 → mood 能到 dizzy；
+     *   4.5 米 → 9.21 m/s，框碎、猪被弹出、一局以 pig_lost 结束 → mood 走 dead，dizzy 被盖住；
+     *   2 米 → 2.27 m/s，低于 damageMin=4.5，压根没有 impact。
+     * 写 6 米（第一版）只会得到 pig_lost。 */
+    run.car.y = run.terrain.surfaceY(run.car.x) + 3;
+    run.car.vx = 0; run.car.vy = 0;
+    run.spawnGrace = 0;
+    return true;})()`);
+  let dizzySeen = null, impactAtSeen = null;
+  for (let i = 0; i < 90; i++) {
+    await sleep(30);
+    const m = await ev('window.__rap.state.pigMood');
+    const ts = await ev('(window.__rap.state.run && window.__rap.state.run.lastImpactAt) || null');
+    if (ts !== null && impactAtSeen === null) impactAtSeen = ts;
+    if (m === 'dizzy' && dizzySeen === null) { dizzySeen = i; await shot('pm-dizzy'); break; }
+    if (await ev('window.__rap.state.phase') === 'resolved') break;
+  }
+  A.chk('引擎在真实撞击后写了 lastImpactAt', impactAtSeen !== null,
+    'lastImpactAt=' + impactAtSeen);
+  A.chk('撞击后表情切到 dizzy（玩家真的看得到）', dizzySeen !== null,
+    'dizzySeen=' + dizzySeen);
+  A.log('dizzy 首次出现帧 ' + dizzySeen);
+
+  // happy：用 1-1 的标准解 —— 它在 t=5.17 吃到那个木箱，那一刻车速 4.76 m/s、离地 0.63 米。
+  //
+  // 为什么不用 1-2（我第一版选的）：mood 的优先级是
+  //   dead > dizzy > hurt > scared > happy
+  // 而 1-2 靠打气筒冲出去，吃到箱子的那一帧车速是 **11.53 m/s** ——
+  // `sp2 > 9` 直接判 scared，happy 永远轮不到。逐帧复算的结果：
+  //   1-1 吃到箱子 → happy；1-2 / 1-3 / 1-6 都是 scared（车速或离地高度盖住了它）。
+  // 这不是 bug，是"跑得飞快或在空中时不该笑"的优先级设计 —— 但它意味着
+  // 用 1-2 验 happy 会验出一个假的失败。量具必须先在引擎里确认条件成立。
+  //
+  // 第二版还栽在等待时长上：1-1 通关要 6.17 秒（木箱在 5.17 秒），
+  // 而循环只有 90 × 30ms ≈ 2.7 秒，帧循环根本没跑到那一刻就退出了，
+  // 于是 `lastBoxAt=null` —— 看起来像"引擎没写"，其实是"没等"。
+  // 现在按**仿真时刻**退出（等到箱子或跑到 resolved），不用固定帧数猜。
+  await ev(`(()=>{window.__rap.launchSpec(0,'1-1'); return true;})()`);
+  let happySeen = null, boxAtSeen = null;
+  for (let i = 0; i < 300; i++) {
+    await sleep(30);
+    const m = await ev('window.__rap.state.pigMood');
+    const ts = await ev('(window.__rap.state.run && window.__rap.state.run.lastBoxAt) || null');
+    if (ts !== null && boxAtSeen === null) boxAtSeen = ts;
+    if (m === 'happy' && happySeen === null) { happySeen = i; await shot('pm-happy'); }
+    if (await ev('window.__rap.state.phase') === 'resolved') break;
+  }
+  A.chk('引擎在吃到木箱后写了 lastBoxAt', boxAtSeen !== null, 'lastBoxAt=' + boxAtSeen);
+  A.chk('吃到木箱后表情切到 happy', happySeen !== null, 'happySeen=' + happySeen);
+  A.log('happy 首次出现帧 ' + happySeen);
+
   A.finish(ws, child, errs);
 })().catch(e => { console.log('FAIL', e); process.exit(1); });

@@ -828,6 +828,18 @@
       log(state, 'pig_hurt hp=' + state.pigHP);
       if (state.pigHP <= 0) resolve(state, 'pig_dead');
     }
+    /* "这一下打到肉了"的时刻。
+     *
+     * 猪的表情本来有四档（normal / scared / dizzy / hurt / dead），其中
+     * dizzy 的判定是 `(state.run.lastImpactAt || -9) > now - 0.7` ——
+     * 而**引擎从来没写过这个字段**。`undefined || -9` 恒为 -9，
+     * 那个分支就静悄悄地死了：撞到掉耐久的那一下，猪的表情一动不动。
+     * 这类"渲染层读、引擎不写"的字段不报错、不红测试，只能靠对账发现
+     * （tools/audit_dead_reads.js 就是干这个的，它一次查出 3 个）。
+     *
+     * 写在这里而不是渲染层，是因为"撞了没有"是物理的判断（damageCar 的返回值），
+     * 渲染层拿事件流重算一遍就成了第二份真相。 */
+    state.lastImpactAt = now;
     return true;   // 这一下真的扣了耐久（impact 事件挂在这个返回值上）
   }
 
@@ -1262,6 +1274,11 @@
       var bx = b.col + 0.5, by = ter.surfaceY(b.col + 0.5) + 0.5;
       if (Math.abs(car.x - bx) < 1.7 && Math.abs(car.y - by) < 1.7) {   // 放宽：车体碰到就算
         b.got = true; state.boxesGot++;
+        /* 吃到木箱的时刻 —— 渲染层用它让猪笑（`lastBoxAt > now - 1.0`）。
+         * 和 lastImpactAt 一样，这个字段以前**引擎从来没写过**，
+         * 于是"吃到木箱"在画面上唯一的反馈就是 HUD 那个数字 +1。
+         * 一个刚帮你达成「全木箱」三星的动作，连一声、一个表情都没有。 */
+        state.lastBoxAt = state.time;
         log(state, 'box ' + b.i);
       }
     }
@@ -1421,6 +1438,13 @@
    * 免得测试通过而实际玩不通（或反过来）。 */
   function applySpecRuntime(state, spec) {
     if (!spec) return state;
+    /* `state.car` 可能是 null：`createRun` 在"车造不出来"时（空车、没猪、零件不连通）
+     * 会提前把这一局判成 resolved 并 return，car 保持 null。
+     * 少了这一句，任何"带方向的 spec + 造废了"的组合都会在这里抛
+     * `Cannot read properties of null (reading 'parts')` ——
+     * 而这条路恰好是**测试造失败局**最常用的入口（tools/probe_fail_reasons.js 撞到过）。
+     * 车都不存在了，方向自然无处可写，直接返回才是对的。 */
+    if (!state.car) return state;
     var dirs = spec._dirs || {};
     Object.keys(dirs).forEach(function (partKey) {
       var def = PARTS[partKey];
