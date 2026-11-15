@@ -184,6 +184,22 @@ const results = [];
   results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
 }
 
+// 3i) 可调参数对账（DEFAULTS 里每个"旋钮"都得真的有人拧它）
+{
+  const r = run(process.execPath, [path.join('tools', 'audit_params.js')], '可调参数对账');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
+// 3j) 触地档位（四级反馈必须铺在玩家真的到得了的速度区间）
+{
+  const r = run(process.execPath, [path.join('tools', 'test_touch_ladder.js')], '触地档位');
+  const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+  const pass = !!(m && m[1] === m[2] && r.ok);
+  results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+}
+
 // 4) 排版审计（真浏览器抓每一帧的文字包围盒：越界 / 压字 / 出卡）
 if (!fast) {
   const r = run(process.execPath, [path.join('tools', 'test_layout_audit.js')], '排版审计');

@@ -44,7 +44,7 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（`tools/build_levels_js.js`） | ✅ 自洽校验通过 |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**63 项自检全绿**（48 个脚本 + 静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**65 项自检全绿**（47 个脚本 + 静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 39/39 |
 | 木框耐久可见性 | `tools/test_frame_damage.js` + `tools/probe_damage_tiers.js` | ✅ 15/15（三档像素读数：绿/金/红；掉耐久有音效与轻抖；碎后整块隐去） |
 | 撞击演出去重 | `tools/test_impact_dedupe.js` + `tools/probe_impact_spam.js` | ✅ 8/8（旧版一次硬着陆写 34 条 `impact` → 慢放/白闪反复重置；现在 22 个接触收敛成 1 条） |
@@ -56,10 +56,12 @@
 | 断电反馈与归因 | `tools/test_motor_out.js` + `tools/probe_motor_out.js` | ✅ 9/9（断电前画面零变化；现弹提示 + 能量栏改写 + 失败归因点名电池；一次断电只写一条事件） |
 | 数据表对账 | `tools/audit_parts_spec.js` + `tools/audit_state_fields.js` | ✅ 4/4 + 6/6（`PARTS` 里 4 个死字段已删、铁轮说明的 0.3 kg 已改成 0.9 kg；引擎写的状态与渲染读的状态全部对得上） |
 | 限时归属 | `tools/test_time_limit.js` + `probe_time_cap.js` / `probe_timeout_reach.js` / `probe_slow_legal.js` | ✅ 11/11（关卡 `timeLimit` 从死字段变活；1440 局实测 timeout 零触发，最慢合法局 22.13 秒 vs 限时 120 秒） |
+| 可调参数对账 | `tools/audit_params.js` | ✅ 4/4（`DEFAULTS` 23 个旋钮逐个查读者；注释里出现 `Params.xxx` 不算） |
+| 触地反馈量程 | `tools/test_touch_ladder.js` + `probe_impact_speed.js` / `probe_impact_range.js` / `probe_touch_ladder.js` | ✅ 21/21（四级档位原先铺在 0.8/2.5/4.5/6，而六关标准解 28 次触地全在 0.80~1.70 → 通关全程只有 lvl1。lvl2 挪到 1.35：标准解落地真的有尘土轻震，仍 0 条 lvl3+、0 伤害） |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
 | 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |
 | 失败回放可见性 | `tools/test_replay_parts.js` | ✅ 9/9（像素对照：有气球 vs 没气球差 5900 点） |
-| 「没有进展」看门狗 | `tools/test_progress_watchdog.js` + `tools/test_resolve_sync.js` | ✅ 14/14 + 10/10（含"审计造状态不许被引擎覆盖"） |
+| 「没有进展」看门狗 | `tools/test_progress_watchdog.js` + `tools/test_resolve_sync.js` | ✅ 15/15 + 10/10（含"审计造状态不许被引擎覆盖"） |
 | 章节收束 | `tools/test_chapter_end.js` | ✅ 12/12（打通六关才出现「整章通关」，且只通 1-6 时不许出现） |
 | 结算金币诚实 | `tools/test_coin_display.js` | ✅ 13/13（卡上的 +N 必须等于钱包实增；重刷/失败不许再写 +N） |
 | 失败归因具体化 | `tools/test_fail_culprit.js` | ✅ 13/13（"还剩 3 个沙袋没扔"，数量必须等于车上实际剩余） |

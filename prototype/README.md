@@ -43,7 +43,7 @@
 ## 已验证（可复跑）
 
 ```bash
-node tools/verify.mjs                  # 一把跑完：63 项（48 个脚本 + 静态/度量尺自检）
+node tools/verify.mjs                  # 一把跑完：65 项（47 个脚本 + 18 项静态/度量尺自检）
 node prototype/check_html_logic.js     # 数值校核（39 项）
 node tools/check_inline_js.js          # 页面内联脚本语法检查
 ```
@@ -74,6 +74,8 @@ node tools/check_inline_js.js          # 页面内联脚本语法检查
 | `audit_state_fields.js` | 静态对账：引擎写的字段渲染层读没读、渲染层读的 `def.__X` 有没有人写、事件标签有没有人听（纯 Node） |
 | `audit_parts_spec.js` | 零件表对账：`PARTS` 里每个字段都得有人读；说明文字里的每个数字都得和引擎常数一致（纯 Node） |
 | `test_time_limit.js` | 限时归谁：关卡 `timeLimit` 真的生效（不是死字段），没写时才回落 `Params.demoTimeLimit`（纯 Node） |
+| `audit_params.js` | 可调参数对账：`DEFAULTS` 里每个"旋钮"在 game.js 里都真的有人读它（纯 Node） |
+| `test_touch_ladder.js` | 触地四级档位铺在真实量程：六关标准解 0 条 lvl3+、0 伤害，但合计有 lvl2（落地有尘土轻震）；猛车仍能进 lvl4 |
 
 ## 这些**不可移植**到千星 Lua（步骤 3 必须写清楚）
 
