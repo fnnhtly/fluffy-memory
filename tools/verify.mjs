@@ -77,7 +77,8 @@ const SCRIPTS = [
   'test_build_view.js',
   'test_no_black_block.js',
   'test_tex_parallax.js',
-  'test_build_preview.js'
+  'test_build_preview.js',
+  'test_world_anchor.js'
 ];
 
 function run(cmd, args, label, timeoutMs = 180000) {
