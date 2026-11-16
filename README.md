@@ -64,6 +64,7 @@ levels/               关卡数据 01..06.json（唯一出口是 tools/build_lev
 tests/                TDD 用例（cases.md + t01..t15.json）
 tools/                自动化测试与量具（见第 4 节）
 docs/                 策划案、美术圣经、零件重设计、参考拆解、制作计划
+docs/collaboration.md 多人协作须知：谁改哪里、五条硬规矩、无头测试的坑
 docs/screenshots/     挑出来的几张界面图（入库，README 引用）
 records/playtest.md   逐轮试玩记录（2397 行）：每轮改了什么、为什么、量到了什么数
 records/shots/        自动化测试拍的两百多张过程图（**不入库**，见 .gitignore）
@@ -110,6 +111,9 @@ node tools/verify.mjs --fast         # 只跑数值部分
    多数已经过期（生成出来的东西和现在的数据不是一回事），别拿它们当工具用。
 5. 提交信息写**"改之前哪里是坏的"**，不要写"update"。
    现成的范例：`round63: the car was a pile of parts, not a car`。
+
+> 完整的协作说明在 **[docs/collaboration.md](docs/collaboration.md)**：
+> 按文件族的分工表、无头浏览器测试的六个坑、以及"怎么证明你的测试不是空断言"。
 
 ---
 
