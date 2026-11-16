@@ -1,0 +1,23 @@
+# 二进制文件：别让 git 去猜内容、也别做行尾转换（会把 PNG 改坏）
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.gif   binary
+*.docx  binary
+*.zip   binary
+
+# 文本文件：仓库里统一存 LF。
+# 注意 **不要** 写 `* text=auto eol=lf` —— 那会在加入的瞬间把全部 600 个文件
+# 重新归一化一遍，diff 直接变成"改了每一个文件"，历史就没法读了。
+# 这里只声明"这些是文本"，行尾维持提交时的原样。
+*.md    text
+*.js    text
+*.mjs   text
+*.json  text
+*.html  text
+*.txt   text
+
+# 派生产物：合并冲突时按本项目规矩重新生成（node tools/build_levels_js.js），
+# 而不是逐行手 merge 一份自动生成的文件。
+prototype/levels.js  merge=ours

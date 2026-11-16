@@ -1,0 +1,26 @@
+# ---------- 自动测试产物 ----------
+# 每次跑测试都会重拍两百多张 PNG（每张 250~850 KB），累计 60 MB+。
+# 它们只是"这一轮的自证"，不是源码：留在历史里会让克隆变得极慢。
+# 需要留证据时，把挑出来的几张复制到 docs/screenshots/ 再提交。
+records/shots/
+
+# Python 一次性脚本留下的缓存
+__pycache__/
+*.pyc
+
+# 网页版自测/调试的临时输出
+*.tmp
+*.log
+probe/*.tmp.json
+
+# 各平台 IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 本机私有的东西（令牌、真机截图、录屏）——绝不上传
+.env
+*.local
+secrets/
