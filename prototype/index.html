@@ -130,6 +130,24 @@
      * 而第 1 层恰恰是最有用的那层：它不剧透答案，只给方向。
      * 现在 0 就是第一层，`hintSeen` 单独记"有没有点过"。 */
     hintTier: 0, hintOpen: false, hintSeen: false,
+    /* ---------- 观察模式（第 64 轮，用户要求） ----------
+     *
+     * 用户原话：「在物品栏加个观察键，点击一下就可以移动视角，
+     * 可以 wasd（电脑）和长按屏幕出摇杆控制，结束长按摇杆就立刻消失」。
+     *
+     * 为什么单独做一个模式，而不是"建造期随时能拖"：
+     *   · 建造期的拖拽已经被"放零件"占满了，左键抢不过来；
+     *   · 但**右键拖动**已经有了（第 62 轮），只是没人会想到去试。
+     * 观察键把这条能力显式化，并且在手机上没有右键 —— 所以必须有一个按钮。
+     *
+     * 摇杆是**长按才出现、松手立刻消失**的（用户明确要求）。
+     * 不做成常驻虚拟摇杆：那会永久占掉屏幕左下角，而左下角在行驶期
+     * 是交互按钮的位置。 */
+    observe: false,          // 观察模式开着吗
+    observeKeys: {},         // WASD 按住状态
+    joystick: null,          // { ox, oy, x, y, dx, dy } 长按时的虚拟摇杆
+    joyLongPress: null,      // 长按计时器 id
+    joyHoldStart: 0,         // 按下时刻（ms），用于判定"长按"
     camState: { x: 0, y: 0, zoom: 1.7 }, shake: 0, flash: 0, vignette: 0, levelSelect: false,
     introT: 0,        // 入场镜头进度 0→1
     outroT: 0,        // 结算过渡进度 0→1
@@ -474,9 +492,83 @@
   }
 
   // ---------- 坐标 ----------
-  const BUILD_PX = 44;   // 建造格显示尺寸
-  // 面板整体避开顶部信息条（y<190）：格子顶边 188 > 说明底衬底边 186，刚好不压
-  const buildOrigin = () => ({ x: DW / 2 - RAP.BUILD_COLS * BUILD_PX / 2 - 40, y: 222 });
+  /* ══════════════ 拼装区锚定在**世界坐标**上（第 64 轮重构）══════════════
+   *
+   * 用户原话：「你的拼装区应该以地图位置为基而不是以屏幕为基，
+   * 而且拼装区拼装的车的位置要出现在地图相同位置。」
+   *
+   * ── 旧做法错在哪 ──
+   *
+   * `buildOrigin()` 以前返回一个**写死的屏幕坐标**：
+   *     { x: DW/2 - 6*44/2 - 40, y: 222 }
+   * 也就是说拼装面板是"贴"在屏幕上的一个 UI 元素。后果有三条：
+   *
+   *   1. 车在拼装区里的位置和它在地图上的出发位置**没有任何关系**。
+   *      玩家在面板里把猪放在第 2 列，出发后车却从地图的 start.col 冒出来 ——
+   *      中间那一步是隐形的，玩家无法建立"我摆的就是它要跑的样子"的直觉。
+   *   2. 滚动/缩放地图时面板纹丝不动，看起来像两套东西叠在一起。
+   *   3. 地形在面板底下穿过去，但两者不在一个坐标系里，
+   *      "车会不会撞到那个坡"完全看不出来。
+   *
+   * ── 现在的做法 ──
+   *
+   * 网格有了**世界锚点**：格 (r, c) 的世界坐标是
+   *     worldX(c) = anchorX + (c - 2.5)
+   *     worldY(r) = anchorY + (3.5 - r)
+   * 而 anchorX/anchorY 就是**车出发那一刻的位置**（createRun 里的 startX/startY）。
+   * 于是：
+   *   · 拼装区画在地图上的正是车将要出现的地方；
+   *   · 缩放/平移地图时面板跟着走（它本来就长在地图上）；
+   *   · 面板底下的地形就是出发点的地形。
+   *
+   * 格子边长不再是常量 44，而是 `PPM * zoom`（1 格 = 1 米）。
+   * 这让"拼装区里的 1 格"和"地图上的 1 格"在视觉上也一致。
+   */
+  const BUILD_ANCHOR_COL = 2.5, BUILD_ANCHOR_ROW = 3.5;   // 车心在网格中的位置
+
+  /* 网格锚点的世界坐标 = 车的出发位置。
+   * 和 game.js `createRun` 的 startX/startY 用**同一套算法**，
+   * 否则"拼装区里的车"和"出发后的车"会差半个身位。 */
+  function buildAnchorWorld() {
+    const lv = level();
+    const ter = terrainCache || RAP.makeTerrain(lv);
+    const startX = lv.start.col + 0.5;
+    /* 车心离地多少：取最低轮子的下沿。没有轮子时退化成 0.5。
+     * 这段等价于 createRun 里的 `surfaceY - lowest + 0.01`。 */
+    let lowest = 0.5;
+    const built = RAP.buildVehicle(lv, state.build);
+    if (built && built.wheels && built.wheels.length) {
+      lowest = 0;
+      built.wheels.forEach(w => { lowest = Math.min(lowest, w.ly - w.def.radius); });
+    }
+    const startY = ter.surfaceY(startX) - lowest + 0.01;
+    return { x: startX, y: startY };
+  }
+
+  /* 一格的屏幕边长。建造相用 state.buildView（观察时会变），行驶相用 camState。 */
+  function buildCellPx() {
+    const z = (state.phase === 'build' && state.buildView)
+      ? state.buildView.zoom
+      : (state.camState ? state.camState.zoom : 2.1);
+    return PPM * z;
+  }
+
+  /* 网格左上角（= 格 (0,0) 的左上角）在屏幕上的位置。绘制与点击共用这一份。 */
+  function buildOrigin() {
+    const cam = (state.phase === 'build' && state.buildView)
+      ? state.buildView
+      : (state.camLive || state.camState || { x: 0, y: 0, zoom: 2.1 });
+    const a = buildAnchorWorld();
+    const px = PPM * cam.zoom;
+    // 车心（格 3.5, 2.5）画在世界 (a.x, a.y)
+    const centerX = DW / 2 + (a.x - cam.x) * px;
+    const centerY = DH / 2 - (a.y - cam.y) * px;
+    return {
+      x: centerX - (BUILD_ANCHOR_COL + 0.5) * px,
+      y: centerY - (BUILD_ANCHOR_ROW + 0.5) * px,
+      px: px
+    };
+  }
   function worldToScreen(wx, wy, cam) {
     const s = PPM * cam.zoom;                 // zoom 是"倍率"，实际每米像素 = PPM * zoom
     return { x: DW / 2 + (wx - cam.x) * s, y: DH / 2 - (wy - cam.y) * s };
@@ -624,7 +716,7 @@
   }
   function cellAt(mx, my) {
     const o = buildOrigin();
-    const c = Math.floor((mx - o.x) / BUILD_PX), r = Math.floor((my - o.y) / BUILD_PX);
+    const c = Math.floor((mx - o.x) / o.px), r = Math.floor((my - o.y) / o.px);
     if (c < 0 || c >= RAP.BUILD_COLS || r < 0 || r >= RAP.BUILD_ROWS) return null;
     return { r, c };
   }
@@ -680,18 +772,18 @@
     '1-2': ['这一关要"按一下"，说明不按就到不了终点。',
             '打气筒要装在猪的后面（朝右喷），喷的是空气，不用电池。',
             '成品：木框里放打气筒，朝右；跑起来等车慢下来时按 1 喷一下。'],
-    '1-3': ['这一关看的是"还剩多少电"，所以要把耗电压到最低。',
-            '一颗电池 100 电，马达每秒吃 4 点 —— 算一下够跑几秒。',
-            '成品：只装一块电池，别装第二块；路线走直线不要反复。'],
-    '1-4': ['这一关不能翻车，所以要压低重心。',
-            '轮子装得越低越稳，木框别往高处堆。',
-            '成品：轮子装在最低一行，重心贴着地面。'],
-    '1-5': ['这一关禁止用马达，那就只能靠别的东西推。',
-            '打气筒不耗电，也不吃"马达"这条判定。',
-            '成品：两个打气筒朝右，跑起来一路按着。'],
-    '1-6': ['这一关要抬头 —— 气球给你浮力，沙袋给你配重。',
-            '先装满气球飞到崖顶高度，再点掉几个慢慢落下来。',
-            '成品：6 个气球 + 3 个沙袋；贴地飞，快撞崖时点气球减速。']
+    '1-3': ['这一关看的是"动力够不够用"：驱动件要连到动力源，还要吃容量。',
+            '风种给 2 点容量，风车桨占 1 点 —— 装第二个桨就没余量了。',
+            '成品：风种塞进中间的框，风车桨紧贴它上方（必须相邻才通电），朝右。'],
+    '1-4': ['这一关不能翻车，而且要爬冰坡 —— 冰面上木轮几乎打滑。',
+            '铁轮冰面抓地 0.8，是过冰坡的办法；推力也要够大。',
+            '成品：铁轮 + 喷气口（9 m/s²）。风车桨只有 5.0，爬不上那道 0.44 的坡。'],
+    '1-5': ['这一关的第三星是"不用驱动件"，所以装了风车桨就拿不到三星。',
+            '仙术机关不耗动力容量，也不吃"驱动件"这条判定。',
+            '成品：不装动力源、不装驱动件，只放仙术机关朝右，跑起来按着。'],
+    '1-6': ['这一关要抬头 —— 热气球给浮力，压舱石给配重，位置很关键。',
+            '气球必须挂在框的**上方**、压舱石挂在框的**下方**，否则一个飘走一个落地。',
+            '成品：3 个气球 + 2 个压舱石；起飞后点车身扔石头，飞得不够就扎气球。']
   };
 
   /* 静音钮：所有页面共用一颗，钉在右上角。
@@ -702,6 +794,25 @@
    * 不做成"设置页"里的一项：静音是一个随时想按就按的动作，
    * 藏在二级页面里等于没有。 */
   function muteRect() { return { x: DW - 56, y: 16, w: 36, h: 30 }; }
+
+  /* ---------- 观察键 + 虚拟摇杆（第 64 轮，用户要求） ----------
+   *
+   * 观察键放在**托盘右上角**：紧挨着它要操作的零件，而且不与
+   * 「出发」「清空/撤销/换方向」「零件说明」那一列打架
+   * （那一列在左右两侧，中间是托盘）。
+   *
+   * 摇杆是**长按 220ms 才出**的浮动摇杆，松手立刻消失 ——
+   * 它出现在按下位置，不固定在角落。这样手机上单手就能用，
+   * 也不必为它永久牺牲一块屏幕。
+   */
+  function observeBtnRect() {
+    // 托盘右上角、紧邻最后一格
+    const last = trayRect(TRAY.length - 1);
+    return { x: last.x + last.w + 10, y: last.y - 2, w: 48, h: 48 };
+  }
+  const JOY_R = 54;          // 摇杆底盘半径
+  const JOY_DEAD = 8;        // 死区（像素）
+  const JOY_LONGPRESS_MS = 220;
   // 暂停面板的几何：绘制与点击共用一份，避免"看得见点不着"
   function pausePanel() {
     const PW = 420, PH = 236;
@@ -963,6 +1074,12 @@
     state.hintTier = 0;
     state.hintOpen = false;
     state.hintSeen = false;
+    /* 观察模式/摇杆也必须复位：换关时如果正开着观察模式或摇杆，
+     * 新一关一进来就在"能拖视角、点不了零件"的状态里，玩家会以为卡了。 */
+    state.observe = false;
+    state.observeKeys = {};
+    state.joystick = null;
+    state.joyLongPress = null;
     state.introT = 0;          // 触发入场镜头
     state.outroT = 0;
     /* 换关/回建造页必须把"按住"状态清掉：如果玩家在按着 1 的时候按了 R，
@@ -981,9 +1098,26 @@
   }
 
   function selectPart(part) {
+    /* 点**已经选中**的那一格 → 取消选中（第 64 轮，用户要求：
+     * 「点一下选中的物品栏就取消选中」）。
+     *
+     * 为什么需要：选中是一个**持续状态**（选中后点网格就落子）。
+     * 没有取消的话，玩家选错零件以后必须去点另一个零件才能换掉 ——
+     * 而且"手里一直攥着一个零件"会让人误点。
+     * 取消之后 selected = null，此时点网格什么都不放（橡皮同理）。 */
+    if (state.selected === part && part !== 'eraser') {
+      state.selected = null;
+      SFX.place(0.35);
+      return;
+    }
+    // 橡皮不参与"再点取消"：它是工具不是零件，且取消后就没法擦东西了
+    if (part === 'eraser') {
+      state.selected = state.selected === 'eraser' ? null : 'eraser';
+      return;
+    }
     // 零件箱里没有的零件不给选
     const left = RAP.budgetLeft(level(), part, state.build);
-    if (part !== 'eraser' && left <= 0) { toast('这个零件已经用完了'); return; }
+    if (left <= 0) { toast('这个零件已经用完了'); return; }
     state.selected = part;
   }
 
@@ -1151,6 +1285,32 @@
     }
     // 提示卡开着：点任何别处先关掉它（和零件说明同一套语义）
     if (state.hintOpen) { state.hintOpen = false; return; }
+
+    /* 观察键（第 64 轮）：只在建造相出现。
+     * 点一下切换观察模式；开着的时候点**画面任意处**开始长按摇杆。 */
+    if (state.phase === 'build' && !state.welcome && !state.levelSelect
+        && !state.helpOpen && hit(observeBtnRect(), p.x, p.y)) {
+      state.observe = !state.observe;
+      state.joystick = null; state.observeKeys = {};
+      SFX.place(0.45);
+      if (state.observe) toast('观察模式：拖画面移动视角（触屏长按出摇杆）');
+      return;
+    }
+
+    /* 观察模式里的按下：起一组长按计时，到点就长出摇杆。
+     * 长按判定用**时间**而不是位移 —— 玩家按住不动等 220ms 才出摇杆，
+     * 一按就立刻出会挡住他想点的东西。 */
+    if (state.observe && state.phase === 'build' && !state.welcome && !state.levelSelect
+        && !state.helpOpen && ev.button === 0) {
+      state.joyHoldStart = performance.now();
+      const jx = p.x, jy = p.y;
+      state.joyLongPress = setTimeout(() => {
+        state.joystick = { ox: jx, oy: jy, x: jx, y: jy, dx: 0, dy: 0 };
+        state.joyLongPress = null;
+      }, JOY_LONGPRESS_MS);
+      state.joyFrom = { x: jx, y: jy };
+      return;
+    }
 
     // 欢迎引导：必须用按钮翻页（避免误触关闭）
     if (state.welcome) {
@@ -1333,6 +1493,20 @@
   cv.addEventListener('mousemove', ev => {
     const p = canvasPos(ev);
     state.mouse.x = p.x; state.mouse.y = p.y;
+    /* 虚拟摇杆拖动（第 64 轮）：按下之后移动 → 更新摇杆偏移。
+     * 偏移量按**摇杆半径归一化**，满偏就是 1.0 —— 视角速度与推杆距离成正比。 */
+    if (state.joyFrom) {
+      if (state.joystick) {
+        const j = state.joystick;
+        let dx = p.x - j.ox, dy = p.y - j.oy;
+        const len = Math.hypot(dx, dy);
+        if (len > JOY_R) { dx = dx / len * JOY_R; dy = dy / len * JOY_R; }
+        j.x = j.ox + dx; j.y = j.oy + dy;
+        j.dx = Math.abs(dx) < JOY_DEAD ? 0 : dx / JOY_R;
+        j.dy = Math.abs(dy) < JOY_DEAD ? 0 : dy / JOY_R;
+      }
+      return;      // 摇杆/待长按期间不处理别的悬停逻辑
+    }
     /* 建造相右键拖动平移。按"按下那一刻"的差值算，不累加 ——
      * 鼠标事件频率和 rAF 不一致，累加会漂。 */
     if (state.panDrag) {
@@ -1394,6 +1568,12 @@
     const p = canvasPos(ev);
     state.mouse.down = false;
     state.panDrag = null;      // 松开即结束平移（无论哪个键松开）
+    /* 摇杆：松手**立刻消失**（用户明确要求：「结束长按摇杆就立刻消失」）。
+     * 同时要清掉还没到点的长按计时器 —— 否则松手之后 220ms 到了，
+     * 摇杆会自己冒出来，而玩家手已经离开了。 */
+    if (state.joyLongPress !== null) { clearTimeout(state.joyLongPress); state.joyLongPress = null; }
+    state.joystick = null;
+    state.joyFrom = null;
     state.erasePaint = false;
     state.lastDragCell = null;
     if (state.phase === 'build' && state.pendingClick) {
@@ -1570,6 +1750,19 @@
     if (k === 'h') { state.helpOpen = !state.helpOpen; return; }
     if (k === 't') { state.paramsOpen = !state.paramsOpen; document.getElementById('panel').style.display = state.paramsOpen ? 'block' : 'none'; return; }
     if (state.phase === 'build') {
+      /* WASD 观察视角（第 64 轮，用户要求：「可以 wasd（电脑）」）。
+       *
+       * 只在**观察模式**里生效：按住 WASD 平时是空的，但如果建造期一路
+       * 都能用 WASD 平移，玩家就会在"想放零件"的时候误推镜头。
+       * 观察键把这条能力显式开起来，和右键拖动是同一件事的两种入口。
+       *
+       * 这里只记"按下"，真正的位移在 frameBody 里按 dt 推进 ——
+       * 因为要支持**按住连续移动**，而 keydown 的 auto-repeat 频率不可靠。 */
+      if (state.observe && (k === 'w' || k === 'a' || k === 's' || k === 'd')) {
+        state.observeKeys[k] = true;
+        ev.preventDefault();
+        return;
+      }
       if (k === 'z') undoStep();
       else if (k === 'c') RAP.clearBuild(state.build);
       else if (k === ' ') { launch(); ev.preventDefault(); }
@@ -1577,7 +1770,7 @@
         // 旋转光标下的格子
         const cell = cellAt(state.mouse.x, state.mouse.y);
         if (cell) RAP.rotateAt(state.build, cell.r, cell.c);
-      } else if (k >= '1' && k <= '8') {
+      } else if (k >= '1' && k <= '9') {
         const i = parseInt(k, 10) - 1;
         if (TRAY[i]) selectPart(TRAY[i]);
       }
@@ -1616,6 +1809,15 @@
         });
       }
     }
+  });
+
+  /* WASD 观察键的松手（第 64 轮）。
+   * 单独一个全局监听，不走上面那个"按一下注册一个 keyup"的模式 ——
+   * WASD 是**持续按住**的，只需要知道"现在还按着吗"。
+   * 用 `state.observeKeys` 当集合，松手就删。 */
+  window.addEventListener('keyup', ev => {
+    const k = ev.key.toLowerCase();
+    if (state.observeKeys && state.observeKeys[k]) delete state.observeKeys[k];
   });
 
   /* ---------- 切走窗口（alt-tab / 切标签页 / 锁屏）----------
@@ -1660,6 +1862,13 @@
     state.pendingClick = null;
     state.erasePaint = false;
     state.lastDragCell = null;
+    /* 观察模式/摇杆也一起收掉：切走时手还按在 WASD 或屏幕上，
+     * keyup / mouseup 落到了别的窗口 → 回来以后镜头会自己一直飘，
+     * 而玩家已经松手了。这和"按住交互键切走"是同一个形状的坑。 */
+    state.observeKeys = {};
+    state.joystick = null;
+    state.joyFrom = null;
+    if (state.joyLongPress !== null) { clearTimeout(state.joyLongPress); state.joyLongPress = null; }
     /* 自动暂停。只在真的在跑的时候暂停 —— 建造页/结算页本来就是静止的，
      * 在那边弹一个"已暂停"会莫名其妙。 */
     if (inRun && state.run.phase === 'run' && !state.paused) {
@@ -1678,9 +1887,9 @@
     ['chassisGrip', '木框静摩擦系数', 0, 1.5, 0.05],
     ['groundGrip', '轮子抓地倍率', 0.5, 4, 0.1],
     ['gravity', '重力 m/s²', 6, 30, 0.5],
-    ['motorAccel', '马达加速度', 2, 14, 0.5],
-    ['motorEnergy', '马达耗能 /s', 1, 10, 0.5],
-    ['pumpImpulse', '打气筒冲量', 2, 12, 0.5],
+    /* motorAccel / motorEnergy 两个滑条随马达一起删了（第 63 轮）。
+     * 留着它们比删掉更糟：拖动毫无反应，玩家会以为参数面板坏了。 */
+    ['pumpImpulse', '仙术机关冲量', 2, 12, 0.5],
     ['wheelGrip', '轮子抓地倍率', 0.3, 2, 0.05],
     ['rollResist', '滚动阻力', 0, 0.12, 0.005],
     ['interactCap', '交互键上限', 1, 3, 1]
@@ -2202,8 +2411,9 @@ const BIOMES = {
   function drawGrid() {
     if (state.phase !== 'build') return;
     const o = buildOrigin();
-    const GW = RAP.BUILD_COLS * BUILD_PX, GH = RAP.BUILD_ROWS * BUILD_PX;
-    const HD = 26;                       // 面板标题栏高度
+    const PX = o.px;                       // 一格边长 = PPM × zoom（1 格 = 1 米）
+    const GW = RAP.BUILD_COLS * PX, GH = RAP.BUILD_ROWS * PX;
+    const HD = Math.max(20, PX * 0.55);    // 面板标题栏高度，跟着格子缩
     // 建造台：一块"工程图板"，标题栏 + 细网格线，比原来的橄榄绿玻璃砖干净
     ctx.fillStyle = 'rgba(8,20,28,.58)';
     roundRect(o.x - 12, o.y - HD - 8, GW + 24, GH + HD + 14, 14); ctx.fill();
@@ -2221,24 +2431,24 @@ const BIOMES = {
       for (let c = 0; c < RAP.BUILD_COLS; c++) {
         if ((r + c) % 2) continue;
         ctx.fillStyle = 'rgba(255,255,255,.028)';
-        ctx.fillRect(o.x + c * BUILD_PX, o.y + r * BUILD_PX, BUILD_PX, BUILD_PX);
+        ctx.fillRect(o.x + c * PX, o.y + r * PX, PX, PX);
       }
     }
     // 网格线
     ctx.strokeStyle = 'rgba(150,200,235,.15)'; ctx.lineWidth = 1;
     ctx.beginPath();
     for (let c = 0; c <= RAP.BUILD_COLS; c++) {
-      const x = Math.round(o.x + c * BUILD_PX) + 0.5;
+      const x = Math.round(o.x + c * PX) + 0.5;
       ctx.moveTo(x, o.y); ctx.lineTo(x, o.y + GH);
     }
     for (let r = 0; r <= RAP.BUILD_ROWS; r++) {
-      const y = Math.round(o.y + r * BUILD_PX) + 0.5;
+      const y = Math.round(o.y + r * PX) + 0.5;
       ctx.moveTo(o.x, y); ctx.lineTo(o.x + GW, y);
     }
     ctx.stroke();
     // 四角括角，强化"工作区"的框定感
     ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
-    const CK = 12;
+    const CK = Math.max(6, PX * 0.27);
     [[o.x, o.y, 1, 1], [o.x + GW, o.y, -1, 1], [o.x, o.y + GH, 1, -1], [o.x + GW, o.y + GH, -1, -1]]
       .forEach(([x, y, sx, sy]) => {
         ctx.beginPath();
@@ -2257,12 +2467,12 @@ const BIOMES = {
           // 纯检查，不改数据（用 tryPlace 会每帧推进方向，导致"一直旋转"）
           okHere = RAP.canPlace(level(), state.build, want, cell.r, cell.c).ok;
         }
-        const cx0 = o.x + cell.c * BUILD_PX, cy0 = o.y + cell.r * BUILD_PX;
+        const cx0 = o.x + cell.c * PX, cy0 = o.y + cell.r * PX;
         ctx.fillStyle = okHere ? 'rgba(99,217,126,.28)' : 'rgba(224,81,60,.28)';
-        roundRect(cx0 + 2, cy0 + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.fill();
+        roundRect(cx0 + 2, cy0 + 2, PX - 4, PX - 4, 6); ctx.fill();
         ctx.strokeStyle = okHere ? 'rgba(150,240,170,.9)' : 'rgba(255,150,130,.9)';
         ctx.lineWidth = 2.5;
-        roundRect(cx0 + 2, cy0 + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.stroke();
+        roundRect(cx0 + 2, cy0 + 2, PX - 4, PX - 4, 6); ctx.stroke();
       } else if (state.dragMove) {
         /* 拖动中但光标已经出了网格 → 提前说"松手就卸下"。
          *
@@ -2288,21 +2498,21 @@ const BIOMES = {
     if (cell) {
       if (state.selected === 'eraser') {
         ctx.fillStyle = 'rgba(224,81,60,.28)';
-        roundRect(o.x + cell.c * BUILD_PX + 2, o.y + cell.r * BUILD_PX + 2, BUILD_PX - 4, BUILD_PX - 4, 6);
+        roundRect(o.x + cell.c * PX + 2, o.y + cell.r * PX + 2, PX - 4, PX - 4, 6);
         ctx.fill();
       }
       ctx.strokeStyle = 'rgba(255,235,140,.95)'; ctx.lineWidth = 3;
-      roundRect(o.x + cell.c * BUILD_PX + 2, o.y + cell.r * BUILD_PX + 2, BUILD_PX - 4, BUILD_PX - 4, 6); ctx.stroke();
+      roundRect(o.x + cell.c * PX + 2, o.y + cell.r * PX + 2, PX - 4, PX - 4, 6); ctx.stroke();
     }
     // 当前选中零件放不下的格子 → 红叉提示
     if (cell && !state.build.cells[cell.r + ',' + cell.c] && state.selected !== 'eraser') {
       // 纯检查，不改数据
       const probe = RAP.canPlace(level(), state.build, state.selected, cell.r, cell.c);
       if (!probe.ok) {
-        const cx0 = o.x + cell.c * BUILD_PX + BUILD_PX / 2;
-        const cy0 = o.y + cell.r * BUILD_PX + BUILD_PX / 2;
+        const cx0 = o.x + cell.c * PX + PX / 2;
+        const cy0 = o.y + cell.r * PX + PX / 2;
         ctx.strokeStyle = 'rgba(224,81,60,.85)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-        const s2 = BUILD_PX * 0.2;
+        const s2 = PX * 0.2;
         ctx.beginPath();
         ctx.moveTo(cx0 - s2, cy0 - s2); ctx.lineTo(cx0 + s2, cy0 + s2);
         ctx.moveTo(cx0 + s2, cy0 - s2); ctx.lineTo(cx0 - s2, cy0 + s2);
@@ -2316,17 +2526,17 @@ const BIOMES = {
       ctx.save();
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = '#e6ecf2';
-      roundRect(state.mouse.x - BUILD_PX * 0.36, state.mouse.y - BUILD_PX * 0.26,
-        BUILD_PX * 0.72, BUILD_PX * 0.52, 6); ctx.fill();
+      roundRect(state.mouse.x - PX * 0.36, state.mouse.y - PX * 0.26,
+        PX * 0.72, PX * 0.52, 6); ctx.fill();
       ctx.strokeStyle = '#e0513c'; ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(state.mouse.x - BUILD_PX * 0.2, state.mouse.y - BUILD_PX * 0.1);
-      ctx.lineTo(state.mouse.x + BUILD_PX * 0.2, state.mouse.y + BUILD_PX * 0.1);
+      ctx.moveTo(state.mouse.x - PX * 0.2, state.mouse.y - PX * 0.1);
+      ctx.lineTo(state.mouse.x + PX * 0.2, state.mouse.y + PX * 0.1);
       ctx.stroke();
       ctx.restore();
     } else if (ghost && state.mouse.down) {
       ctx.globalAlpha = 0.55;
-      drawPartShape(ghost, state.mouse.x, state.mouse.y, BUILD_PX * 0.84, 0);
+      drawPartShape(ghost, state.mouse.x, state.mouse.y, PX * 0.84, 0);
       ctx.globalAlpha = 1;
       // 跟着光标显示零件名 —— 拖的时候也知道手里是什么
       if (RAP.PARTS[ghost]) {
@@ -2931,10 +3141,11 @@ const BIOMES = {
 
   function drawBuildCar() {
     const o = buildOrigin();
+    const PX = o.px;
     const keys = Object.keys(state.build.cells);
     const at = (k) => ({
-      x: o.x + (+k.split(',')[1]) * BUILD_PX + BUILD_PX / 2,
-      y: o.y + (+k.split(',')[0]) * BUILD_PX + BUILD_PX / 2
+      x: o.x + (+k.split(',')[1]) * PX + PX / 2,
+      y: o.y + (+k.split(',')[0]) * PX + PX / 2
     });
     // 先画所有零件（框是空的，能看到后面）
     keys.forEach(k => {
@@ -2949,12 +3160,12 @@ const BIOMES = {
           if (age < 1) sc = 1 + 0.22 * Math.sin(Math.PI * age) * (1 - age * 0.4);
           else delete state.popped[k];
         }
-        drawPartShape(cell.part, p.x, p.y, BUILD_PX * sc, cell.dir,
+        drawPartShape(cell.part, p.x, p.y, PX * sc, cell.dir,
           cell.part === 'wood_frame' ? 3 : undefined);
         /* 堆叠徽标：气球/沙袋同一格可以放 1–3 个，形状本身画不出"这里堆了几个"。
          * 用右下角的圆角数字，和托盘上的计数同一套视觉。 */
         const n = RAP.cellCount(cell);
-        if (n > 1) drawStackBadge(p.x + BUILD_PX * 0.30, p.y + BUILD_PX * 0.30, n);
+        if (n > 1) drawStackBadge(p.x + PX * 0.30, p.y + PX * 0.30, n);
       }
     });
     // 方向件箭头：只在「选中该款零件」或「鼠标悬停在该格」时显示
@@ -2971,17 +3182,17 @@ const BIOMES = {
         const v0 = RAP.dirVec(cell.dir || 0);
         ctx.fillStyle = 'rgba(255,255,255,.5)';
         ctx.beginPath();
-        ctx.arc(p0.x + v0[0] * BUILD_PX * 0.34, p0.y - v0[1] * BUILD_PX * 0.34, BUILD_PX * 0.07, 0, Math.PI * 2);
+        ctx.arc(p0.x + v0[0] * PX * 0.34, p0.y - v0[1] * PX * 0.34, PX * 0.07, 0, Math.PI * 2);
         ctx.fill();
         return;
       }
       const p = at(k);
-      drawDirArrow(p.x, p.y, cell.dir || 0, BUILD_PX, RAP.PARTS[cell.part].color, isHover);
+      drawDirArrow(p.x, p.y, cell.dir || 0, PX, RAP.PARTS[cell.part].color, isHover);
       state.arrowDrawN = (state.arrowDrawN || 0) + 1;   // 供测试统计"这一帧画了几个箭头"
       if (isHover) {
         const vv = RAP.dirVec(cell.dir || 0);
         const wd = { '1,0': '右', '-1,0': '左', '0,1': '上', '0,-1': '下' }[vv[0] + ',' + vv[1]] || '';
-        text(wd, p.x + vv[0] * BUILD_PX * 0.8, p.y - vv[1] * BUILD_PX * 0.8 + 5, 14, '#ffffff', 'center', true);
+        text(wd, p.x + vv[0] * PX * 0.8, p.y - vv[1] * PX * 0.8 + 5, 14, '#ffffff', 'center', true);
       }
     });
 
@@ -2990,7 +3201,7 @@ const BIOMES = {
       const cell = state.build.cells[k];
       if (!cell.inner) return;
       const p = at(k);
-      drawPartShape(cell.inner, p.x, p.y, BUILD_PX * 0.62, 0);
+      drawPartShape(cell.inner, p.x, p.y, PX * 0.62, 0);
     });
   }
 
@@ -3034,6 +3245,86 @@ const BIOMES = {
         text(nm, rect.x + rect.w / 2, rect.y - 16, 14, '#ffe9b0', 'center', true);
       }
     });
+  }
+
+  /* ---------- 观察键（第 64 轮，用户要求） ----------
+   *
+   * 「在物品栏加个观察键，点击一下就可以移动视角」
+   *
+   * 做成**开关**而不是一次性动作，因为视角是"我要一直看着它"，不是"按一下挪一下"。
+   * 开着的时候金色底 + 外圈呼吸，而且**按钮自己会亮**——这是唯一一处
+   * 告诉玩家"现在点零件不会放下去"的东西。没有这个反馈，
+   * 玩家会以为零件放坏了（这是真会发生的误判）。
+   *
+   * 位置紧贴托盘最右一格：观察的对象是这条托盘上的车，手不用离开托盘区。
+   */
+  function drawObserveBtn() {
+    const r = observeBtnRect();
+    const on = !!state.observe;
+    const hov = hit(r, state.mouse.x, state.mouse.y);
+    ctx.fillStyle = on ? 'rgba(232,200,122,.92)'
+      : (hov ? 'rgba(44,64,80,.94)' : 'rgba(16,30,40,.92)');
+    roundRect(r.x, r.y, r.w, r.h, 9); ctx.fill();
+    ctx.strokeStyle = on ? 'rgba(255,255,255,.78)' : 'rgba(232,200,122,.55)';
+    ctx.lineWidth = on ? 2.5 : 1.5;
+    roundRect(r.x, r.y, r.w, r.h, 9); ctx.stroke();
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const ink = on ? '#1b2a33' : '#ffe9b0';
+    // 眼睛：上下两段弧 + 瞳孔（"观察"这个词最省事的象形）
+    ctx.strokeStyle = ink; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - 12, cy);
+    ctx.quadraticCurveTo(cx, cy - 11, cx + 12, cy);
+    ctx.quadraticCurveTo(cx, cy + 11, cx - 12, cy);
+    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = ink;
+    ctx.beginPath(); ctx.arc(cx, cy, 4.2, 0, Math.PI * 2); ctx.fill();
+    if (on) {
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 280);
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.25 + 0.35 * pulse).toFixed(3) + ')';
+      ctx.lineWidth = 3;
+      roundRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8, 12); ctx.stroke();
+    }
+    // 文字与托盘的"剩余数量"同一条基线（y+h+14），一排读下来不歪
+    text('观察', cx, r.y + r.h + 14, 12, on ? '#ffe9b0' : '#ffffff', 'center');
+  }
+
+  /* ---------- 浮动虚拟摇杆（第 64 轮，用户要求） ----------
+   *
+   * 「长按屏幕出摇杆控制，结束长按摇杆就立刻消失」
+   *
+   * 出现的**位置就是按下的位置**（不是固定角落），松手立刻消失 ——
+   * 所以它是"临时"的：不常驻、不占屏幕、不需要玩家先去角落找它。
+   *
+   * 画在所有 UI 之上（见 frameBody 里的调用顺序）：它出现的地方
+   * 常常正好压在托盘或网格上，被盖住就看不出自己推了多远。
+   * 盘面和摇杆头用的是**同一份** JOY_R/JOY_DEAD（绘制与判定同源）。
+   */
+  function drawJoystick() {
+    const j = state.joystick;
+    if (!j) return;
+    ctx.save();
+    // 底盘
+    ctx.fillStyle = 'rgba(10,20,26,.42)';
+    ctx.beginPath(); ctx.arc(j.ox, j.oy, JOY_R, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(232,200,122,.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(j.ox, j.oy, JOY_R, 0, Math.PI * 2); ctx.stroke();
+    // 四向刻度（推出去多少、往哪个方向，靠这四条读）
+    ctx.strokeStyle = 'rgba(232,200,122,.35)'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 4; i++) {
+      const a = i * Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(j.ox + Math.cos(a) * (JOY_R - 3), j.oy + Math.sin(a) * (JOY_R - 3));
+      ctx.lineTo(j.ox + Math.cos(a) * (JOY_R - 9), j.oy + Math.sin(a) * (JOY_R - 9));
+      ctx.stroke();
+    }
+    // 摇杆头：推出死区才变金色（"没推"与"推了"必须一眼可分）
+    const mag = Math.hypot(j.dx || 0, j.dy || 0);
+    ctx.fillStyle = mag > 0 ? 'rgba(232,200,122,.95)' : 'rgba(230,238,246,.9)';
+    ctx.beginPath(); ctx.arc(j.x, j.y, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(j.x, j.y, 22, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
   }
 
   /* 打气筒的蓄力进度（0~1，按 0.8 秒到顶）。
@@ -5276,6 +5567,37 @@ const BIOMES = {
       if (!state.buildView) state.buildView = buildViewDefault(level());
       const bv = clampBuildView(state.buildView, level());
       state.buildView = bv;
+      /* ---------- 观察模式：WASD / 摇杆推镜头（第 64 轮） ----------
+       *
+       * 位移按 dt 推进（不是按事件），所以"按住"就是持续平移，
+       * 而按下/松手的频率不会影响速度。
+       *
+       * 速度用 worldPxPerSec / (PPM*zoom)：屏幕上一秒滑多少像素是**恒定的**，
+       * 放大时世界位移自动变小 —— 这才是"拖画面"的手感。
+       * 如果按世界速度算，放大之后会飞得看不见。
+       */
+      {
+        const panScreen = 420;                  // 屏幕像素/秒（满杆）
+        const s2 = PPM * bv.zoom;
+        let mx = 0, my = 0;
+        const ok = state.observeKeys || {};
+        if (state.observe) {
+          if (ok['a']) mx -= 1;
+          if (ok['d']) mx += 1;
+          if (ok['w']) my += 1;                 // W = 往上看 = 世界 y 增大
+          if (ok['s']) my -= 1;
+        }
+        if (state.joystick) {
+          mx += state.joystick.dx || 0;
+          my -= state.joystick.dy || 0;         // 摇杆向下（dy>0）= 视角往下
+        }
+        if (mx || my) {
+          const k2 = (panScreen / s2) * dt;
+          bv.x += mx * k2;
+          bv.y += my * k2;
+          clampBuildView(bv, level());
+        }
+      }
       const cam = { x: bv.x, y: bv.y, zoom: bv.zoom };
       if (state.introT < 1) {
         state.introT = Math.min(1, state.introT + dt / 1.2);
@@ -5316,17 +5638,22 @@ const BIOMES = {
           const by = state.bounce.y + (ty - state.bounce.y) * k;
           ctx.save();
           ctx.globalAlpha = 1 - k * 0.7;
-          drawPartShape(state.bounce.part, bx, by, BUILD_PX * 0.84 * (1 - k * 0.3), 0);
+          drawPartShape(state.bounce.part, bx, by,
+            (buildOrigin().px) * 0.84 * (1 - k * 0.3), 0);
           ctx.restore();
         }
       }
       drawTray();
+      drawObserveBtn();
       drawButtons();
       drawTabs();
       /* 地形预览条必须用这一帧的 ter（可能刚重建过），并且只画在建造期：
        * 行驶期玩家已经在跑那段地形了，再挂一条缩略图只是噪音。 */
       drawBuildPreview(ter);
       drawHud();
+      /* 摇杆画在**所有 UI 之上**：它出现在玩家按下的地方，
+       * 那可能正好压在托盘或网格上，被盖住就看不见自己推了多远。 */
+      drawJoystick();
       if (uiAlpha < 1) ctx.globalAlpha = 1;
       ctx.restore();
     } else if (state.phase === 'run' || state.phase === 'resolved') {
@@ -5610,7 +5937,12 @@ const BIOMES = {
     if (!localStorage.getItem('rap-welcomed-v1')) state.welcome = 1;
   } catch (e) { state.welcome = 1; }
 
-  window.__rap = { state, RAP, levels, startLevel, launch, launchSpec, buildOrigin, BUILD_PX, cellAt, canvasPos,
+  /* `BUILD_PX` 不再是常量 —— 一格 = PPM × zoom（见 buildOrigin）。
+   * 导出 buildCellPx() 给测试用；老的 BUILD_PX 保留成一个 getter 形态的函数，
+   * 免得还在读它的探针直接崩（读到的值是**当前**格边长）。 */
+  window.__rap = { state, RAP, levels, startLevel, launch, launchSpec, buildOrigin,
+                   buildCellPx, get BUILD_PX() { return buildCellPx(); },
+                   cellAt, canvasPos,
                    trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,
                    welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect,
                    runChallengeRect, challengeStatus, SAVE_KEY,
