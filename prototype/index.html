@@ -119,7 +119,13 @@
   const TRAY = RAP.TRAY_ORDER.concat(['eraser']);
   const state = {
     levelIndex: 0, phase: 'build', build: RAP.newBuild(),
-    selected: 'wood_frame', run: null, paramsOpen: false,
+    /* 开局默认拿着木框：一进关直接点网格就能落第一块框，
+     * 不必先去托盘点一下（新手最容易卡住的就是"我点了格子怎么没反应"）。 */
+    selected: 'wood_frame',
+    /* `selectedByUser`：这个选中是**玩家点出来的**，还是开局预置的默认值？
+     * 只有前者才能"再点一次取消"。没有这个区分的话，第一次点木框槽
+     * 会把它当成"再点取消"，玩家想选却把它放下了（第 64 轮回归事故）。 */
+    selectedByUser: false,
     dragPart: null, dragFromTray: false, mouse: { x: 0, y: 0, down: false },
     helpOpen: false, paused: false, bounce: null, debris: [], bursts: [], slowmo: 0, lastImpact: null,
     /* 提示的当前层，**直接就是数组下标** 0/1/2。点一次 +1，到 2 就不再变。
@@ -687,7 +693,28 @@
     const zx = (DW * 0.86) / (spanX * PPM);
     const zy = (DH * 0.62) / (spanY * PPM);
     const zoom = Math.max(BUILD_ZOOM_MIN, Math.min(1.35, Math.min(zx, zy)));
-    return { x: (c0 + c1) / 2 + 0.5, y: (lo + hi) / 2 + 1.0, zoom: zoom };
+    /* 镜头横向不再"把关卡跨度居中"，而是**把拼装区让出左侧工具条**。
+     *
+     * 第 64 轮把网格世界锚定之后，它跟着起点的世界坐标跑，而起点在关卡最左边 ——
+     * 于是默认镜头照旧居中时，网格左半边正好压在「清空 / 撤销 / 换方向」那排圆钮底下。
+     * 圆钮画在网格之后，点击也先被圆钮吃掉：玩家点 (4,2) 那格，实际按到了撤销，
+     * 刚放好的零件凭空消失（tools/dbg_place2.js 里 trace 出的就是
+     * `tryPlace(4,1) -> undo()`）。
+     *
+     * 所以这里反过来算：先定"网格左边缘应该出现在哪"（BUILD_CLEAR_X，
+     * 取工具条右沿再留 20px 余量），再由它反推镜头中心。
+     * 这样竖屏/宽屏换画布也不用改 —— 反正锚的是设计坐标。 */
+    const BUILD_CLEAR_X = 168;
+    const px0 = PPM * zoom;
+    /* 目标：让**网格左边缘**（格 0 的左沿）落在 BUILD_CLEAR_X。
+     *
+     * buildOrigin().x = centerX - (ANCHOR_COL + 0.5)*px，
+     * 而 centerX = DW/2 + (a.x - cam.x)*px，a.x = start.col+0.5。
+     * 令 buildOrigin().x = BUILD_CLEAR_X 解出 cam.x —— 下面这行就是那个解。
+     * 写成算式而不是"试出来的魔法数"，是因为换画布尺寸/换关卡起点后它还得成立。 */
+    const anchorX = (lv.start.col + 0.5);
+    const cx = anchorX - (BUILD_CLEAR_X - DW / 2) / px0 - (BUILD_ANCHOR_COL + 0.5);
+    return { x: cx, y: (lo + hi) / 2 + 1.0, zoom: zoom };
   }
   /* 允许拖到多远：关卡两端各留 6 米，纵向上下各留 12 米。
    * 不设限的话玩家能把地图拖到宇宙外，回来就找不到路了。 */
@@ -1061,6 +1088,7 @@
     state.phase = 'build';
     state.run = null;
     state.selected = 'wood_frame';
+    state.selectedByUser = false;   // 预置默认值不算"玩家选的"（见 selectPart）
     state.cam = buildCam();
     /* 每关进场时把"看全图"镜头重置成整关俯瞰。
      * 不在这里重置的话，玩家在上一关拖到的位置会带到下一关 ——
@@ -1104,21 +1132,35 @@
      * 为什么需要：选中是一个**持续状态**（选中后点网格就落子）。
      * 没有取消的话，玩家选错零件以后必须去点另一个零件才能换掉 ——
      * 而且"手里一直攥着一个零件"会让人误点。
-     * 取消之后 selected = null，此时点网格什么都不放（橡皮同理）。 */
-    if (state.selected === part && part !== 'eraser') {
+     * 取消之后 selected = null，此时点网格什么都不放（橡皮同理）。
+     *
+     * `selectedByUser` 这个标记是补出来的，因为上面这条规则和
+     * **开局预设的默认零件**打架：startLevel 会把 selected 预置成木框
+     * （这样一进关点网格就能直接落第一块框，不用先去托盘点一下）。
+     * 但预置之后玩家第一次点木框槽，命中的是"再点取消"这条分支 ——
+     * 于是他想**选**木框，实际动作却是把它**放下**，接着点网格什么都没发生。
+     * 第 64 轮回归时 11 个脚本就是这么连环挂掉的（前提全倒）。
+     *
+     * 所以取消只对"玩家自己点出来的选中"生效：
+     * 预置态下第一次点 = 确认选中，第二次点才 = 取消。 */
+    if (state.selected === part && part !== 'eraser' && state.selectedByUser) {
       state.selected = null;
+      state.selectedByUser = false;
       SFX.place(0.35);
       return;
     }
     // 橡皮不参与"再点取消"：它是工具不是零件，且取消后就没法擦东西了
     if (part === 'eraser') {
-      state.selected = state.selected === 'eraser' ? null : 'eraser';
+      const off = state.selected === 'eraser' && state.selectedByUser;
+      state.selected = off ? null : 'eraser';
+      state.selectedByUser = !off;
       return;
     }
     // 零件箱里没有的零件不给选
     const left = RAP.budgetLeft(level(), part, state.build);
     if (left <= 0) { toast('这个零件已经用完了'); return; }
     state.selected = part;
+    state.selectedByUser = true;
   }
 
   /* 撤销：整个回到上一步图纸（见 game.js 里 undo 的注释 —— 原来的
