@@ -10,6 +10,7 @@
  */
 const fs = require('fs');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -154,10 +155,13 @@ const MEASURE = `(() => {
     all.push(lines.join('\n'));
   }
 
-  // ---- build ----
-  const o = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const BP = await ev('window.__rap.BUILD_PX');
-  const TRAY = JSON.parse(await ev('JSON.stringify(window.__rap.TRAY)'));
+  /* ══ 几何与点击 ══
+   * 格心一律走 tools/lib/grid.js 现读（原来缓存了 o/BP 用到底）。
+   * 第 64 轮世界锚定之后 buildOrigin() 是活的：放下第一个轮子，锚点跟着车高
+   * 抬起约 0.84 米，缓存坐标作废 —— 于是下面五个 place 全放偏、车装不起来、
+   * 「出发」被 canLaunch 拦下，phase 停在 build 而脚本仍往前跑，
+   * 走到 `s.run.result="win"` 时 run 是 null → 崩在 ev()。
+   * 这就是 verify 里「对比度审计 / 无法解析」的真身：脚本崩了，一行汇总都没打。 */
   const rect = JSON.parse(await ev(`(()=>{const r=document.getElementById('cv').getBoundingClientRect();return JSON.stringify({l:r.left,t:r.top,w:r.width,h:r.height});})()`));
   const cl = (dx, dy) => ({ x: rect.l + dx * rect.w / 1280, y: rect.t + dy * rect.h / 720 });
   async function click(dx, dy) {
@@ -168,15 +172,10 @@ const MEASURE = `(() => {
     await sleep(150);
   }
   const centerOf = async expr => JSON.parse(await ev(`(()=>{const r=${expr};return JSON.stringify({x:r.x+r.w/2,y:r.y+r.h/2});})()`));
-  const trayC = async n => {
-    const r = JSON.parse(await ev(`JSON.stringify(window.__rap.trayRect(${TRAY.indexOf(n)}))`));
-    return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-  };
-  const place = async (part, r, c) => {
-    const t = await trayC(part); await click(t.x, t.y);
-    await click(o.x + c * BP + BP / 2, o.y + r * BP + BP / 2);
-  };
+  const G = gridLib.make(ev, click);
+  const place = (part, r, c) => G.place(part, r, c);
 
+  // ---- build ----
   await check('build');
   for (const c of [1, 2, 3]) await place('wood_frame', 4, c);
   for (const c of [1, 3]) await place('wood_wheel', 5, c);

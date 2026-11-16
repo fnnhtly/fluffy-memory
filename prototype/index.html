@@ -532,23 +532,29 @@
    */
   const BUILD_ANCHOR_COL = 2.5, BUILD_ANCHOR_ROW = 3.5;   // 车心在网格中的位置
 
+  /* 车心离地多高。**这是个常量，不许跟着 state.build 变**。
+   *
+   * 原来这里算的是"当前车上最低的那个轮子的下沿"，想让拼装区的车
+   * 严丝合缝地贴在地面上。想法没错，后果很糟：
+   * 空车时 `lowest = 0.5`，放下**第一个轮子**的瞬间 `lowest` 变成 -0.35 左右，
+   * 整块拼装板连着里面的车**凭空往上跳 0.85 米**（实测 1-1 是 95.7 px，
+   * 比一格还高）。玩家的手还按在原来的格子上，格子已经跑了；
+   * 而这 0.85 米恰好也是"拼装区的车"和"出发后的车"在竖直方向上的差。
+   *
+   * 现在固定成"有轮子的标准车"的静止高度：轮子半米 + 车架离地。
+   * 这样拼装板**永远不动**，而拼装时看到的高度仍然就是出发时的高度。
+   * 竖直方向允许有误差（不同搭法轮子位置不同），横向必须严格对齐 ——
+   * 用户那句「拼装的车要出现在地图相同位置」说的就是横向那件事。 */
+  const BUILD_REST_Y = 0.86;
+
   /* 网格锚点的世界坐标 = 车的出发位置。
-   * 和 game.js `createRun` 的 startX/startY 用**同一套算法**，
-   * 否则"拼装区里的车"和"出发后的车"会差半个身位。 */
+   * 横向和 game.js `createRun` 的 startX 完全一致（列 + 0.5）；
+   * 纵向见 BUILD_REST_Y 上面那段。 */
   function buildAnchorWorld() {
     const lv = level();
     const ter = terrainCache || RAP.makeTerrain(lv);
     const startX = lv.start.col + 0.5;
-    /* 车心离地多少：取最低轮子的下沿。没有轮子时退化成 0.5。
-     * 这段等价于 createRun 里的 `surfaceY - lowest + 0.01`。 */
-    let lowest = 0.5;
-    const built = RAP.buildVehicle(lv, state.build);
-    if (built && built.wheels && built.wheels.length) {
-      lowest = 0;
-      built.wheels.forEach(w => { lowest = Math.min(lowest, w.ly - w.def.radius); });
-    }
-    const startY = ter.surfaceY(startX) - lowest + 0.01;
-    return { x: startX, y: startY };
+    return { x: startX, y: ter.surfaceY(startX) + BUILD_REST_Y };
   }
 
   /* 一格的屏幕边长。建造相用 state.buildView（观察时会变），行驶相用 camState。 */
@@ -714,7 +720,34 @@
      * 写成算式而不是"试出来的魔法数"，是因为换画布尺寸/换关卡起点后它还得成立。 */
     const anchorX = (lv.start.col + 0.5);
     const cx = anchorX - (BUILD_CLEAR_X - DW / 2) / px0 - (BUILD_ANCHOR_COL + 0.5);
-    return { x: cx, y: (lo + hi) / 2 + 1.0, zoom: zoom };
+    let cy = (lo + hi) / 2 + 1.0;
+
+    /* 纵向：先按地形取，再**顶到顶部两条文字下面为止**。
+     *
+     * 顶部压着两条固定的东西（都在 drawHud 里）：
+     *   · 信息条 `roundRect(84, 90, 700, 30)`             → 占到 y=120；
+     *   · 三行说明的底衬 `roundRect(84, 128, 640, 58)`    → 占到 y=186。
+     * 而拼装板的标题栏在板子上方 HD+8 像素。第 64 轮把板子锚到起点之后，
+     * 起点高的关（有轮子的 1-1）算出来的板顶会钻到这两条底下 ——
+     * 标题「拼装区」和「6 × 8」被压在说明文字里。
+     *
+     * 这一条是**量出来**的，不是看出来的：tools/probe_title_overdraw.js
+     * 在 fillText 画完之后立刻读像素（205），帧末再读一次（88），
+     * 证明"它自己画亮了、是后面盖上去的"；probe_pixel_culprit.js 再逐个
+     * fill 前后取样，锁定罪魁就是这块 `rgba(10,18,24,.62)` 底衬。
+     *
+     * 修法是"不够就往下让"，不是"永远钉死"：地形本身矮的关（1-2/1-5 那种）
+     * 本来就有余量，硬钉死会把起点顶到画面最下面，反而看不到地形。
+     *
+     * 方向别搞反：cam.y 变大 → 世界相对镜头下沉 → 格子画得更靠下。
+     * 所以"让板子往下"= 给 cam.y 加值。 */
+    const HD0 = Math.max(20, px0 * 0.55);
+    const GRID_MIN_TOP = 196;                 // 板顶（含标题栏）的最小 y
+    const oY = DH / 2 - (buildAnchorWorld().y - cy) * px0 - (BUILD_ANCHOR_ROW + 0.5) * px0;
+    const panelTop = oY - HD0 - 8;
+    if (panelTop < GRID_MIN_TOP) cy += (GRID_MIN_TOP - panelTop) / px0;
+
+    return { x: cx, y: cy, zoom: zoom };
   }
   /* 允许拖到多远：关卡两端各留 6 米，纵向上下各留 12 米。
    * 不设限的话玩家能把地图拖到宇宙外，回来就找不到路了。 */
@@ -3414,7 +3447,10 @@ const BIOMES = {
       ctx.beginPath();
       ctx.moveTo(LC.x - 14, LC.y + 1); ctx.lineTo(LC.x - 4, LC.y + 11); ctx.lineTo(LC.x + 15, LC.y - 11);
       ctx.stroke();
-      text('出发', LC.x, L.y + L.h + 20, 14, ready ? '#dff0ff' : '#93a3ae', 'center', true);
+      /* 未就绪时这颗钮是灰的，但**字不能跟着灰**：这说明行是"要你做点什么"
+       * 的唯一提示，灰到底就读不出来了（实测 #93a3ae 在网格底衬上只有 3.05，
+       * 低于 4.5 的小字门槛）。灰按钮 + 亮字是标准做法。 */
+      text('出发', LC.x, L.y + L.h + 20, 14, ready ? '#dff0ff' : '#c3d2de', 'center', true);
 
       // 左侧三个小圆钮（图标 + 右侧文字，装在同一个圆角坞里）
       const knob = (rect, drawIcon, label, active) => {

@@ -9,6 +9,7 @@
  */
 const fs = require('fs');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -84,14 +85,14 @@ function overlapRatio(a, b) {
   await ev('window.__rap.state.introT=1');
   await sleep(250);
 
-  const o = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const BP = await ev('window.__rap.BUILD_PX');
-  const TRAY = JSON.parse(await ev('JSON.stringify(window.__rap.TRAY)'));
-  const cellC = (r, c) => ({ x: o.x + c * BP + BP / 2, y: o.y + r * BP + BP / 2 });
-  const trayC = async name => {
-    const r = JSON.parse(await ev(`JSON.stringify(window.__rap.trayRect(${TRAY.indexOf(name)}))`));
-    return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-  };
+  /* 几何一律走 tools/lib/grid.js 现读（原来缓存了 o/BP）。
+   * 第 64 轮世界锚定之后 buildOrigin() 是活的：放下第一个轮子，锚点跟着
+   * 车高抬约 0.84 米，缓存坐标作废 —— 于是 build-full 那一段的零件全放偏，
+   * 车装不起来，按「出发」被拦下，phase 停在 build，
+   * 末尾 `btnRect('pause')` 返回 null → 崩在 centerOf（「无法解析」的来源）。 */
+  const G = gridLib.make(ev, click);
+  const place = (part, r, c) => G.place(part, r, c);
+  const trayC = part => G.tray(part);
   const rect = JSON.parse(await ev(`(()=>{const r=document.getElementById('cv').getBoundingClientRect();return JSON.stringify({l:r.left,t:r.top,w:r.width,h:r.height});})()`));
   const cl = (dx, dy) => ({ x: rect.l + dx * rect.w / 1280, y: rect.t + dy * rect.h / 720 });
   async function click(dx, dy) {
@@ -102,10 +103,6 @@ function overlapRatio(a, b) {
     await sleep(150);
   }
   const centerOf = async expr => JSON.parse(await ev(`(()=>{const r=${expr};return JSON.stringify({x:r.x+r.w/2,y:r.y+r.h/2});})()`));
-  async function place(part, r, c) {
-    const t = await trayC(part); await click(t.x, t.y);
-    const q = cellC(r, c); await click(q.x, q.y);
-  }
 
   let totalBad = 0;
   const all = [];

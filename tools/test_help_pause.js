@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
@@ -71,18 +72,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ok('点空白能关掉零件说明', await ev('window.__rap.state.helpOpen') === false);
 
   // ---- 2. 用真实几何摆一台能跑的车 ----
-  const trayIdx = await ev("JSON.stringify(window.__rap.TRAY)");
-  const TRAY = JSON.parse(trayIdx);
-  const tray = async name => center(`window.__rap.trayRect(${TRAY.indexOf(name)})`);
-  const o = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const BP = await ev('window.__rap.BUILD_PX');
-  const cell = (r, c) => ({ x: o.x + c * BP + BP / 2, y: o.y + r * BP + BP / 2 });
-  async function place(part, r, c) {
-    const t = await tray(part);
-    await click(t.x, t.y);
-    const q = cell(r, c);
-    await click(q.x, q.y);
-  }
+  /* 几何一律走 tools/lib/grid.js 现读，不在这里缓存 buildOrigin()。
+   * 第 64 轮世界锚定之后它是**活的**：放下第一个轮子时锚点跟着
+   * "车上最低轮子的下沿"抬起约 0.84 米，缓存坐标随后全部作废。
+   * 原来就是因此把猪放偏 → 车装不起来 → phase 还停在 build →
+   * `btnRect('pause')` 返回 null → `JSON.parse('undefined')` 崩在 center()，
+   * 一条断言都没跑到（这正是「崩溃或超时」那个描述的来源）。 */
+  const G = gridLib.make(ev, click);
+  const place = (part, r, c) => G.place(part, r, c);
   for (const c of [1, 2, 3]) await place('wood_frame', 4, c);
   for (const c of [1, 3]) await place('wood_wheel', 5, c);
   await place('pig', 4, 2);

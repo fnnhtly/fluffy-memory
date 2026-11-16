@@ -11,6 +11,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
@@ -73,20 +74,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     if (!c) throw new Error('找不到可点区域: ' + expr); await click(c.x, c.y); return c; };
 
   // 全部从页面几何取，不写死像素
-  const BUILD_PX = await ev('window.__rap.BUILD_PX');
-  const ORIGIN = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const TRAY = JSON.parse(await ev('JSON.stringify(window.__rap.TRAY)'));
-  const cellXY = (r, c) => ({ x: ORIGIN.x + c * BUILD_PX + BUILD_PX / 2,
-                              y: ORIGIN.y + r * BUILD_PX + BUILD_PX / 2 });
-  const trayXY = async n => {
-    const i = TRAY.indexOf(n);
-    if (i < 0) throw new Error('零件槽里没有 ' + n);
-    return rectCenter(`window.__rap.trayRect(${i})`);
-  };
-  const place = async (part, r, c) => {
-    const t = await trayXY(part); await click(t.x, t.y);
-    const g = cellXY(r, c); await click(g.x, g.y);
-  };
+  /* 几何一律走 tools/lib/grid.js，且**每次现读**。
+   * 原来缓存 BUILD_PX / ORIGIN 然后一直用 —— 但第 64 轮世界锚定之后
+   * buildOrigin() 是活的：放下第一个轮子，锚点就跟着车高抬约 0.84 米，
+   * 于是猪放偏、车装不起来、按「出发」被 canLaunch 拦下、phase 停在 build，
+   * 最后 `btnRect('next')` 返回 null → 抛「找不到可点区域」。
+   * 症状就是一句「崩溃或超时」，一条断言都没跑到。 */
+  const G = gridLib.make(ev, click);
+  const place = (part, r, c) => G.place(part, r, c);
 
   const chk = (label, cond, x) => A.chk(label, cond, x);
 

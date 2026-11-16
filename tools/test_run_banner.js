@@ -10,6 +10,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
@@ -73,17 +74,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await ev('window.__rap.state.introT=1'); await sleep(200);
 
   // 摆一台最小可跑的车
-  const o = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const BP = await ev('window.__rap.BUILD_PX');
-  const TRAY = JSON.parse(await ev('JSON.stringify(window.__rap.TRAY)'));
-  const trayC = async n => {
-    const r = JSON.parse(await ev(`JSON.stringify(window.__rap.trayRect(${TRAY.indexOf(n)}))`));
-    return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-  };
-  const place = async (part, r, c) => {
-    const t = await trayC(part); await click(t.x, t.y);
-    await click(o.x + c * BP + BP / 2, o.y + r * BP + BP / 2);
-  };
+  /* 几何一律走 tools/lib/grid.js 现读。原来缓存了一次 o/BP 用到底，
+   * 而 buildOrigin() 是活的（放下第一个轮子时锚点抬起约 0.84 米），
+   * 于是后面的猪放偏、车装不起来、按「出发」被 canLaunch 拦下，
+   * phase 停在 build → 末尾 `btnRect('pause')` 返回 null → 崩在 centerOf。 */
+  const G = gridLib.make(ev, click);
+  const place = (part, r, c) => G.place(part, r, c);
   for (const c of [1, 2, 3]) await place('wood_frame', 4, c);
   for (const c of [1, 3]) await place('wood_wheel', 5, c);
   await place('pig', 4, 2);

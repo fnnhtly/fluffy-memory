@@ -19,6 +19,7 @@
  * 或者卸下后又写回某个格子，数量会算错，而"变多了"看起来像好消息。
  */
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -100,11 +101,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(240);
   }
 
-  const geo = JSON.parse(await ev(`(()=>{const R=window.__rap,RAP=R.RAP,o=R.buildOrigin();
-    return JSON.stringify({ox:o.x,oy:o.y,px:R.BUILD_PX,cols:RAP.BUILD_COLS,rows:RAP.BUILD_ROWS});})()`));
-  const cc = (r, c) => ({ x: geo.ox + c * geo.px + geo.px / 2, y: geo.oy + r * geo.px + geo.px / 2 });
-  const OUT_L = { x: geo.ox - 140, y: geo.oy + geo.px * 2 };          // 网格左边
-  const OUT_B = { x: geo.ox + geo.px * 3, y: geo.oy + geo.rows * geo.px + 60 };  // 网格下方
+  /* 单击 = 移过去 + 按下 + 松开。grid helper 需要一个 click(设计x, 设计y)，
+   * 而本脚本原来只有 mouse()/drag()。 */
+  async function click(x, y) {
+    await mouse('mouseMoved', x, y);
+    await mouse('mousePressed', x, y);
+    await mouse('mouseReleased', x, y);
+    await sleep(160);
+  }
+
+  /* 几何一律走 tools/lib/grid.js 现读。
+   * 第 64 轮世界锚定之后 buildOrigin() 是**活的**：这个脚本的 setup()
+   * 用 applySpec 铺 1-6 标准解（里面有 2 个轮子），轮子一进来锚点就抬，
+   * 缓存下来的 ox/oy 就作废 —— 于是每一次 drag 的起点都落在空格上，
+   * 拖拽根本没开始（`state.pendingClick` 不成立），格子自然原封不动。
+   * 症状就是十几条"没清空 / 待使用没涨 / 没提示"一起红。 */
+  const G = gridLib.make(ev, click);
+  const cc = (r, c) => G.cell(r, c);
+  const outL = () => G.out('left');            // 网格左边
+  const outB = () => G.out('bottom');          // 网格下方
 
   // 1-6 造好标准解，但把所有气球格都清掉，只在 (1,1) 放一格 —— 基线干净
   async function setup(n) {
@@ -135,7 +150,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // ---------- 1. 单件拖出网格 ----------
   await setup(1);
   const a0 = await st();
-  await drag(cc(1, 1), OUT_L);
+  await drag(await cc(1, 1), await outL());
   const a1 = await st();
   A.chk('拖出网格后那一格清空了', a1.cell11 === 0, 'n=' + a1.cell11);
   A.chk('待使用正好 +1（拖出去的正好 1 个）', delta(a0, a1) === 1, a0.left + ' → ' + a1.left);
@@ -146,7 +161,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // ---------- 2. 叠放 3 个拖出 ----------
   await setup(3);
   const b0 = await st();
-  await drag(cc(1, 1), OUT_B);
+  await drag(await cc(1, 1), await outB());
   const b1 = await st();
   A.chk('叠放 3 个拖出后那一格清空', b1.cell11 === 0, 'n=' + b1.cell11);
   A.chk('待使用 +3（不是 +1）', delta(b0, b1) === 3, b0.left + ' → ' + b1.left);
@@ -156,7 +171,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // ---------- 3. 叠放 3 个拖到另一空格 ----------
   await setup(3);
   const c0 = await st();
-  await drag(cc(1, 1), cc(3, 2));
+  await drag(await cc(1, 1), await cc(3, 2));
   const c1 = await st();
   A.chk('拖到另一空格：原格清空', c1.cell11 === 0, 'n=' + c1.cell11);
   A.chk('拖到另一空格：新格拿到 3 个（数量没丢）', c1.cell32 === 3, 'n=' + c1.cell32);
@@ -169,7 +184,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await ev(`(()=>{const s=window.__rap.state; s.build.cells['3,2']={part:'wood_frame',dir:0};
     if(s.build.order.indexOf('3,2')<0) s.build.order.push('3,2'); return 1;})()`);
   const d0 = await st();
-  await drag(cc(1, 1), cc(3, 2));
+  await drag(await cc(1, 1), await cc(3, 2));
   const d1 = await st();
   A.chk('拖到被占的格子：零件弹回原处', d1.cell11 === 3, 'n=' + d1.cell11);
   A.chk('拖到被占的格子：待使用不变（这不是卸载）', delta(d0, d1) === 0, d0.left + ' → ' + d1.left);
@@ -182,52 +197,58 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ---------- 5. 拖出去之后车还能发射（状态没被弄坏） ----------
   await setup(1);
-  await drag(cc(1, 1), OUT_L);
+  await drag(await cc(1, 1), await outL());
   const chk = JSON.parse(await ev(`(()=>{const R=window.__rap.RAP,s=window.__rap.state;
     const c=R.canLaunch(s.build);return JSON.stringify(c);})()`));
   A.chk('卸下后车仍然可以发射（拆零件不等拆车）', chk.ok === true, JSON.stringify(chk));
 
   // ---------- 6. 拖到网格外时，光标旁提前说"松手卸下" ----------
   await setup(1);
-  await mouse('mouseMoved', cc(1, 1).x, cc(1, 1).y);
-  await mouse('mousePressed', cc(1, 1).x, cc(1, 1).y);
-  for (let i = 1; i <= 10; i++) {
-    await mouse('mouseMoved', cc(1, 1).x + (OUT_L.x - cc(1, 1).x) * i / 10,
-      cc(1, 1).y + (OUT_L.y - cc(1, 1).y) * i / 10);
-    await sleep(28);
+  {
+    const A1 = await cc(1, 1), OUT_L = await outL();
+    await mouse('mouseMoved', A1.x, A1.y);
+    await mouse('mousePressed', A1.x, A1.y);
+    for (let i = 1; i <= 10; i++) {
+      await mouse('mouseMoved', A1.x + (OUT_L.x - A1.x) * i / 10,
+        A1.y + (OUT_L.y - A1.y) * i / 10);
+      await sleep(28);
+    }
+    await sleep(200);                 // 让主循环画一帧
+    await ev('window.__txt.length = 0');
+    await sleep(260);
+    const live = JSON.parse(await ev('JSON.stringify(window.__txt)'));
+    A.chk('拖动到网格外时，光标旁出现「松手卸下」',
+      live.some(t => t.indexOf('松手卸下') >= 0),
+      live.filter(t => t.indexOf('松手') >= 0).join(' ') || '一帧里没这句');
+    await shot('du-05-drop-hint');
+    await mouse('mouseReleased', OUT_L.x, OUT_L.y);
+    await sleep(240);
   }
-  await sleep(200);                 // 让主循环画一帧
-  await ev('window.__txt.length = 0');
-  await sleep(260);
-  const live = JSON.parse(await ev('JSON.stringify(window.__txt)'));
-  A.chk('拖动到网格外时，光标旁出现「松手卸下」',
-    live.some(t => t.indexOf('松手卸下') >= 0),
-    live.filter(t => t.indexOf('松手') >= 0).join(' ') || '一帧里没这句');
-  await shot('du-05-drop-hint');
-  await mouse('mouseReleased', OUT_L.x, OUT_L.y);
-  await sleep(240);
   const afterHint = await st();
   A.chk('真的松手之后确实卸下了', afterHint.left > (await st()).left - 1 &&
     afterHint.cell11 === 0, 'n=' + afterHint.cell11 + ' left=' + afterHint.left);
 
   // ---------- 7. 网格内部拖动时**不**出现这句（否则变成常驻噪音） ----------
   await setup(3);
-  await mouse('mouseMoved', cc(1, 1).x, cc(1, 1).y);
-  await mouse('mousePressed', cc(1, 1).x, cc(1, 1).y);
-  for (let i = 1; i <= 10; i++) {
-    await mouse('mouseMoved', cc(1, 1).x + (cc(3, 2).x - cc(1, 1).x) * i / 10,
-      cc(1, 1).y + (cc(3, 2).y - cc(1, 1).y) * i / 10);
-    await sleep(28);
+  {
+    const A1 = await cc(1, 1), T2 = await cc(3, 2);
+    await mouse('mouseMoved', A1.x, A1.y);
+    await mouse('mousePressed', A1.x, A1.y);
+    for (let i = 1; i <= 10; i++) {
+      await mouse('mouseMoved', A1.x + (T2.x - A1.x) * i / 10,
+        A1.y + (T2.y - A1.y) * i / 10);
+      await sleep(28);
+    }
+    await sleep(200);
+    await ev('window.__txt.length = 0');
+    await sleep(260);
+    const inGrid = JSON.parse(await ev('JSON.stringify(window.__txt)'));
+    A.chk('网格内部拖动时不出现「松手卸下」（否则是常驻噪音）',
+      !inGrid.some(t => t.indexOf('松手卸下') >= 0),
+      inGrid.filter(t => t.indexOf('松手') >= 0).join(' '));
+    await mouse('mouseReleased', T2.x, T2.y);
+    await sleep(240);
   }
-  await sleep(200);
-  await ev('window.__txt.length = 0');
-  await sleep(260);
-  const inGrid = JSON.parse(await ev('JSON.stringify(window.__txt)'));
-  A.chk('网格内部拖动时不出现「松手卸下」（否则是常驻噪音）',
-    !inGrid.some(t => t.indexOf('松手卸下') >= 0),
-    inGrid.filter(t => t.indexOf('松手') >= 0).join(' '));
-  await mouse('mouseReleased', cc(3, 2).x, cc(3, 2).y);
-  await sleep(240);
 
   A.chk('无 JS 异常', errs.length === 0, errs.slice(0, 3).join(' | '));
   A.finish(ws, child, errs);

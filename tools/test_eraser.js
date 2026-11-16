@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
@@ -65,15 +66,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     `(()=>{const r=${expr};if(!r)return 'null';return JSON.stringify({x:r.x+r.w/2,y:r.y+r.h/2});})()`));
 
   await ev('window.__rap.state.introT=1'); await sleep(250);
-  const BP = await ev('window.__rap.BUILD_PX');
-  const OR = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const TRAY = JSON.parse(await ev('JSON.stringify(window.__rap.TRAY)'));
-  const cell = (r, c) => ({ x: OR.x + c * BP + BP / 2, y: OR.y + r * BP + BP / 2 });
-  const tray = async n => center(`window.__rap.trayRect(${TRAY.indexOf(n)})`);
-  async function place(part, r, c) {
-    const t = await tray(part); await click(t.x, t.y);
-    const q = cell(r, c); await click(q.x, q.y);
-  }
+  /* 几何一律走 tools/lib/grid.js 现读，不在这里缓存 buildOrigin()。
+   * 第 64 轮世界锚定之后 buildOrigin() 是**活的**：放下第一个轮子的瞬间
+   * 锚点会抬起约 0.84 米（因为锚点跟着"车上最低轮子的下沿"走），
+   * 缓存下来的坐标随后全部作废 —— 这就是这个脚本「先放下两块木框」原来红的原因。 */
+  const G = gridLib.make(ev, click);
+  const tray = n => G.tray(n);
+  const place = (part, r, c) => G.place(part, r, c);
   const nCells = () => ev('Object.keys(window.__rap.state.build.cells).filter(k=>window.__rap.state.build.cells[k].part).length');
 
   await place('wood_frame', 4, 1);
@@ -86,7 +85,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('橡皮被选中', (await ev('window.__rap.state.selected')) === 'eraser');
   // 拖动路径是 (4,1) → (5,4)，线性插值会扫过路径上的若干格，
   // 所以判据是"目标格被擦掉 + 至少擦掉一个"，不是"恰好只擦一个"。
-  await drag(cell(4, 1), cell(5, 4));
+  await drag(await G.cell(4, 1), await G.cell(5, 4));
   A.chk('拖动擦除后页面还活着（历史上这里会崩掉整个 rAF）',
     (await ev("!!document.getElementById('cv') && window.__rap.state.phase")) === 'build');
   A.chk('拖动路径上的第一块木框被擦掉',
@@ -100,7 +99,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const k in c) if (c[k] && c[k].part) return k; return null;})()`);
   if (remainKey) {
     const [rr, cc] = remainKey.split(',').map(Number);
-    const q2 = cell(rr, cc); await click(q2.x, q2.y);
+    await G.clickCell(rr, cc);
     A.chk('点一下擦掉剩下的那格', (await nCells()) === 0, '剩 ' + (await nCells()) + ' 块');
   } else {
     A.chk('拖动已经把两块都擦掉（可接受）', afterDrag === 0, '剩 ' + afterDrag + ' 块');

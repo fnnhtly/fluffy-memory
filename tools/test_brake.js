@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9400 + Math.floor(Math.random() * 400);   // 随机端口：避免残留进程撞车
 const ROOT = path.join(__dirname, '..');
@@ -55,15 +56,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const clickRect = async expr => { const c = await center(expr); if (!c) throw new Error('没有 ' + expr);
     await click(c.x, c.y); };
 
-  const BUILD_PX = await ev('window.__rap.BUILD_PX');
-  const ORIGIN = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-  const TRAY = JSON.parse(await ev('JSON.stringify(window.__rap.TRAY)'));
-  const cellXY = (r, c) => ({ x: ORIGIN.x + c * BUILD_PX + BUILD_PX / 2, y: ORIGIN.y + r * BUILD_PX + BUILD_PX / 2 });
-  const place = async (part, r, c) => {
-    const t = await center(`window.__rap.trayRect(${TRAY.indexOf(part)})`);
-    await click(t.x, t.y);
-    const g = cellXY(r, c); await click(g.x, g.y);
-  };
+  /* 几何一律走 tools/lib/grid.js 现读。
+   * 原来这里缓存了一次 ORIGIN/BUILD_PX 然后用到底 —— 而 buildOrigin() 是活的
+   * （放下第一个轮子时锚点会抬起约 0.84 米），于是后面放猪那一下必然点偏，
+   * 车装不起来、`state.run` 是 null、`state.run.car.vx` 直接抛异常。 */
+  const G = gridLib.make(ev, click);
+  const place = (part, r, c) => G.place(part, r, c);
 
   await ev('window.__rap.state.introT=1');
   await sleep(250);

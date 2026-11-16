@@ -15,6 +15,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const PORT = 9400 + Math.floor(Math.random() * 400);
 const ROOT = path.join(__dirname, '..');
@@ -83,16 +84,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // ---------- 用真鼠标在建造期放 3 个气球（同格点 3 下 → ×3 徽标） ----------
   /* 目标格必须是**紧贴木框的上方一格**（第 3 行，木框在第 4 行）：
    * 气球不是结构件，`canPlace` 要求它挨着已有结构件，隔两行会被 'connect' 拒绝。
-   * （这条是第一次跑红抓出来的 —— 当时点了 3 下，一个都没放上去。） */
-  const BP = await ev('window.__rap.BUILD_PX');
-  const cell = JSON.parse(await ev(`(()=>{const o=window.__rap.buildOrigin();
-    return JSON.stringify({x:o.x+3*window.__rap.BUILD_PX+window.__rap.BUILD_PX/2,
-                           y:o.y+3*window.__rap.BUILD_PX+window.__rap.BUILD_PX/2});})()`));
+   * （这条是第一次跑红抓出来的 —— 当时点了 3 下，一个都没放上去。）
+   *
+   * ⚠ 格心必须**在放完木框之后**现读。第 64 轮世界锚定之后 buildOrigin() 是活的：
+   * 放下第一个轮子时锚点跟着"车上最低轮子的下沿"抬起约 0.84 米
+   * （1-6、zoom≈1.2 时实测 90 像素，正好一格多），
+   * 原来把 o/BP 缓存在文件开头 → 三次连点全部落到 (5,3) 那个木轮上 →
+   * 气球数量永远是 0，后面浮力读数与徽标探针全部连带失败。
+   * 现在每次点击前用 tools/lib/grid.js 现读几何。 */
+  const G = gridLib.make(ev, click);
   /* 托盘索引**按名字查**，不写死数字。
    * 旧代码写 `tray[6]`，那是旧零件表里气球的位置；新表里 6 是 propeller，
    * 于是"点托盘选中了气球"读到 selected=propeller —— 测试红，而托盘没错。 */
-  const bi = trayIdxOf('balloon');
-  await click(tray[bi].x + tray[bi].w / 2, tray[bi].y + tray[bi].h / 2);
+  await G.ensureSelected('balloon');
   A.chk('点托盘选中了热气球', (await ev('window.__rap.state.selected')) === 'balloon',
     'selected=' + (await ev('window.__rap.state.selected')));
   // 建造期格子需要先有木框；直接走 API 搭好基础车，再用鼠标补气球
@@ -102,9 +106,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     R.tryPlace(lv, s.build, 'wood_wheel', 5, 3);
     R.tryPlace(lv, s.build, 'pig', 4, 2);
     return 1;})()`);
-  await click(cell.x, cell.y);
-  await click(cell.x, cell.y);
-  await click(cell.x, cell.y);
+  // API 造车把轮子放上去了 → 锚点刚动过，这里必须在**造车之后**读格心
+  await G.clickCell(3, 3);
+  await G.clickCell(3, 3);
+  await G.clickCell(3, 3);
   const nBalloon = await ev(`window.__rap.RAP.cellCount(window.__rap.state.build.cells['3,3'])`);
   A.chk('鼠标连点同一格 3 次 → 叠了 3 个气球', nBalloon === 3, 'n=' + nBalloon);
   const liftLine = await ev('window.__rap.liftLineOf()');
@@ -126,16 +131,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    * 所以"圆内比圆外暗"这种绝对判据根本立不住（第一次写的就是这个，永远红）。
    * 做法是在隔壁格放 **1 个**气球当对照 —— 两格的背景、零件、光照完全一样，
    * 唯一差别就是"有没有 ×3 徽标"。探针取的是同一个相对位置。 */
-  await click(tray[6].x + tray[6].w / 2, tray[6].y + tray[6].h / 2);   // 仍选着气球
-  const cell1 = JSON.parse(await ev(`(()=>{const o=window.__rap.buildOrigin();
-    return JSON.stringify({x:o.x+2*window.__rap.BUILD_PX+window.__rap.BUILD_PX/2,
-                           y:o.y+3*window.__rap.BUILD_PX+window.__rap.BUILD_PX/2});})()`));
-  await click(cell1.x, cell1.y);   // 只放 1 个
+  await G.ensureSelected('balloon');   // 仍选着气球（幂等：已经是就不重点）
+  await G.clickCell(3, 2);             // 只放 1 个
   {
-    const o = JSON.parse(await ev('JSON.stringify(window.__rap.buildOrigin())'));
-    const badgeAt = (col) => ({ x: o.x + col * BP + 0.80 * BP, y: o.y + 3 * BP + 0.80 * BP });
-    const P3 = badgeAt(3), P1 = badgeAt(2);   // 3 个的那格 / 1 个的对照格
-    A.chk('对照格（2,3）确实只有 1 个气球',
+    /* 徽标探针也现读几何 —— 采样点必须落在**现在**的那一格上。
+     * 原来用文件开头缓存的 o/BP，锚点动过之后采样点已经偏了将近一格，
+     * 采到的是隔壁格的背景，"有徽标 / 无徽标"两边自然一样。 */
+    const g = await G.geo();
+    const badgeAt = (col, row) => ({
+      x: g.x + col * g.px + 0.80 * g.px,
+      y: g.y + row * g.px + 0.80 * g.px
+    });
+    const P3 = badgeAt(3, 3), P1 = badgeAt(2, 3);   // 3 个的那格 / 1 个的对照格
+    A.chk('对照格（3,2）确实只有 1 个气球',
       (await ev(`window.__rap.RAP.cellCount(window.__rap.state.build.cells['3,2'])`)) === 1, '1 个');
     const sample = async (p) => JSON.parse(await ev(`(()=>{
       const cv=document.getElementById('cv'),g=cv.getContext('2d');

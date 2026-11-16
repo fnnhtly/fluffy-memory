@@ -26,6 +26,7 @@
  * 而不是逐条断言某几格 —— 因为这一轮的全部价值就是"整体回到原样"。
  */
 const A = require('./lib/asserts');
+const gridLib = require('./lib/grid');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -101,10 +102,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(210);
   }
 
-  const geo = JSON.parse(await ev(`(()=>{const R=window.__rap,RAP=R.RAP,o=R.buildOrigin();
-    return JSON.stringify({ox:o.x,oy:o.y,px:R.BUILD_PX,rows:RAP.BUILD_ROWS,cols:RAP.BUILD_COLS});})()`));
-  const cc = (r, c) => ({ x: geo.ox + c * geo.px + geo.px / 2, y: geo.oy + r * geo.px + geo.px / 2 });
-  const OUT_L = { x: geo.ox - 140, y: geo.oy + geo.px * 2 };
+  /* 几何一律走 tools/lib/grid.js 现读。第 64 轮世界锚定之后 buildOrigin()
+   * 是**活的**（放下/卸下轮子都会让锚点上下跳约 0.84 米），
+   * 原来把 ox/oy/px 缓存在这里用到底，于是下面每一次拖拽/点击都点在别处：
+   *   · A/B 的「前提：确实卸下/擦掉了」直接红（拖拽起点落在空格上）；
+   *   · F 的 R 旋转读的是 state.mouse，缓存的坐标已经不悬停在 (5,1) 上了。
+   */
+  const G = gridLib.make(ev, click);
+  const cc = (r, c) => G.cell(r, c);        // async：每次现读锚点
+  const OUT_L = () => G.out('left');        // async：同理
 
   /* 图纸签名：cells 排序后逐格写 part/dir/n/inner，再接 order。
    * 用它做整体比对 —— 「整体回到原样」正是这一轮要保证的东西。
@@ -146,7 +152,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // ---------- A. 卸下 → Z ----------
   await setup();
   const A0 = await sig();
-  await drag(cc(1, 1), OUT_L);
+  await drag(await cc(1, 1), await OUT_L());
   A.chk('前提：拖出后气球确实不在车上了',
     !(await ev("!!window.__rap.state.build.cells['1,1']")));
   await key('z');
@@ -160,7 +166,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const B0 = await sig();
   await ev("window.__rap.state.selected='eraser'");
   await sleep(100);
-  await click(cc(1, 1).x, cc(1, 1).y);
+  await click((await cc(1, 1)).x, (await cc(1, 1)).y);
   A.chk('前提：橡皮确实擦掉了那一格',
     !(await ev("!!window.__rap.state.build.cells['1,1']")));
   await key('z');
@@ -173,9 +179,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await sleep(80);
   const s0 = await sig();
   // 真手势放一件到 (4,1)，再放一件到 (4,2)（木框必须贴木框，第一块先立住）
-  await click(cc(4, 1).x, cc(4, 1).y);
+  await G.clickCell(4, 1);
   const s1 = await sig();
-  await click(cc(4, 2).x, cc(4, 2).y);
+  await G.clickCell(4, 2);
   const s2 = await sig();
   A.chk('前提：两次放置都成功（签名各变一次）', s1 !== s0 && s2 !== s1,
     (s1 !== s0) + ' / ' + (s2 !== s1));
@@ -202,7 +208,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await ev("window.__rap.state.selected='wood_frame'");
   await sleep(80);
   const e0 = await sig();
-  await click(cc(4, 1).x, cc(4, 1).y);
+  await G.clickCell(4, 1);
   A.chk('前提：确实放下了一件',
     (await ev("!!window.__rap.state.build.cells['4,1']")));
   await key('z');
@@ -216,7 +222,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   /* (5,1) 是标准解里的木轮（可转向件没有 dir 语义但 rotateAt 照样改 dir），
    * 用它测"转动可撤销"最直接。 */
   const dir0 = await ev("window.__rap.state.build.cells['5,1'].dir|0");
-  await ev("window.__rap.state.mouse.x=" + cc(5, 1).x + "; window.__rap.state.mouse.y=" + cc(5, 1).y);
+  /* R 旋转作用在**光标悬停的格子**上（keydown 分支读 state.mouse），
+   * 所以这里要用现读的格心把光标挪过去 —— 缓存的坐标早就不在 (5,1) 上了。 */
+  await G.hoverCell(5, 1);
   await key('r');
   const dir1 = await ev("window.__rap.state.build.cells['5,1'].dir|0");
   A.chk('前提：R 确实转了方向', dir1 !== dir0, dir0 + ' → ' + dir1);
@@ -233,7 +241,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await ev('window.__rap.state.build.hist=[]');   // 干净起点
   const g0 = await sig();
   const gHist0 = await histLen();
-  await drag(cc(1, 1), cc(3, 2));                  // 目标被占 → 弹回原处
+  await drag(await cc(1, 1), await cc(3, 2));                  // 目标被占 → 弹回原处
   A.chk('前提：被占格退回后图纸没变（净变化为零）',
     (await sig()) === g0, (await sig()) === g0 ? '一致' : '不一致');
   A.chk('G 前提：这一次拖动没有留下撤销步（否则按 Z 会吃掉上一步）',
@@ -253,7 +261,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    * 一笔 = 一步，否则玩家擦 5 格要按 5 次 Z。
    * （原来划 (1,1)→(3,2) 的斜线只穿过 2 格占位，前提断言先红了 ——
    *   这正是"前提断言"该干的事：先证明样例真的覆盖了被测条件。） */
-  await drag(cc(4, 1), cc(4, 3), 12);
+  await drag(await cc(4, 1), await cc(4, 3), 12);
   const hCells1 = await ev('Object.keys(window.__rap.state.build.cells).length');
   A.chk('前提：一笔至少擦掉 3 格', hCells1 <= hCells0 - 3,
     hCells0 + ' → ' + hCells1);
