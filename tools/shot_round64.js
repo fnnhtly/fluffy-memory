@@ -94,9 +94,12 @@ const OUT = path.join(ROOT, 'records', 'shots');
       level: lv.levelId,
       startCol: lv.start.col,
       gridLeftX: +o.x.toFixed(1),
-      gridRightX: +(o.x + 6*px).toFixed(1),
+      /* 列/行数**从引擎现取**：写死 6×8 的时候，网格改成 6×6 之后这份读数
+       * 还在按 8 行算（gridBottomY 报 552.6，真值 471）—— 量具自己算错，
+       * 比没有量具更坏。 */
+      gridRightX: +(o.x + R.RAP.BUILD_COLS * px).toFixed(1),
       gridTopY: +o.y.toFixed(1),
-      gridBottomY: +(o.y + 8*px).toFixed(1),
+      gridBottomY: +(o.y + R.RAP.BUILD_ROWS * px).toFixed(1),
       carCentreOnScreen: { x: +carScreen.x.toFixed(1), y: +carScreen.y.toFixed(1) },
       pxPerCell: +px.toFixed(2)
     }, null, 1);})()`));

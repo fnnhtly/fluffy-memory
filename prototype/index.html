@@ -710,27 +710,27 @@
     const zx = (DW * 0.86) / (spanX * PPM);
     const zy = (DH * 0.62) / (spanY * PPM);
     const zoom = Math.max(BUILD_ZOOM_MIN, Math.min(1.35, Math.min(zx, zy)));
-    /* 镜头横向不再"把关卡跨度居中"，而是**把拼装区让出左侧工具条**。
+    /* 镜头横向：**把拼装区整块居中**。
      *
-     * 第 64 轮把网格世界锚定之后，它跟着起点的世界坐标跑，而起点在关卡最左边 ——
-     * 于是默认镜头照旧居中时，网格左半边正好压在「清空 / 撤销 / 换方向」那排圆钮底下。
-     * 圆钮画在网格之后，点击也先被圆钮吃掉：玩家点 (4,2) 那格，实际按到了撤销，
-     * 刚放好的零件凭空消失（tools/dbg_place2.js 里 trace 出的就是
+     * 第 64 轮先试过"把关卡跨度居中" —— 可起点在关卡最左边，网格就跑到屏幕
+     * 最左，压在「清空 / 撤销 / 换方向」那排圆钮底下：玩家点 (4,2)，
+     * 实际按到了撤销，刚放的零件凭空消失（dbg_place2.js 里 trace 出的
      * `tryPlace(4,1) -> undo()`）。
+     * 第 64b 轮改成"把网格左边缘钉在 x=168、让开工具栏" —— 不压按钮了，
+     * 但网格整体偏左，用户看到的第一反应是「刚进关的视角怎么在拼装区右边」。
      *
-     * 所以这里反过来算：先定"网格左边缘应该出现在哪"（BUILD_CLEAR_X，
-     * 取工具条右沿再留 20px 余量），再由它反推镜头中心。
-     * 这样竖屏/宽屏换画布也不用改 —— 反正锚的是设计坐标。 */
-    const BUILD_CLEAR_X = 168;
-    const px0 = PPM * zoom;
-    /* 目标：让**网格左边缘**（格 0 的左沿）落在 BUILD_CLEAR_X。
+     * 现在两头都不将就：网格占不满屏幕宽度（6 格 × 41px ≈ 246px），
+     * 所以**居中**永远不会碰到左侧工具栏（它右沿在 x=140）。
+     * 之前那两版都是"因为怕撞到边角而牺牲构图"，其实根本不必 ——
+     * 只要把算式写对，居中照样安全。
      *
-     * buildOrigin().x = centerX - (ANCHOR_COL + 0.5)*px，
-     * 而 centerX = DW/2 + (a.x - cam.x)*px，a.x = start.col+0.5。
-     * 令 buildOrigin().x = BUILD_CLEAR_X 解出 cam.x —— 下面这行就是那个解。
-     * 写成算式而不是"试出来的魔法数"，是因为换画布尺寸/换关卡起点后它还得成立。 */
+     * 解：令 buildOrigin().x + ROWS*px/2 = DW/2，其中
+     *     buildOrigin().x = DW/2 + (a.x − cam.x)·px − (ANCHOR_COL+0.5)·px
+     * 得到  cam.x = a.x + (BUILD_COLS/2 − ANCHOR_COL − 0.5)
+     * 注意它**与 zoom 无关** —— 居中就是居中，缩放不该把构图带偏。 */
     const anchorX = (lv.start.col + 0.5);
-    const cx = anchorX - (BUILD_CLEAR_X - DW / 2) / px0 - (BUILD_ANCHOR_COL + 0.5);
+    const px0 = PPM * zoom;
+    const cx = anchorX + (RAP.BUILD_COLS / 2 - BUILD_ANCHOR_COL - 0.5);
     let cy = (lo + hi) / 2 + 1.0;
 
     /* 纵向：先按地形取，再**顶到顶部两条文字下面为止**。
@@ -880,6 +880,17 @@
     // 托盘右上角、紧邻最后一格
     const last = trayRect(TRAY.length - 1);
     return { x: last.x + last.w + 10, y: last.y - 2, w: 48, h: 48 };
+  }
+
+  /* 「回拼装区」按钮（第 66 轮，用户要求：
+   * 「为什么不增加一个让视角立刻回拼装区的按钮」）。
+   *
+   * 紧挨观察键、在它右边。两颗钮放在一起是有道理的：它们都是"关于视角"的操作，
+   * 而观察键是"我自己拖"，这颗是"别拖了，带我回去" —— 同一件事的两个出口。
+   * 几何与绘制共用这一份（项目铁律），点击判定也读它。 */
+  function recentreRect() {
+    const ob = observeBtnRect();
+    return { x: ob.x + ob.w + 8, y: ob.y, w: 48, h: 48 };
   }
   const JOY_R = 54;          // 摇杆底盘半径
   const JOY_DEAD = 8;        // 死区（像素）
@@ -1380,6 +1391,15 @@
       state.joystick = null; state.observeKeys = {};
       SFX.place(0.45);
       if (state.observe) toast('观察模式：拖画面移动视角（触屏长按出摇杆）');
+      return;
+    }
+
+    /* 「回拼装区」（第 66 轮，用户要求）。
+     * 不瞬移，走 0.35 秒缓动 —— 见 state.recentre 的注释。 */
+    if (state.phase === 'build' && !state.welcome && !state.levelSelect
+        && !state.helpOpen && hit(recentreRect(), p.x, p.y)) {
+      state.recentre = { t: 0, from: { x: state.buildView.x, y: state.buildView.y, zoom: state.buildView.zoom } };
+      SFX.place(0.5);
       return;
     }
 
@@ -3407,6 +3427,56 @@ const BIOMES = {
     // 文字与托盘的"剩余数量"同一条基线（y+h+14），一排读下来不歪
     text('观察', cx, r.y + r.h + 14, 12, on ? '#ffe9b0' : '#ffffff', 'center');
   }
+
+  /* 「回拼装区」（第 66 轮，用户要求：
+   * 「为什么不增加一个让视角立刻回拼装区的按钮」）。
+   *
+   * 图标用「准心 + 向内的四个角标」：四个角标是"取景框回到画面中心"的通用符号，
+   * 比画一辆小车更省地方，也不会和托盘里的零件图形混淆。
+   * 按下时 hasHome 为 true 才亮；玩家本来就在默认视角时它是灰的 ——
+   * 一个永远是亮色的按钮等于在骗人说"按了会有事发生"。
+   */
+  function drawRecentreBtn() {
+    const r = recentreRect();
+    const hov = hit(r, state.mouse.x, state.mouse.y);
+    const away = buildViewAwayFromHome();
+    ctx.fillStyle = away ? (hov ? 'rgba(74,123,168,.98)' : 'rgba(30,52,70,.96)')
+      : 'rgba(16,30,40,.72)';
+    roundRect(r.x, r.y, r.w, r.h, 9); ctx.fill();
+    ctx.strokeStyle = away ? 'rgba(232,200,122,.75)' : 'rgba(140,158,172,.35)';
+    ctx.lineWidth = away ? 2 : 1.4;
+    roundRect(r.x, r.y, r.w, r.h, 9); ctx.stroke();
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const ink = away ? '#ffe9b0' : 'rgba(190,206,218,.55)';
+    // 四个角标（取景框）
+    ctx.strokeStyle = ink; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    const K = 11, L2 = 6;
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx * K, cy + sy * (K - L2));
+      ctx.lineTo(cx + sx * K, cy + sy * K);
+      ctx.lineTo(cx + sx * (K - L2), cy + sy * K);
+      ctx.stroke();
+    });
+    // 中心一个点（"车就在这儿"）
+    ctx.fillStyle = ink;
+    ctx.beginPath(); ctx.arc(cx, cy, 3.2, 0, Math.PI * 2); ctx.fill();
+    /* 文字颜色**不跟着按钮变灰**。理由和「出发」那颗钮一样：
+     * 这两颗钮的说明字是玩家唯一的线索，压在草地（bg ≈ rgb(63,82,77)）上，
+     * 灰到 3.40 就等于没有。灰按钮 + 白字是标准做法。 */
+    text('回位', cx, r.y + r.h + 14, 12, '#ffffff', 'center');
+  }
+
+  /* 镜头离默认视角有多远？按钮亮不亮、以及"点了会不会真的动"，都读这一个判断。
+   * 阈值 0.8 米 / 0.12 倍 zoom：小于它就当"已经在拼装区了"，不值得闪一下。 */
+  function buildViewAwayFromHome() {
+    if (!state.buildView) return false;
+    const home = buildViewDefault(level());
+    const v = state.buildView;
+    return Math.hypot(v.x - home.x, v.y - home.y) > 0.8 ||
+      Math.abs(v.zoom - home.zoom) > 0.12;
+  }
+
 
   /* ---------- 浮动虚拟摇杆（第 64 轮，用户要求） ----------
    *
@@ -5726,6 +5796,31 @@ const BIOMES = {
           clampBuildView(bv, level());
         }
       }
+      /* 「回拼装区」的缓动（第 66 轮）。
+       *
+       * 0.35 秒 ease-out。瞬移会让人丢掉"我被带到哪了"的空间感 ——
+       * 视角一跳，玩家得在画面里重新找自己的车；缓动让他**看着**自己回去。
+       * 缓动期间玩家一按 WASD/摇杆就立刻放弃，否则会出现"我在拖、镜头却被按钮
+       * 往回拽"的对拉。 */
+      if (state.recentre) {
+        const rc = state.recentre;
+        const keep = state.observeKeys || {};
+        const userMoving = state.observe &&
+          (keep['w'] || keep['a'] || keep['s'] || keep['d'] || state.joystick);
+        if (userMoving) {
+          state.recentre = null;
+        } else {
+          rc.t += dt;
+          const k = Math.min(1, rc.t / 0.35);
+          const e = 1 - Math.pow(1 - k, 3);
+          const home = buildViewDefault(level());
+          bv.x = rc.from.x + (home.x - rc.from.x) * e;
+          bv.y = rc.from.y + (home.y - rc.from.y) * e;
+          bv.zoom = rc.from.zoom + (home.zoom - rc.from.zoom) * e;
+          clampBuildView(bv, level());
+          if (k >= 1) state.recentre = null;
+        }
+      }
       const cam = { x: bv.x, y: bv.y, zoom: bv.zoom };
       if (state.introT < 1) {
         state.introT = Math.min(1, state.introT + dt / 1.2);
@@ -5773,6 +5868,7 @@ const BIOMES = {
       }
       drawTray();
       drawObserveBtn();
+      drawRecentreBtn();
       drawButtons();
       drawTabs();
       /* 地形预览条必须用这一帧的 ter（可能刚重建过），并且只画在建造期：
@@ -6069,6 +6165,8 @@ const BIOMES = {
    * 导出 buildCellPx() 给测试用；老的 BUILD_PX 保留成一个 getter 形态的函数，
    * 免得还在读它的探针直接崩（读到的值是**当前**格边长）。 */
   window.__rap = { state, RAP, levels, startLevel, launch, launchSpec, buildOrigin,
+                   /* 第 66 轮：视角两颗钮的几何（绘制与判定同一份）+ 缓动状态 */
+                   observeBtnRect, recentreRect, buildViewAwayFromHome,
                    buildCellPx, get BUILD_PX() { return buildCellPx(); },
                    cellAt, canvasPos,
                    trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,

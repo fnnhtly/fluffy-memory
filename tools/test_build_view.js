@@ -53,15 +53,43 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
   await ev('(()=>{const s=window.__rap.state; s.welcome=0; s.introT=1; return 1;})()');
   await sleep(400);
 
-  /* ---- A. 进场看到整关：终点旗必须在画面内 ---- */
+  /* ---- A. 进场视角对准**拼装区**（第 66 轮改判据，原判据已被用户否掉） ----
+   *
+   * 第 62 轮的判据是"一进关终点旗就在画面内"。它成立了一个多季度，
+   * 直到第 66 轮用户看着截图说：「刚进入关卡的视角怎么在拼装区右边」——
+   * 也就是说，为了把终点旗也框进来，镜头被推向关卡中段，
+   * 而玩家此刻唯一要操作的东西（拼装区）反而偏到了画面左边。
+   *
+   * 两条要求在这个尺寸下互斥：1-1 从 col 1 到 col 25，跨度 24 米，
+   * 6 格宽的拼装区只有 6 米 —— 要让旗进画面，网格必然偏一边。
+   *
+   * 取舍：**进场必须对准拼装区**。终点旗的可见性由另外两条通道保证：
+   *   · 顶部那条地形预览条（第 60 轮）始终显示整关的剖面 + 旗子；
+   *   · 玩家随时可以拖/缩放，也可以按新增的「回位」键回来。
+   * 所以这里改判"网格居中 + 在画面内"，并顺手确认旗子仍能通过
+   * 预览条看到（下一块断言），避免把"看得见终点"这件事整个丢掉。 */
   const a1 = JSON.parse(await ev(`(()=>{const R=window.__rap, S=R.state, lv=R.levels[S.levelIndex];
     const v=S.buildView, s=32*v.zoom;
-    const goalScrX = 1280/2 + (lv.goal.col+0.5 - v.x)*s;
-    return JSON.stringify({zoom:+v.zoom.toFixed(3), goalScrX:+goalScrX.toFixed(1),
-      inView: goalScrX > 0 && goalScrX < 1280});})()`));
-  A.log('进场镜头 zoom=' + a1.zoom + '，终点旗在屏幕 x=' + a1.goalScrX);
-  A.chk('A 一进关终点旗就在画面内（看得到要跑多远）', a1.inView === true,
-    'x=' + a1.goalScrX);
+    const o=R.buildOrigin(), px=R.buildCellPx();
+    const left=o.x, right=o.x+R.RAP.BUILD_COLS*px;
+    return JSON.stringify({zoom:+v.zoom.toFixed(3),
+      gridLeft:+left.toFixed(0), gridRight:+right.toFixed(0),
+      gridMid:+((left+right)/2).toFixed(0),
+      inView: left > 0 && right < 1280});})()`));
+  A.log('进场镜头 zoom=' + a1.zoom + '，拼装区 x=' + a1.gridLeft + '..' + a1.gridRight +
+        '，中心 ' + a1.gridMid);
+  A.chk('A1 一进关拼装区整块在画面内', a1.inView === true,
+    a1.gridLeft + '..' + a1.gridRight);
+  A.chk('A2 拼装区居中（偏离画面中心 < 60px —— 用户否掉的正是"偏在一边"）',
+    Math.abs(a1.gridMid - 640) < 60, '偏 ' + (a1.gridMid - 640) + 'px');
+
+  /* A3. 终点依然"看得见"：预览条要真的画出来了（第 60 轮的那条通道） */
+  const a3 = JSON.parse(await ev(`(()=>{const S=window.__rap.state;
+    return JSON.stringify({drawN: S.previewDrawN || 0,
+      pts: (S.previewProfile || []).length});})()`));
+  A.log('地形预览条：本帧绘制标记 ' + a3.drawN + '，折线点数 ' + a3.pts);
+  A.chk('A3 终点旗的可见性另有通道：地形预览条确实画出来了',
+    a3.drawN === 1 && a3.pts > 100, 'drawN=' + a3.drawN + ' pts=' + a3.pts);
 
   /* ---- B. 滚轮缩放 + 围绕光标 ---- */
   const before = JSON.parse(await ev('JSON.stringify(window.__rap.state.buildView)'));
