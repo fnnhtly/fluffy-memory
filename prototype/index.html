@@ -3281,7 +3281,51 @@ const BIOMES = {
     } else if (def.tool) {
       /* ---------- 驱动件（风车桨 / 喷气口） ----------
        * 这两个件必须一眼看出"它朝哪边出力"，所以画成**带叶片的轮**（风车桨）
-       * 或**带口的喷管**（喷气口），箭头由 drawDirArrow 另外加。 */
+       * 或**带口的喷管**（喷气口），箭头由 drawDirArrow 另外加。
+       *
+       * ⚠ 第 70 轮：叶片原来画到 h*0.78 ≈ 0.39 格，而格子只有一格 ——
+       * 它和相邻的木框之间**留了 0.35 格的背景缝**（tools/probe_part_gaps.js 量的）。
+       * 那正是用户说的「零件没有连起来」：风车桨看起来是浮在车顶上的一件东西。
+       * 现在加一圈**安装座**：一个实心的深色底板，把零件和格子边连成一体。
+       * 座子比叶片宽，所以视觉上"焊"在车上了，叶片仍然露在外面看得出朝哪边吹。 */
+      /* 安装立杆 + 底座横梁：把驱动件"焊"在下面那一格上。
+       *
+       * ⚠ 这条改了五遍，每一遍都是量出来的，记下来（量具：tools/test_parts_connected.js）：
+       *   1. 整块横向底板（h*0.52 → h*0.82）→ 底边没到格子边，留缝；
+       *   2. 加宽到整格（但 `roundRect` 第三个参数是**宽度**，
+       *      我写成 `size*0.98` 却当成右边界用）→ 只覆盖到格子中心；
+       *   3. 高度写成 `size*1.34`（以为是三分之一格，实际是 1.34 格）
+       *      → 铺到下面那一格里，盖住了木框；
+       *   4. 改成中心细杆 + 短法兰 → 底边只覆盖 0.62 格宽，
+       *      接缝覆盖率量到 76%，仍然看得出缝；
+       *   5. 现在：细杆负责"看得出连着一根"，横梁**铺满 0.92 格**负责"接缝不漏"。
+       * 不用整块板，是因为用户明确说过「你的机关会带黑底方块希望修改一下」——
+       * 一根杆 + 一道梁是"结构"，一整块是不透光的底片。 */
+      const stemW = size * 0.26;
+      const stemGrad = ctx.createLinearGradient(-stemW / 2, 0, stemW / 2, 0);
+      stemGrad.addColorStop(0, '#2c424c');
+      stemGrad.addColorStop(0.45, '#4a6670');
+      stemGrad.addColorStop(1, '#22343c');
+      ctx.fillStyle = stemGrad;
+      ctx.fillRect(-stemW / 2, 0, stemW, h * 0.86);
+      ctx.strokeStyle = 'rgba(150,190,210,.5)'; ctx.lineWidth = Math.max(1, size * 0.028);
+      ctx.strokeRect(-stemW / 2, 0, stemW, h * 0.86);
+      /* 底座横梁：贴在格子下沿，铺满整个宽度。
+       * 它的作用是**把接缝填满** —— 用户那句「两个木框的两边粘连起来」
+       * 对驱动件同样成立：驱动件下面是木框，中间不能露出背景。 */
+      const railH = size * 0.17;
+      const railGrad = ctx.createLinearGradient(0, h - railH, 0, h);
+      railGrad.addColorStop(0, '#4a6670');
+      railGrad.addColorStop(0.5, '#3a5460');
+      railGrad.addColorStop(1, '#26383f');
+      ctx.fillStyle = railGrad;
+      roundRect(-h * 0.92, h - railH, size * 0.92, railH, 3); ctx.fill();
+      ctx.strokeStyle = 'rgba(170,210,230,.6)'; ctx.lineWidth = Math.max(1, size * 0.026);
+      roundRect(-h * 0.92, h - railH, size * 0.92, railH, 3); ctx.stroke();
+      // 梁上两枚铆钉，说明它是"固定件"而不是装饰
+      ctx.fillStyle = 'rgba(196,224,238,.8)';
+      ctx.beginPath(); ctx.arc(-h * 0.66, h - railH / 2, size * 0.038, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(h * 0.66, h - railH / 2, size * 0.038, 0, Math.PI * 2); ctx.fill();
       const isJet = (def.thrust || 0) >= 8;
       if (isJet) {
         // 喷气口：一段短管 + 一圈口沿
@@ -3357,9 +3401,12 @@ const BIOMES = {
 
     } else if (def.liftMass) {
       /* ---------- 气球：一束（个数由 n 决定，由调用方单独画徽标） ---------- */
-      // 扎口绳
+      /* 扎口绳：原来只画到 h*0.92 —— 差 0.04 格没顶到格子下沿，
+       * 于是"气球下面的木框"和气球之间露出一条背景缝，
+       * test_parts_connected.js 量到 56%。绳子本来就该系在框上，
+       * 现在直接顶到 +h，和下面那块木框接上。 */
       ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = Math.max(1.2, size * 0.035);
-      ctx.beginPath(); ctx.moveTo(0, h * 0.28); ctx.lineTo(0, h * 0.92); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, h * 0.28); ctx.lineTo(0, h); ctx.stroke();
       // 球体：底色 + 高光 + 描边
       const rg = ctx.createRadialGradient(-h * 0.22, -h * 0.32, size * 0.04, 0, -h * 0.1, size * 0.56);
       rg.addColorStop(0, '#f6b6c8');
@@ -3429,6 +3476,17 @@ const BIOMES = {
       ctx.fillRect(-h * 0.02, h * 0.02, size * 0.36, size * 0.14);
       ctx.fillStyle = '#e8f4ff';
       ctx.beginPath(); ctx.arc(h * 0.36, h * 0.09, size * 0.085, 0, Math.PI * 2); ctx.fill();
+      /* ⚠ 打气筒的筒身到 h*0.14 就结束了，格子下沿在 +h ——
+       * 中间 0.36 格是空的。test_parts_connected.js 在 1-2 量到
+       * "pump ↔ wood_frame 连接段 0%"，也就是打气筒看起来悬在车顶上方。
+       * 补一根进气管接到底：它本来就该插进车里打气。 */
+      ctx.fillStyle = '#3f6f88';
+      ctx.fillRect(-size * 0.07, h * 0.10, size * 0.14, h * 0.90);
+      ctx.strokeStyle = '#1d3a4a'; ctx.lineWidth = Math.max(1, size * 0.03);
+      ctx.strokeRect(-size * 0.07, h * 0.10, size * 0.14, h * 0.90);
+      // 底部法兰
+      ctx.fillStyle = '#28516a';
+      roundRect(-h * 0.44, h * 0.82, size * 0.44, size * 0.16, 3); ctx.fill();
 
     } else {
       ctx.fillStyle = def.color; roundRect(-h * 0.8, -h * 0.8, size * 0.8, size * 0.8, 3); ctx.fill();

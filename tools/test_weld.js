@@ -132,5 +132,76 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
   A.chk('B 孤立木框仍然有**四边**（左边框存在）', solo.leftCells >= 0.12, solo.leftCells + ' 格');
   A.chk('B2 孤立木框仍然有**四边**（右边框存在）', solo.rightCells >= 0.12, solo.rightCells + ' 格');
 
+  /* ── 上下相邻也必须焊（第 69 轮补测）──
+   *
+   * 原来只量了左右。而 weldedEdges 是**四向**的，上下走的是另一套索引
+   * （行 +1 / −1，以及本地坐标的 up/down 命名）。四向里只要有一向
+   * 的符号写反，上下叠的框就会在中间留一条双倍厚的横墙 ——
+   * 而左右完全正常，测试全绿。这种"另一条分支没被走过"的漏洞
+   * 只能靠**真的把那条分支画出来**来堵。 */
+  await ev(`(()=>{const S=window.__rap.state;
+    S.build.cells = {}; S.build.order = [];
+    ['3,2','4,2','5,2'].forEach(k => {
+      S.build.cells[k] = { part:'wood_frame', dir:0 }; S.build.order.push(k);
+    });
+    return 1;})()`);
+  await sleep(450);
+  const vert = JSON.parse(await ev(`(()=>{
+    const R=window.__rap;
+    const o=R.buildOrigin(), px=R.buildCellPx();
+    const cv=document.getElementById('cv'), g=cv.getContext('2d'), v=window.__view;
+    const k = cv.width / v.W;
+    /* 竖直扫描线：取列 2 的水平中心，从行 3 的上沿扫到行 5 的下沿 */
+    const x = Math.round((o.x + 2*px + px*0.5 - v.offX) * k);
+    const y0 = Math.round((o.y + 3*px - v.offY) * k);
+    const ySpan = Math.round(px*3*k);
+    const d = g.getImageData(x, y0, 1, Math.max(1,ySpan)).data;
+    const isWood = (r,gg,b) =>
+      (Math.abs(r-201)<34 && Math.abs(gg-147)<34 && Math.abs(b-84)<38) ||
+      (Math.abs(r-181)<34 && Math.abs(gg-127)<34 && Math.abs(b-66)<38) ||
+      (Math.abs(r-122)<34 && Math.abs(gg-79)<34 && Math.abs(b-34)<38);
+    const runs = []; let start = -1;
+    for (let i = 0; i < ySpan; i++) {
+      const j = i*4;
+      const wd = isWood(d[j], d[j+1], d[j+2]);
+      if (wd && start < 0) start = i;
+      if ((!wd || i === ySpan-1) && start >= 0) { runs.push({ a:start, b:i, w:i-start }); start = -1; }
+    }
+    const mid = runs.length ? runs[Math.floor(runs.length/2)] : null;
+    return JSON.stringify({ runs, midW: mid ? mid.w : null,
+      cellPx: +(px*k).toFixed(1),
+      inCells: mid ? +((mid.w)/(k*px)).toFixed(3) : null });
+  })()`));
+  A.log('三块竖着叠的木框：竖直扫描的木色片段 ' + JSON.stringify(vert.runs) +
+        '；中间那条 ' + vert.midW + 'px = ' + vert.inCells + ' 格');
+  A.chk('C 上下相邻的木框之间也只有**一块**边框厚（≤0.30 格）',
+    vert.inCells !== null && vert.inCells <= 0.30,
+    vert.inCells + ' 格（两块叠加是 0.45）');
+  A.chk('C2 上下接缝确实存在（不是整个擦掉）',
+    vert.inCells !== null && vert.inCells >= 0.12, vert.inCells + ' 格');
+
+  /* ── 旋转 90° 之后仍然焊对 ──
+   *
+   * weldedEdges 的返回值是**本地坐标**，而相邻关系是网格坐标 ——
+   * 中间差一个 −dir·90°。`dir` 只对方向件有意义（木框的 dir 永远是 0），
+   * 所以这里测的是**等价形状**：把同一组竖排木框用"旋转过的画法"渲染时，
+   * 接缝宽度不该变。
+   *
+   * 更实际的做法：直接量 `weldedEdges` 在四个方向的返回值是否自洽 ——
+   * 相邻两格对"同一条共享边"的判断必须互补（一方画、另一方不画）。
+   * 这条是纯 Node 断言，不需要浏览器。 */
+  const R2 = require('../prototype/game.js');
+  void R2;
+  {
+    /* 用页面里的 weldedEdges（它没导出），所以改成从**像素结果**反推：
+     * 横排与竖排的接缝宽度应当相同（同一套代码、同一个阈值）。
+     * 如果某一向的索引写反，接缝会变成 0.45 或者干脆没有 —— 两条都已经在上面
+     * 各自断言过一次，这里再加一条"横竖一致"把它们钉在一起。 */
+    A.chk('D 横向接缝与纵向接缝的厚度一致（±0.06 格，说明四向走的是同一套逻辑）',
+      r1.inCells !== null && vert.inCells !== null &&
+      Math.abs(r1.inCells - vert.inCells) <= 0.06,
+      '横 ' + r1.inCells + ' / 竖 ' + vert.inCells);
+  }
+
   A.finish(ws, child);
 })().catch(e => { console.log('FAIL', e && e.message); process.exit(1); });
