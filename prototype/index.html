@@ -851,6 +851,26 @@
    * 而提示恰好是同一类动作。
    */
   function hintRect() { return { x: 24, y: 196, w: 46, h: 46 }; }
+  /* 某一关有几层提示（第 79 轮抽出）。
+   *
+   * ⚠ 这个数字原来是**写死的 2**，出现在四个地方：
+   *   点提示时 `Math.min(2, hintTier + 1)`
+   *   画卡片时 `Math.min(hintTier, 2)`
+   *   画层数点 `for (let i = 0; i < 3; i++)`
+   *   底部提示 `canMore = hintTier < 2`
+   *
+   * 而 1-3 / 1-5 / 1-7 / 1-8 各有 **4 层**提示 —— 它们的第 4 层
+   * （恰好是最具体的「成品：……」那条）**永远显示不出来**。
+   * 现在层数从 HINTS 自己数：加一层提示不用改界面，
+   * 也就不会再有"写了但看不到"的句子。
+   *
+   * 兜底 3：万一某关没写提示（hintFor 会用 DEFAULT_HINTS），
+   * 那时层数就是 DEFAULT_HINTS 的长度。 */
+  function hintTierCount(lv) {
+    const H = HINTS[lv && lv.levelId];
+    if (H && H.length) return H.length;
+    return DEFAULT_HINTS.length;
+  }
   /* 每关三层提示。键是 levelId；缺的关用 defaultHint 兜底，
    * 这样加新关时不会因为"忘了写提示"而在界面上露出空白 ——
    * 空白比一句普通的提示更糟，它会让玩家以为功能坏了。 */
@@ -871,8 +891,8 @@
             '三块木框横排 + 两个木轮，把猪放进中间那格。',
             '成品：第 4 行放木框 c1~c3，第 5 行 c1/c3 各一个木轮，猪在 c2。'],
     '1-2': ['这一关要"按一下"，说明不按就到不了终点。',
-            '打气筒要装在猪的后面（朝右喷），喷的是空气，不用电池。',
-            '成品：木框里放打气筒，朝右；跑起来等车慢下来时按 1 喷一下。'],
+            '仙术机关要装在猪的后面（朝右喷），喷的是空气，不用电池。',
+            '成品：木框里放仙术机关，朝右；跑起来等车慢下来时按 1 喷一下。'],
     '1-3': ['这一关的第三星是"一颗种子都不用"：种子一次性的，用了就没了。',
             '风种塞进框里（一次性），点右下角的种子钮（或按 F）会在脚下放出一片半径 6 米的风场。',
             '风场只托得动**带伞或风之翼**的车 —— 没带就是白放。',
@@ -884,14 +904,14 @@
             '雷种（一次性）能让车冲刺 4 秒，冲刺状态下穿得过屏障。',
             '仙术机关按住蓄力、松开喷冲量，不算驱动件 —— 第三星还保得住。',
             '成品：仙术机关朝右 + 雷种塞进空框，跑到屏障前点右下角种子钮（或按 F）穿过去。'],
-    '1-7': ['终点在一道 2 米高的硬台阶上，轮子爬不上去。',
+    '1-7': ['终点在一道 1.2 米高的硬台阶上，轮子爬不上去。',
             '岩种（一次性）会在**车脚下**升起一根 3 米高的柱子，把车顶上去。',
             '柱子要等车**开到台阶脚下**再按 —— 早了它会变成一道挡在面前的墙。',
             '成品：风车桨朝右推着走，车贴到台阶跟前时点右下角种子钮（或按 F）。'],
-    '1-8': ['终点在一道 2 米高的台子上，但这一关没有岩种 —— 只有风种。',
+    '1-8': ['终点在坡顶，比出发点高出 4 米 —— 轮子爬不上去，这一关也没有岩种。',
             '风种（一次性）在脚下放出一片半径 6 米、持续 3 秒的风场。',
-            '风场**只托得动吃风件**：伞托得轻，风之翼托得高。没带就白放。',
-            '成品：风车桨朝右，车开到坡脚时点种子钮（或按 F），风把它举上去。'],
+            '风场**只托得动吃风件**：伞托得轻（约 2.7 米），风之翼托得高（约 3.2 米）。没带就白放。',
+            '成品：风车桨朝右，车冲上坡、慢下来之前点种子钮（或按 F），风把它托上坡顶。'],
     '1-6': ['这一关要抬头 —— 热气球给浮力，压舱石给配重，位置很关键。',
             '气球必须挂在框的**上方**、压舱石挂在框的**下方**，否则一个飘走一个落地。',
             '成品：3 个气球 + 2 个压舱石；起飞后点车身扔石头，飞得不够就扎气球。']
@@ -1468,7 +1488,7 @@
     if (hit(hintRect(), p.x, p.y) && !state.welcome) {
       if (state.hintOpen) {
         // 已经开着 → 再点一次升一层（到最后一层就不再动）
-        state.hintTier = Math.min(2, state.hintTier + 1);
+        state.hintTier = Math.min(hintTierCount(level()) - 1, state.hintTier + 1);
         SFX.place(0.4);
       } else {
         state.hintOpen = true;
@@ -4178,7 +4198,7 @@ const BIOMES = {
   function drawHintCard() {
     if (!state.hintOpen) return;
     const lv = level();
-    const tier = Math.min(state.hintTier, 2);
+    const tier = Math.min(state.hintTier, hintTierCount(lv) - 1);
     const body = hintFor(lv, tier);
     const r = hintRect();
     const W = 460, PAD = 18;
@@ -4208,7 +4228,8 @@ const BIOMES = {
     roundRect(X, Y, W, H, 14); ctx.stroke();
     // 标题 + 层数点
     text('提示 · ' + (lv ? lv.levelId : ''), X + PAD, Y + 30, 15, '#ffd93d', 'left', true);
-    for (let i = 0; i < 3; i++) {
+    const dots = hintTierCount(lv);
+    for (let i = 0; i < dots; i++) {
       const dx = X + W - PAD - 12 - i * 16;
       ctx.fillStyle = i <= tier ? '#ffd93d' : 'rgba(120,140,155,.5)';
       ctx.beginPath(); ctx.arc(dx, Y + 25, 4, 0, Math.PI * 2); ctx.fill();
@@ -4218,7 +4239,7 @@ const BIOMES = {
       text(ln, X + PAD, Y + 62 + i * 26, 14.5, '#e2eef8', 'left');
     });
     // 底部：还能不能要点
-    const canMore = state.hintTier < 2;
+    const canMore = state.hintTier < hintTierCount(lv) - 1;
     const by = Y + H - 20;
     text(canMore ? '再点一次「提示」看下一层 ▸' : '已经是最后一层了',
       X + PAD, by, 12.5, canMore ? 'rgba(150,200,235,.9)' : 'rgba(150,170,186,.85)', 'left');
@@ -7032,6 +7053,9 @@ const BIOMES = {
                    /* 提示（第 62 轮）：测试要读的必须是渲染读的那一份 ——
                     * hintFor 就是 drawHintCard 用的那个函数，不是另抄的文案表。 */
                    hintRect, hintFor, HINTS, DEFAULT_HINTS,
+                   /* 第 79 轮：层数由 HINTS 自己数（原来是写死的 2）。
+                    * 测试要读的就是界面画的那一份，不是自己数 HINTS.length。 */
+                   hintTierCount,
                    /* 刹车没了按钮，但引擎函数还在 —— 测试要能直接调它
                     * 证明「删按钮 ≠ 删物理」（见 tools/test_brake_removed.js）。 */
                    setBrake: (st, on) => RAP.setBrake(st, on),
