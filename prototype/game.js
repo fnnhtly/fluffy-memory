@@ -2099,19 +2099,39 @@
         var br = state.barriers[bri];
         var bTop = groundY(state, br.col + 0.5) + br.h;
         if (car.y - car.hull.minY > bTop) continue;        // 从上面飞过去了
-        var nose = car.x + car.hull.maxX;
-        if (nose < br.col || car.x - car.hull.maxX > br.col + 1) continue;
-        /* 从左边撞：推回去。从右边撞（倒车撞回来）同理。 */
-        var fromLeft = car.x < br.col + 0.5;
-        if (fromLeft && nose >= br.col + 0.02) {
-          car.x = br.col - car.hull.maxX - 0.02;
+        /* ⚠ 第 83 轮：车头/车尾必须用**包围盒的两个真实沿**，
+         * 不能用 `car.x ± hull.maxX`。
+         *
+         * `hull.maxX` 是相对**网格锚点**算的，而锚点不是包围盒中心 ——
+         * 单框车（放在 col 1）的 `hull.maxX` 是 **−1**，
+         * 于是 `nose = car.x − 1` 指向车心**左边**，
+         * 判定窗口整体偏移 1~2 米，车压在屏障上时仍然被判"不在附近"。
+         * 实测 1-5 的随机车里 190/300 辆都是 `maxX ≤ 0`，
+         * 它们全部能**不带雷种直接穿过屏障**。 */
+        var hullMin = Math.min(car.hull.minX, car.hull.maxX);
+        var hullMax = Math.max(car.hull.minX, car.hull.maxX);
+        var hullL = car.x + hullMin;
+        var hullR = car.x + hullMax;
+        if (hullR < br.col || hullL > br.col + 1) continue;
+        /* ⚠ 第 83 轮：判断"从哪边撞"必须用**包围盒中心**，不能用 car.x。
+         *
+         * car.x 是网格锚点，不是几何中心：单框车的包围盒是
+         * [car.x−2, car.x−1]，重心比 car.x 靠左 1.5 米。
+         * 用它判断会让"从左往右开、车头刚碰到屏障"变成"从右边来"，
+         * 于是走进右分支、一帧瞬移 2.076 米穿过去。
+         * （实测：t=7.450 car.x=20.944 车体 [18.94,19.94] 全在屏障左边，
+         *   下一帧 car.x 直接跳到 23.020 = 20+1−(−2)+0.02。） */
+        var hullC = (hullL + hullR) / 2;
+        var fromLeft = hullC < br.col + 0.5;
+        if (fromLeft && hullR >= br.col + 0.02) {
+          car.x = br.col - hullMax - 0.02;
           if (car.vx > 0) car.vx = 0;
           if (!state.barrierHitLogged) {
             state.barrierHitLogged = true;
             log(state, 'barrier_block col=' + br.col);
           }
-        } else if (!fromLeft && car.x - car.hull.maxX <= br.col + 0.98) {
-          car.x = br.col + 1 + car.hull.maxX + 0.02;
+        } else if (!fromLeft && hullL <= br.col + 0.98) {
+          car.x = br.col + 1 - hullMin + 0.02;
           if (car.vx < 0) car.vx = 0;
         }
       }

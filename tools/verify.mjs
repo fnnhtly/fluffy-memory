@@ -111,6 +111,13 @@ const SCRIPTS = [
    * 但顺带证明了这一关真的有决策：三种方向、时机窗口、9 种构型。 */
   'test_lift_predictable.js',
   'test_lift_level.js',
+  /* 第 83 轮：雷屏障的两处坐标原点 bug。
+   * `hull.maxX` 相对**网格锚点**而不是包围盒中心 —— 单框车的 maxX 是 −1，
+   * 于是 nose/fromLeft 全判错，整批车能穿过屏障。 */
+  'test_barrier.js',
+  /* 第 83 轮：难度曲线。用"随机造法通关率"而不是"标准解时长"
+   * （后者只量关卡长度）。零件池从 partsBox 读，种子会放也会触发。 */
+  'test_difficulty_curve.js',
   /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
    * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
   'test_watchdog_structural.js',
