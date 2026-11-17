@@ -56,7 +56,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ---------- 1. 六关标准解都不能触发 ----------
   const std = JSON.parse(await ev(`(()=>{const out=[];
-    const keys=['1-1','1-2','1-3','1-4i','1-5m','1-6'];
+    const keys=['1-1','1-2','1-3','1-4i','1-5e','1-6','1-7'];
     window.__rap.levels.forEach((lv,i)=>{
       const k=keys[i]||lv.levelId;
       if(!window.__rap.RAP.SPECS[k]) return;

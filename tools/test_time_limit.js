@@ -43,14 +43,24 @@ console.log('=== 1. 关卡文件里的 timeLimit 现在生效吗？ ===');
    * 超过 5 秒"，所以这里先量出每关标准解的耗时，挑最慢的那一关来验。 */
   let slowest = null;
   levels.forEach((lv) => {
-    const key = Object.keys(R.SPECS).find(k => k === lv.levelId) ||
-                Object.keys(R.SPECS).find(k => k.indexOf(lv.levelId) === 0);
-    if (!key) return;
+    /* ⚠ 第 72 轮：这条查找规则有个洞 —— `indexOf(levelId) === 0` 会把
+     * **1-5e / 1-5n / 1-5m 里最先出现的那个**（= 1-5e）当成 1-5 的标准解，
+     * 而 1-5 现在自带雷屏障，`1-5n` / `1-5m` 会撞墙。
+     * 巧合的是这次挑对了（字母序 e < m < n），但"靠运气对"
+     * 和"写对了"是两件事 —— 换成 1-5a 当反例它就挑错。
+     *
+     * 现在显式给一张表：每一关**能通关**的那条解。
+     * 这一支量的是"限时对不对"，用一条过不去的解量出来的都是别的数。 */
+    const SPEC_OF = { '1-1': '1-1', '1-2': '1-2', '1-3': '1-3', '1-4': '1-4i',
+                      '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7' };
+    const key = SPEC_OF[lv.levelId];
+    if (!key || !R.SPECS[key]) return;
     const probe = JSON.parse(JSON.stringify(lv));
     probe.timeLimit = 120;
     const rr = R.simulate(probe, R.SPECS[key], { maxTime: 60, params: { progressWindow: 1e9 } });
     const tt = rr.time || 0;
     console.log(`  探针 ${lv.levelId}: ${rr.result} @ ${tt.toFixed(2)} s`);
+    if (rr.result !== 'win') return;      // 过不去的解不进"最慢"的候选
     if (!slowest || tt > slowest.t) slowest = { lv, key, t: tt };
   });
   const lv = JSON.parse(JSON.stringify(slowest.lv));
@@ -76,8 +86,16 @@ console.log('\n=== 2. 六关的限时都来自关卡文件（不是那个全局�
 
 console.log('\n=== 3. 默认关卡不会因为限时误杀标准解 ===');
 {
-  levels.forEach((lv, i) => {
-    const key = ['1-1', '1-2', '1-3', '1-4i', '1-5m', '1-6'][i];
+  levels.forEach((lv) => {
+    /* ⚠ 用下标取 key 的那一版在加第 7 关时直接拿不到 key（undefined），
+     * 而加雷屏障之后 1-5m 也过不去了。改成按 levelId 查表。 */
+    const SPEC_OF = { '1-1': '1-1', '1-2': '1-2', '1-3': '1-3', '1-4': '1-4i',
+                      '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7' };
+    const key = SPEC_OF[lv.levelId];
+    if (!key || !R.SPECS[key]) {
+      ck(`  ${lv.levelId} 有标准解`, false, '缺 SPECS[' + key + ']');
+      return;
+    }
     const r = R.simulate(lv, R.SPECS[key], { maxTime: 300 });
     ck(r.result === 'win', `  ${lv.levelId} 标准解在 ${lv.timeLimit} 秒限时内通关`,
       `${r.result}/${r.failReason || '-'} @ ${(r.time || 0).toFixed(2)}s`);

@@ -1,7 +1,7 @@
 # 滚蛋吧！猪 · roll-away-pig
 
 千星奇域（原神 UGC）2D + Lua 游戏的原型工程：一个《捣蛋猪》式的**造车解谜**垂直切片，
-首版范围 1-1 ~ 1-6 共六关，横屏 1280×720。
+首版范围 1-1 ~ 1-6 共七关，横屏 1280×720。
 
 > 交付物最终是**能在千星沙箱模拟器与真机里跑起来的 Lua + 存档**；
 > 本仓库里 `prototype/` 那套 HTML 是**步骤 3 的效果展示与物理/演出调参台**，
@@ -80,7 +80,7 @@ records/shots/        自动化测试拍的两百多张过程图（**不入库**
 ```bash
 node prototype/check_html_logic.js   # 40 项数值校核，约 2 秒
 node tools/check_inline_js.js        # 内联脚本语法
-node tools/verify.mjs                # 全量：数值 + 85 项自检（含真实浏览器交互），约 8 分钟
+node tools/verify.mjs                # 全量：数值 + 86 项自检（含真实浏览器交互），约 8 分钟
 node tools/verify.mjs --fast         # 只跑数值部分
 ```
 

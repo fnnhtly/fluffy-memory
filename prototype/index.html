@@ -874,15 +874,20 @@
             '打气筒要装在猪的后面（朝右喷），喷的是空气，不用电池。',
             '成品：木框里放打气筒，朝右；跑起来等车慢下来时按 1 喷一下。'],
     '1-3': ['这一关的第三星是"一颗种子都不用"：种子一次性的，用了就没了。',
-            '风种塞进框里（一次性），按 2 键会在脚下放出一片半径 6 米的风场。',
+            '风种塞进框里（一次性），按 F 键会在脚下放出一片半径 6 米的风场。',
             '风场只托得动**带伞或风之翼**的车 —— 没带就是白放。',
             '成品：风车桨朝右推着走，想拿三星就一颗种子都别用。'],
     '1-4': ['这一关不能翻车，而且要爬冰坡 —— 冰面上木轮几乎打滑。',
             '铁轮冰面抓地 0.8，是过冰坡的办法；推力也要够大。',
             '成品：铁轮 + 喷气口（9 m/s²）。风车桨只有 5.0，爬不上那道 0.44 的坡。'],
-    '1-5': ['这一关的第三星是"不用驱动件"，所以装了风车桨就拿不到三星。',
-            '仙术机关按住蓄力、松开喷冲量，不算驱动件。',
-            '成品：不装驱动件，只放仙术机关朝右，跑起来按着。'],
+    '1-5': ['中段有一道**雷屏障**：普通车撞上去就被顶住，冲不过去。',
+            '雷种（一次性）能让车冲刺 4 秒，冲刺状态下穿得过屏障。',
+            '仙术机关按住蓄力、松开喷冲量，不算驱动件 —— 第三星还保得住。',
+            '成品：仙术机关朝右 + 雷种塞进空框，跑起来按 F 穿屏障。'],
+    '1-7': ['路线正中间是一道 7 格宽、3 米深的坑，掉进去就爬不出来。',
+            '岩种（一次性）会在**车脚下**升起一根 3 米高的柱子，把车顶到坑沿。',
+            '柱子要等车**掉进坑里之后**再按 —— 早了它会变成一道挡在面前的墙。',
+            '成品：风车桨朝右，车滑进坑里停住后按 F。'],
     '1-6': ['这一关要抬头 —— 热气球给浮力，压舱石给配重，位置很关键。',
             '气球必须挂在框的**上方**、压舱石挂在框的**下方**，否则一个飘走一个落地。',
             '成品：3 个气球 + 2 个压舱石；起飞后点车身扔石头，飞得不够就扎气球。']
@@ -1336,6 +1341,16 @@
     });
     (spec._pops || []).forEach(a => {
       for (let i = 0; i < (a.n || 1); i++) acts.push({ t: a.t + i * 0.016, k: 'pop', n: 1 });
+    });
+    /* ⚠ 第 72 轮：漏了这一条。`_seeds` 在 Node 的 `simulate` 里早就支持了
+     * （game.js 的 acts 里有 'seed'），但浏览器的 actScript 没有 ——
+     * 于是"1-5e / 1-7 的标准解"在 Node 里能过，在真浏览器里**一次都没验过**。
+     * `tools/test_all_levels.js` 就是因此红的（1-5、1-7 双双 stuck）。
+     *
+     * 这类"两条路径只改了一条"的漏洞，Node 测试永远是绿的 ——
+     * 因为 Node 走的是另一条分支。只有真浏览器跑一遍才看得见。 */
+    (spec._seeds || []).forEach(a => {
+      acts.push({ t: a.t, k: 'seed', kind: a.kind });
     });
     acts.sort((a, b) => a.t - b.t);
     state.run.actScript = acts;
@@ -2138,7 +2153,16 @@ const BIOMES = {
    * 三个颜色必须两两差 ≥ 18，否则选关页上分不出谁是谁。 */
   skyBiome: { rock: [214, 198, 158], grass: '#88c070', grass2: '#5fa05a', grass3: '#bfe8a8',
     edge: '#1e3a30', skyTop: '#5FB4D8', skyMid: '#B8E4EC', skyLow: '#F0FBF2',
-    hill: '#7FB8C8', jungle: ['#3E7A62', '#2F6350', '#244E40'], cave: false, dim: 0.12 }
+    hill: '#7FB8C8', jungle: ['#3E7A62', '#2F6350', '#244E40'], cave: false, dim: 0.12 },
+  /* 「岩窟」（1-7 用，第 72 轮新增）。1-7 一开始借了 `skyBiome`，
+   * 但 1-6 也是 skyBiome —— 两张缩略图平均色差只有 3（阈值 18），
+   * 选关页上完全分不出谁是谁。这一套走**暖红岩**：
+   * rock 和 skyBiome 的沙黄、canyon 的橙、dusk 的紫都拉开了距离，
+   * 而且和"岩柱从脚下升起"这个玩法在语义上也贴。
+   * `cave: false` —— 它是有天空的露天峡谷，不是洞。 */
+  gorge: { rock: [176, 92, 96], grass: '#c88a6a', grass2: '#a86a52', grass3: '#e8b48a',
+    edge: '#3a2020', skyTop: '#C8807A', skyMid: '#E8B49A', skyLow: '#F8DCC4',
+    hill: '#a8686a', jungle: ['#7A4638', '#5E3428', '#46241C'], cave: false, dim: 0.16 }
 };
 
   function drawWorld(ter, cam) {
@@ -5094,7 +5118,7 @@ const BIOMES = {
       (((st.seedUse || {}).anemo || 0) + ((st.seedUse || {}).geo || 0) +
        ((st.seedUse || {}).electro || 0));
     if (seedsLeft > 0) {
-      tips.push('车上还有 ' + seedsLeft + ' 颗种子没用（按 2 号键触发）');
+      tips.push('车上还有 ' + seedsLeft + ' 颗种子没用（按 F 键触发）');
     }
     if (bags > 0) tips.push('还剩 ' + bags + ' 个压舱石没扔（点车身）');
     if (bal > 0) tips.push('还剩 ' + bal + ' 个气球没扎（点车身）');
@@ -6676,6 +6700,7 @@ const BIOMES = {
               if (a.k === 'release') RAP.releaseInteract(state.run, a.n || 1);
               else if (a.k === 'drop') RAP.dropSandbag(state.run, a.n || 1);
               else if (a.k === 'pop') RAP.popBalloon(state.run, a.n || 1);
+              else if (a.k === 'seed') RAP.triggerSeed(state.run, a.kind);
               else RAP.pressInteract(state.run, a.n || 1);
             }
           }

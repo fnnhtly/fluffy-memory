@@ -210,8 +210,13 @@ function stripComments(src) {
     window.__rap.state.levelSelect=true; return 1;})()`);
   await sleep(400);
   const ls = JSON.parse(await ev('JSON.stringify(window.__audit.recs)'));
-  A.chk('选关页上写着「满星 1 / 6 关」（1-1 已三星）',
-    ls.some(t => t.indexOf('满星 1 / 6 关') >= 0),
+  /* 关卡总数从 6 变成 7（第 72 轮新增 1-7），所以这一行必须跟着改。
+   * ⚠ 教训：**不要把"总关数"写进断言文案**。用 levels.length 拼接，
+   * 这样加关时它自己就对 —— 写死数字的那一版，加一关就红一次，
+   * 而红的原因和"星星算错了"完全无关。 */
+  const nLv = await ev('window.__rap.levels.length');
+  A.chk('选关页上写着「满星 1 / ' + nLv + ' 关」（1-1 已三星）',
+    ls.some(t => t.indexOf('满星 1 / ' + nLv + ' 关') >= 0),
     ls.filter(t => t.indexOf('满星') >= 0 || t.indexOf('星') >= 0).slice(0, 4).join(' | '));
   await ev('window.__rap.state.levelSelect=false');
   await sleep(200);

@@ -20,7 +20,11 @@
  */
 const G = require('../prototype/game.js');
 const LEVELS = require('../prototype/levels.js');
-const KEYS = ['1-1', '1-2', '1-3', '1-4i', '1-5m', '1-6'];
+/* ⚠ 第 72 轮：下标对齐的写法在加第 7 关时会崩
+ * （`G.SPECS[KEYS[6]]` = undefined → applySpec 抛异常）。
+ * 改成按 levelId 查 —— 关数再变也不用动这里。 */
+const KEYS_BY_LEVEL = { '1-1': '1-1', '1-2': '1-2', '1-3': '1-3', '1-4': '1-4i',
+                        '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7' };
 
 let pass = 0, fail = 0;
 const fails = [];
@@ -70,7 +74,7 @@ chk('touchLvl3 === damageMin（响得那么一下就得掉耐久）', D.touchLvl
 console.log('\n=== 3/4. 六关标准解：不闪屏、不误伤、但落地有反馈 ===');
 let s2Total = 0, s3Total = 0, hurtLevels = 0, levelsWithLvl2 = 0;
 LEVELS.forEach((lv, i) => {
-  const t = tally(lv, G.SPECS[KEYS[i]]);
+  const t = tally(lv, G.SPECS[KEYS_BY_LEVEL[lv.levelId]]);
   s2Total += t.c[2];
   s3Total += t.c[3] + t.c[4];
   if (t.hurt > 0 || t.broke > 0) hurtLevels++;
@@ -88,7 +92,7 @@ chk('至少 3 关标准解各有 lvl2（不是全靠一关撑）', levelsWithLvl
 console.log('\n=== 5. 最重那档（lvl4）不是死档 ===');
 let reached4 = [];
 LEVELS.forEach((lv, i) => {
-  const base = clone(G.SPECS[KEYS[i]]);
+  const base = clone(G.SPECS[KEYS_BY_LEVEL[lv.levelId]]);
   const wk = wheelKey(base);
   const v = clone(base);
   v[wk] = [[5, 1], [3, 1]];                    // 两轮挤底：车厢直接蹭地
@@ -103,13 +107,13 @@ console.log('\n=== 6. 量具自证（改档位必须让读数跟着变）===');
   /* 把 lvl2 抬到 4.5 —— 高于六关标准解的上界（1.70）。
    * 如果第 4 条量的是"档位"而不是"总归有点尘土"，lvl2 必须变成 0。 */
   let total = 0;
-  LEVELS.forEach((lv, i) => { total += tally(lv, G.SPECS[KEYS[i]], { touchLvl2: 4.5 }).c[2]; });
+  LEVELS.forEach((lv, i) => { total += tally(lv, G.SPECS[KEYS_BY_LEVEL[lv.levelId]], { touchLvl2: 4.5 }).c[2]; });
   chk('把 touchLvl2 抬到 4.5，标准解 lvl2 归零（说明这条量的是档位）', total === 0, `${total} 条`);
 }
 {
   /* 反过来：把 lvl2 压到 0.81，几乎每一次触地都该进 lvl2 —— 必须显著变多 */
   let total = 0;
-  LEVELS.forEach((lv, i) => { total += tally(lv, G.SPECS[KEYS[i]], { touchLvl2: 0.81 }).c[2]; });
+  LEVELS.forEach((lv, i) => { total += tally(lv, G.SPECS[KEYS_BY_LEVEL[lv.levelId]], { touchLvl2: 0.81 }).c[2]; });
   chk('把 touchLvl2 压到 0.81，标准解 lvl2 显著变多', total > s2Total,
     `${total} 条 vs 默认 ${s2Total} 条`);
 }

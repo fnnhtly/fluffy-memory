@@ -11,7 +11,10 @@
 const SCHEMA = {
   required: ['levelId', 'name', 'biome', 'grid', 'start', 'goal', 'partsBox',
     'mapRows', 'materials', 'boxes', 'challenge', 'timeLimit'],
-  optional: ['hardCols'],
+  /* `barriers`（第 71 轮）：雷屏障。`[{ col, h }]` = 在第 col 列立一道
+   * 从地面往上 h 米高的墙，只有冲刺状态穿得过。
+   * 它必须登记在这里 —— 否则关卡文件写了它，出口会拒绝生成 levels.js。 */
+  optional: ['hardCols', 'barriers'],
   /* 这些是**第二份真相**：真正的值写在代码里，数据里再出现一份就会说假话。
    *   buildArea              → game.js 的 BUILD_COLS=6 / BUILD_ROWS=8
    *   physics                → game.js 的 Params.gravity / subSteps / frictionAt
@@ -24,7 +27,8 @@ const SCHEMA = {
     grid: ['cols', 'rows'],
     start: ['col'],
     goal: ['col'],
-    materials: ['cols', 'type']
+    materials: ['cols', 'type'],
+    barriers: ['col', 'h']
   }
 };
 

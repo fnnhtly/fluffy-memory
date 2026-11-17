@@ -44,7 +44,7 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（出口 `tools/build_levels_js.js`） | ✅ schema 校验通过（出口会拒绝任何脏数据） |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**85 项自检全绿**（62 个脚本 + 23 项静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**86 项自检全绿**（63 个脚本 + 23 项静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 40/40 |
 | 木框耐久可见性 | `tools/test_frame_damage.js` + `tools/probe_damage_tiers.js` | ✅ 15/15（三档像素读数：绿/金/红；掉耐久有音效与轻抖；碎后整块隐去） |
 | 撞击演出去重 | `tools/test_impact_dedupe.js` + `tools/probe_impact_spam.js` | ✅ 8/8（旧版一次硬着陆写 34 条 `impact` → 慢放/白闪反复重置；现在 22 个接触收敛成 1 条） |
@@ -59,7 +59,7 @@
 | 切走窗口 | `tools/test_focus_blur.js` + `tools/probe_focus_combo.js` / `probe_focus_switch.js` | ✅ 28/28（第 58 轮：页面里原先**一条** `blur`/`visibilitychange` 监听都没有 → 按住的键永远松不开、`heldBtn` 卡在 1、回来时迎面撞一局已跑完的比赛。现在切走会清按住状态 + 自动暂停（暂停卡写明"窗口切走了，已经替你暂停"）+ 复位拖拽手势，且**取消**交互而非**松开**交互（不许凭空推车一下）。量具用无头环境里唯一送得到事件的组合：`setFocusEmulationEnabled:false` + `setWebLifecycleState:frozen`） |
 | 限时归属 | `tools/test_time_limit.js` + `probe_time_cap.js` / `probe_timeout_reach.js` / `probe_slow_legal.js` | ✅ 11/11（关卡 `timeLimit` 从死字段变活；1440 局实测 timeout 零触发，最慢合法局 22.13 秒 vs 限时 120 秒） |
 | 可调参数对账 | `tools/audit_params.js` | ✅ 4/4（`DEFAULTS` 23 个旋钮逐个查读者；注释里出现 `Params.xxx` 不算） |
-| 触地反馈量程 | `tools/test_touch_ladder.js` + `probe_impact_speed.js` / `probe_impact_range.js` / `probe_touch_ladder.js` | ✅ 21/21（四级档位原先铺在 0.8/2.5/4.5/6，而六关标准解 28 次触地全在 0.80~1.70 → 通关全程只有 lvl1。lvl2 挪到 1.35：标准解落地真的有尘土轻震，仍 0 条 lvl3+、0 伤害） |
+| 触地反馈量程 | `tools/test_touch_ladder.js` + `probe_impact_speed.js` / `probe_impact_range.js` / `probe_touch_ladder.js` | ✅ 21/21（四级档位原先铺在 0.8/2.5/4.5/6，而七关标准解 28 次触地全在 0.80~1.70 → 通关全程只有 lvl1。lvl2 挪到 1.35：标准解落地真的有尘土轻震，仍 0 条 lvl3+、0 伤害） |
 | 关卡数据对账 | `tools/audit_level_fields.js` + `tools/test_level_schema.js` | ✅ 18/18 + 20/20（第四张假旋钮表：`levels/*.json` 原有 **9 个死字段**（physics 整块、buildArea、grid.cell/px、start.row/goal.row、materials[].surfaceRow、chapter、note）已全部删除；`surfaceRow` 更是在 9 段材质里 **6 段说假话**。出口 `build_levels_js.js` 现在会拒收任何脏数据） |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
 | 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |

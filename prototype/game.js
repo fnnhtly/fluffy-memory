@@ -233,6 +233,19 @@
      * 而且**只在那一段** —— 范围之外还是原地形。 */
     pillarW: 3.0,
     pillarH: 3.0,
+    /* 柱顶盖向外延伸的宽度（米）。见 `groundY` 里那段注释：
+     * 没有顶盖时，车被托到柱顶边缘后会立刻踩空翻滚
+     * （实测 0.25 秒内翻到 −52°，最后卡死在 −143°）。
+     * 2 米 = 两个车轮的间距，够车往前开出去再落地。 */
+    pillarCap: 2.0,
+    /* 柱子长到全高要多久（秒）。
+     *
+     * 这不是"动画时长"，这是**物理**：`groundY` 按这个时间线性抬升，
+     * 车是被这面上升的地面顶上去的。0.35 秒升 3 米 = 8.6 m/s 的地面速度，
+     * 比车的最大上升速度（2.5 m/s）快得多，但因为是"地面在抬"，
+     * 车不会被弹飞（弹簧力每帧只处理几厘米的穿透）。
+     * 更慢的话车会先滑出柱子的范围，更快的话视觉上像瞬移。 */
+    pillarRise: 0.35,
     /* 冲刺参数。
      *
      * ⚠ `dashTime` 从 2.5 改成 4.0 是量出来的：`test_seeds` 的 D5 要求
@@ -512,6 +525,35 @@
    * `state.seedUse` 记次数，第二次触发直接返回 false。
    */
 
+  /* 地面**坡度**。和 `groundY` 是同一件事的两半，必须一起走。
+   *
+   * ⚠ 第 72 轮：这是一个真实漏掉的半件事。
+   * `groundY` 已经覆盖了岩柱（车轮的**高度**用柱顶），
+   * 但车轮的法线/切线仍然读 `ter.surfaceSlope(x)` —— 那是**地形**的坡度。
+   * 于是在柱顶那块平地上，车感受到的仍然是柱下地形的倾角：
+   * 实测柱顶平地上车会**向左滑回去**（vx 从 +8.5 掉到 −4.9），
+   * 然后卡死在柱顶边缘，看起来像"岩柱没用"。
+   *
+   * 柱顶是平的，坡度就该是 0。这是"高度和坡度必须来自同一个源"
+   * 这一条最直接的例子。
+   *
+   * 上升过程中（柱子还在长）不做特殊处理：那时车是被抬升的地面推着，
+   * 法线取原地形的更稳（否则柱子长到一半时坡度突然变 0，
+   * 车会先被"扶正"再被顶上去，观感是顿一下）。 */
+  function groundSlope(state, x) {
+    var ps = state.pillars;
+    if (ps && ps.length) {
+      var now = (state && state.time) || 0;
+      for (var i = 0; i < ps.length; i++) {
+        var p = ps[i];
+        var halfW = p.w / 2 + (p.cap || 0);
+        if (p.riseTime > 0 && (now - (p.born || 0)) < p.riseTime) continue;
+        if (Math.abs(x - p.x) <= halfW) return 0;
+      }
+    }
+    return state.terrain.surfaceSlope(x);
+  }
+
   /* 一根岩柱抬高的地面。
    *
    * 这是**唯一**的"地面高度"入口 —— 车轮、车壳、气球碰地、终点高度
@@ -519,17 +561,49 @@
    * 这种自相矛盾（车悬在空中却算到了终点）。
    *
    * 岩柱 × 范围之外返回原地形 —— 这条是"范围性"的定义，
-   * 如果整条地平面一起抬高，那叫"改关卡"，不叫"升岩柱"。 */
+   * 如果整条地平面一起抬高，那叫"改关卡"，不叫"升岩柱"。
+   *
+   * ── 为什么柱子要有**顶盖**（第 72 轮）──
+   *
+   * 只有"柱身"的时候，车轮站在柱顶边缘会**掉下去**：
+   * 柱顶是一个 3 米高的平台，但它左右两侧立刻回到原地形（低 3 米），
+   * 于是车一往前挪就踩空、翻滚。实测：柱子在 x=16 升起，
+   * 车被托到 y=7.89 之后 0.25 秒内翻到 −52°，最后卡死在 −143°。
+   *
+   * 现实里的柱顶是个面，不是一条线。所以除了 `w`（柱身宽度），
+   * 还有一个 `cap`（顶盖半径）：柱身之上、顶盖之内也是实心，
+   * 车可以往前开出去一段再落地。这既是物理，也是玩家读得懂的形状。 */
   function groundY(state, x) {
     var base = state.terrain.surfaceY(x);
     var ps = state.pillars;
     if (!ps || !ps.length) return base;
+    var now = (state && state.time) || 0;
     var best = base;
     for (var i = 0; i < ps.length; i++) {
       var p = ps[i];
-      if (Math.abs(x - p.x) <= p.w / 2) {
-        if (p.top > best) best = p.top;
+      var halfW = p.w / 2;
+      var within = Math.abs(x - p.x) <= halfW;
+      if (!within) {
+        var cap = (p.cap || 0);
+        within = cap > 0 && Math.abs(x - p.x) <= halfW + cap;
       }
+      if (!within) continue;
+      /* ⚠ 柱顶是**逐渐长上去**的，物理和画面用同一条时间线（第 72 轮）。
+       *
+       * 第一版让 `groundY` 立刻返回最终柱顶。后果是：柱子升起的那一帧，
+       * 车突然被埋进地底 3 米 —— 车轮的穿透量从 0 跳到 3 米，
+       * 法向力 `N = 320·pen` 直接顶到上限，车被**弹飞**。
+       * 实测：0.25 秒内翻到 −143°，卡死。
+       *
+       * 现在的做法是"真实的柱子慢慢顶上来"：柱顶从 `base` 线性长到 `top`，
+       * 车被这面**上升的地面**推着走。这既符合用户原话
+       * 「从脚底升成一个范围性的岩柱让车抬升」，也是唯一稳定的做法 ——
+       * 因为每帧的穿透量只有几厘米，弹簧力是正常的接触力。 */
+      var t = (p.riseTime > 0) ? Math.min(1, (now - (p.born || 0)) / p.riseTime) : 1;
+      var effTop = (p.base !== undefined)
+        ? p.base + (p.top - p.base) * t
+        : p.top;
+      if (effTop > best) best = effTop;
     }
     return best;
   }
@@ -572,7 +646,9 @@
        * 但一次性用完就没了，所以这里用 groundY 是安全的）。 */
       var g0 = groundY(state, car.x);
       state.pillars = (state.pillars || []).concat([{
-        x: car.x, w: Params.pillarW, top: g0 + Params.pillarH, born: state.time
+        x: car.x, w: Params.pillarW, cap: Params.pillarCap,
+        base: g0, top: g0 + Params.pillarH,
+        riseTime: Params.pillarRise, born: state.time
       }]);
       log(state, 'pillar x=' + car.x.toFixed(1) +
         ' top=' + (g0 + Params.pillarH).toFixed(2));
@@ -1603,7 +1679,7 @@
         var pen = gY - (wp.y - r);
         if (pen > 0) {
           groundWheels++;
-          var slope = ter.surfaceSlope(wp.x);
+          var slope = groundSlope(state, wp.x);
           var nl = Math.hypot(-slope, 1);
           var nx = -slope / nl, ny = 1 / nl;         // 地面法线（向上）
           var tx = 1 / nl, ty = slope / nl;          // 切线（向右）
@@ -1702,12 +1778,12 @@
           if (hi.x - lo.x > 0.2) {
             targetA = Math.atan2(hi.y - lo.y, hi.x - lo.x);
           } else {
-            targetA = Math.atan(ter.surfaceSlope(car.x));
+            targetA = Math.atan(groundSlope(state, car.x));
           }
         } else {
           /* 只有一个轮子着地：退回到"车身中心坡度"这个近似。
            * 虽然粗，但比完全不管好 —— 而且这时阻尼会把角速度吃掉。 */
-          targetA = Math.atan(ter.surfaceSlope(car.x));
+          targetA = Math.atan(groundSlope(state, car.x));
         }
         var err = targetA - car.a;
         car.w += err * 11.0 * h;
@@ -1724,7 +1800,7 @@
         var gy = groundY(state, cp.x);
         var pn = gy - cp.y;
         if (pn > 0) {
-          var sl = ter.surfaceSlope(cp.x);
+          var sl = groundSlope(state, cp.x);
           var nl2 = Math.hypot(-sl, 1);
           var nx2 = -sl / nl2, ny2 = 1 / nl2;
           var tX = 1 / nl2, tY = sl / nl2;
@@ -1816,7 +1892,7 @@
       var driving = tools.length > 0 || car.dashT > 0 ||
         car.parts.some(function (p) { return p.burn > 0; }) ||
         (car.groups || []).some(function (g) { return g.on; });
-      var onSlope = Math.abs(ter.surfaceSlope(car.x)) > Params.creepMinSlope;
+      var onSlope = Math.abs(groundSlope(state, car.x)) > Params.creepMinSlope;
       if (!driving && !onSlope && spNow < 1.5) {
         var k = 1 - Params.creepBrake * (1 - spNow / 1.5) * h;
         car.vx *= Math.max(0, k);
@@ -2074,6 +2150,20 @@
     '1-5m': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]],
               anemo_core: [[4, 2]], propeller: [[3, 2]], pig: [[4, 1]],
               _dirs: { propeller: 0 } },
+    /* 1-5 的**正式标准解**（第 72 轮）。
+     *
+     * 1-5 中段加了一道雷屏障（col 20），所以必须有雷种并真的按下去。
+     * 第三星仍然是「不用驱动件」—— 雷种不是驱动件，这条解仍然能拿三星。
+     * 这是刻意的：加一个新机制不该推翻原有的星级设计。
+     *
+     * ⚠ `1-5n` / `1-5m` 保留原样（不带雷种）。它们现在会自动撞墙 ——
+     * 那正是"必须用种子"的证据，`tools/test_seed_levels.js` 的 B3 就靠它。 */
+    '1-5e': { wood_frame: [[4, 0], [4, 1], [4, 2], [4, 3]], wood_wheel: [[5, 0], [5, 3]],
+              pump: [[3, 1]], pig: [[4, 1]], electro_core: [[4, 0]],
+              _dirs: { pump: 0 },
+              _seeds: [{ t: 1.4, kind: 'electro' }],
+              _presses: [{ t: 0.6, k: 'press' }, { t: 1.4, k: 'release' },
+                         { t: 3.0, k: 'press' }, { t: 3.8, k: 'release' }] },
 
     /* 1-6「抬个头」：教**浮力 + 配重 + 位置系挂**。
      *
@@ -2094,7 +2184,29 @@
              anemo_core: [[4, 1]], propeller: [[3, 1]], pig: [[4, 2]],
              _dirs: { propeller: 0 },
              _stacks: { balloon: 3, sandbag: 2 },
-             _drops: [{ t: 1.5, n: 2 }] }
+             _drops: [{ t: 1.5, n: 2 }] },
+
+    /* 1-7「升起岩柱」（第 72 轮新增）：教**岩种**。
+     *
+     * 地形是一道 **2 米高的硬台阶**（col 14 起，hardCols 不平滑）——
+     * 车开过去上不去（实测 stuck 在 x≈11.4）。
+     * 岩种在车脚下升起一根柱子，柱顶 3 米 > 台阶 2 米，
+     * 车被顶到台阶之上，再往前开出去。
+     *
+     * ⚠ 触发时刻有**窗口**：实测 t=1.0~2.0 太早（柱子升在车**前面**，
+     * 变成一道挡路的墙），t=2.2~3.0 都行（车已经贴到台阶脚下，
+     * 柱子把它顶上去）。窗口约 0.8 秒 —— 玩家得看着车走到墙根再按，
+     * 这正是这个机制要教的时机。
+     *
+     * ⚠ 为什么不是"坑"：坑的入口落差会让车以 7 m/s 砸到底（lvl4），
+     * 一局直接掉一点耐久 —— 而这是**正确打法**。`test_touch_ladder`
+     * 的判据是"标准解不该掉耐久"，所以关卡形状必须让正确打法不受伤。
+     * 台阶没有落差，车是"顶上去了"，不是"掉下去了"。 */
+    '1-7': { wood_frame: [[4, 1], [4, 2], [4, 3], [4, 4]],
+             wood_wheel: [[5, 1], [5, 4]], pig: [[4, 2]],
+             geo_core: [[4, 1]], propeller: [[3, 2]],
+             _dirs: { propeller: 0 },
+             _seeds: [{ t: 2.2, kind: 'geo' }] }
   };
 
   function applySpec(level, build, spec) {

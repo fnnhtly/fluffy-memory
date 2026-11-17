@@ -189,7 +189,13 @@ function build(lv, spec) {
 
   /* C5：岩柱只在它的 x 范围内生效。这条是"范围性"的反面 ——
    * 如果实现成"整条地平面一起抬高"，车当然也会升高，C4 就白测了。 */
-  const outsideX = st.car.x + pil.w;
+  /* ⚠ 范围之外的探针要取 `halfW + cap + 1`，不是 `pil.w`。
+   * 第 72 轮给柱子加了**顶盖**（cap，见 game.js 的 groundY 注释：
+   * 没有顶盖时车被托到柱顶边缘会立刻踩空翻滚）。
+   * 所以"范围"不再是 `w`，而是 `w/2 + cap`。写成 `pil.w` 时探针落在
+   * 顶盖内缘上，读到柱顶 9.00 —— 看起来像"范围外也受影响"，
+   * 其实是探针站错了地方。 */
+  const outsideX = pil.x + pil.w / 2 + (pil.cap || 0) + 1.0;
   const gOut = R.groundY(st, outsideX);
   const gIn = R.groundY(st, pil.x);
   chk('C5 岩柱范围之外地表不受影响', Math.abs(gOut - st.terrain.surfaceY(outsideX)) < 0.01,
@@ -279,11 +285,11 @@ function build(lv, spec) {
   }
 }
 
-/* ══════════ E 六个标准解仍然成立 ══════════ */
+/* ══════════ E 七个标准解仍然成立 ══════════ */
 {
   const levels = require('../prototype/levels.js');
   const SPEC_OF = { '1-1': '1-1', '1-2': '1-2', '1-3': '1-3',
-                    '1-4': '1-4w', '1-5': '1-5m', '1-6': '1-6' };
+                    '1-4': '1-4w', '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7' };
   Object.keys(SPEC_OF).forEach(key => {
     const lv = levels.filter(l => l.levelId === key)[0];
     const spec = R.SPECS[SPEC_OF[key]];

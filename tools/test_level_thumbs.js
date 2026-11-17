@@ -51,17 +51,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(SHOTS, 'ls-thumbs.png'), Buffer.from(shot.data, 'base64'));
 
-  // 用页面自己的几何算缩略图矩形（CW=216, GAP=18, y=168, thumb y+176 h=44）
+  /* ⚠ 缩略图矩形必须**问页面要**，不能在这里重算。
+   *
+   * 原来是写死的 `CW=216, GAP=18, y=168`。而真实布局是
+   *   CW = min(216, floor((1280 - 88 - (n-1)*14) / n))
+   * —— 关数一变 CW 就变。第 72 轮加到 7 关时 CW 从 216 掉到 158，
+   * 测试却还在按 216 采点，于是采到的是**卡片外的背景**：
+   * 1-1 和 1-7 都读出 rgb(1,3,5)、亮度跨度 15.3，看起来像"缩略图是纯黑的"。
+   * 那不是产品坏了，是量具按旧几何在取色。
+   *
+   * `window.__rap.levelCardRect(i)` 是渲染层自己用的那一个函数 ——
+   * 读它就不存在"两份真相"。 */
   const info = JSON.parse(await ev(`(() => {
-    const lv = window.__rap.levels, n = lv.length;
-    const CW = 216, CH = 250, GAP = 18, y = 168;
-    const totalW = n * CW + (n - 1) * GAP;
-    return JSON.stringify(lv.map((L, i) => ({
-      id: L.levelId, biome: L.biome,
-      x: (1280 - totalW) / 2 + i * (CW + GAP) + 12,
-      y: y + 172, w: CW - 24, h: 56,
-      boxes: (L.boxes || []).length
-    })));
+    const lv = window.__rap.levels;
+    return JSON.stringify(lv.map((L, i) => {
+      const r = window.__rap.levelCardRect(i);
+      return {
+        id: L.levelId, biome: L.biome,
+        x: r.x + 12, y: r.y + 172, w: r.w - 24, h: 56,
+        boxes: (L.boxes || []).length
+      };
+    }));
   })()`));
 
   const stats = JSON.parse(await ev(`(() => {

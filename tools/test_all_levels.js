@@ -53,14 +53,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
      *     推力够大就能把打滑的木轮硬推上去。所以 minStars 从 0 改成 1 ——
      *     这不是放宽标准，是**新的物理事实**：轮子差别体现在"要多大的推力"，
      *     而不是"过不过得去"。真正变成"必须选对轮子"的是 1-5（noTool 那条）。
-     *   · 1-5m 的变体名从「用马达」改成「用驱动件」（马达这个概念没了）。 */
+     *   · 1-5m 的变体名从「用马达」改成「用驱动件」（马达这个概念没了）。
+     *
+     * ⚠ 第 72 轮：1-5 中段加了一道雷屏障，所以 `1-5m` / `1-5n`（不带雷种）
+     * **过不去了** —— 它们现在的正确角色是"撞墙的反例"，
+     * 不该继续出现在这张"应该能通关"的表里。能通关的是 `1-5e`。
+     * 新增 1-7（岩种关）。 */
     { idx: 0, spec: '1-1', name: '1-1 放个轮子', minStars: 1 },
     { idx: 1, spec: '1-2', name: '1-2 按一下', minStars: 1 },
     { idx: 2, spec: '1-3', name: '1-3 动力接上了吗', minStars: 1 },
     { idx: 3, spec: '1-4i', name: '1-4 冰面（铁轮 + 喷气口）', minStars: 1 },
     { idx: 3, spec: '1-4w', name: '1-4 冰面（木轮，靠大推力硬推）', minStars: 1 },
-    { idx: 4, spec: '1-5m', name: '1-5 不用机械（用驱动件的对照解）', minStars: 1 },
-    { idx: 4, spec: '1-5n', name: '1-5 不用机械（仙术机关，冲 ★★★）', minStars: 1 }
+    { idx: 4, spec: '1-5e', name: '1-5 不用机械（仙术机关 + 雷种穿屏障）', minStars: 1 },
+    { idx: 6, spec: '1-7', name: '1-7 升起岩柱（岩种）', minStars: 1 }
   ];
 
   for (const cs of CASES) {
@@ -107,15 +112,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await shot('al-' + cs.spec);
   }
 
-  // 1-5 不用马达应该能拿满 ★★★（"马达 vs 省星"的取舍）
+  // 1-5 用仙术机关 + 雷种应该能拿满 ★★★（"不用驱动件"这条星没被雷种推翻）
   {
-    await ev(`window.__rap.launchSpec(4, '1-5n')`);
+    await ev(`window.__rap.launchSpec(4, '1-5e')`);
     for (let i = 0; i < 260; i++) {
       await sleep(200);
       if ((await ev('window.__rap.state.phase')) === 'resolved') break;
     }
     const st = await ev('(window.__rap.state.run||{}).stars||0');
-    A.chk('1-5 不用马达能拿 ★★★（★★★ 条件是可达的）', st === 3, st + ' 星');
+    A.chk('1-5 仙术机关 + 雷种能拿 ★★★（雷种不算驱动件）', st === 3, st + ' 星');
   }
 
   A.finish(ws, child, errs);

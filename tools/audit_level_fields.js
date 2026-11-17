@@ -73,7 +73,10 @@ function countReader(src, key) {
  * 这张表是"数据 schema"，不是白名单 —— 新加字段必须先在这里登记，
  * 否则下面的 A 组会把它当死字段抓出来。这正是想要的效果。 */
 const EXPECTED = ['levelId', 'name', 'biome', 'grid', 'start', 'goal', 'partsBox',
-  'mapRows', 'materials', 'boxes', 'challenge', 'timeLimit', 'hardCols'];
+  'mapRows', 'materials', 'boxes', 'challenge', 'timeLimit', 'hardCols',
+  /* 第 72 轮：雷屏障。读者是 game.js 的 `createRun`（搬进 state.barriers）
+   * 和 `step`（挡车）；渲染层也有对应分支（drawBarriers）。 */
+  'barriers'];
 
 console.log('=== A. 关卡字段：每一个都有读者吗？ ===');
 const levelKeys = {};
