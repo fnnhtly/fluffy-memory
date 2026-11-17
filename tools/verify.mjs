@@ -118,6 +118,9 @@ const SCRIPTS = [
   /* 第 83 轮：难度曲线。用"随机造法通关率"而不是"标准解时长"
    * （后者只量关卡长度）。零件池从 partsBox 读，种子会放也会触发。 */
   'test_difficulty_curve.js',
+  /* 第 84 轮：1-8 的难度结构 —— 它是"配置题"（凑齐风种 + 吃风件 + 驱动件），
+   * 不是"操作题"。这一条把那个性质钉住，并确认最后两关是最难的两关。 */
+  'test_1_8_structure.js',
   /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
    * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
   'test_watchdog_structural.js',

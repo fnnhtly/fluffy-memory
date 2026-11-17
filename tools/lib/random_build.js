@@ -1,4 +1,4 @@
-/* 随机造法 —— **全项目唯一一份**（第 83 轮抽出）。
+/* 随机造法 —— **全项目唯一一份**（第 83 轮抽出，第 84 轮修格子冲突）。
  *
  * 为什么必须唯一：这个函数在不同脚本里各写一份的结果是
  *   round 81 漏 _drops、round 82 漏 _seeds、round 83 漏 umbrella/wind_wing，
@@ -6,9 +6,14 @@
  *
  * 设计原则：
  *   1. **零件池从 level.partsBox 读**，不写死。这一关发什么就能随机放什么。
- *   2. 每个零件只放一次（同一格），位置在合法的 3/4/5 行。
+ *   2. **每一行维护已占用的列**（第 84 轮）。原来 propeller / umbrella /
+ *      wind_wing 都从 `[3, 1+rnd(nFrame)]` 里挑，会撞同一格；
+ *      而 applySpec 是"后写覆盖先写"，于是 40% 的造法里**有零件被静默丢掉**。
+ *      对 1-8 尤其致命 —— 伞被覆盖就等于风场托不动，必然失败。
+ *      所以量到的"1-8 只有 0.68%"有一大半是这个 bug 造成的。
  *   3. 种子是 inner 件，放进一个**非猪**的框里。
- *   4. 种子有 85% 概率被触发，时刻随机在 0.6~3.8 秒。
+ *   4. 种子有 85% 概率被触发，时刻随机在 0.6~6.0 秒
+ *      （必须覆盖 1-8 的 3.75~6.0 窗口）。
  *
  * 用法：const { randomBuild } = require('./lib/random_build.js');
  */
@@ -22,37 +27,61 @@ function randomBuild(lv) {
   for (let i = 0; i < nFrame; i++) frames.push([4, 1 + i]);
   spec.wood_frame = frames;
 
-  /* 轮子：85% 一个、50% 两个 */
+  /* 每一行已占用的列 */
+  const used = { 3: new Set(), 5: new Set() };
+  function takeCell(row) {
+    const free = [];
+    for (let c = 1; c <= nFrame; c++) if (!used[row].has(c)) free.push(c);
+    if (!free.length) return null;
+    const c = free[rnd(free.length)];
+    used[row].add(c);
+    return [row, c];
+  }
+
+  /* 轮子：85% 一个、50% 两个（行 5） */
   if (box.wood_wheel > 0 || box.iron_wheel > 0) {
-    const wheel = (box.iron_wheel > 0 && Math.random() < 0.3) ? 'iron_wheel' : null;
-    if (wheel) {
-      spec.iron_wheel = [[5, 1 + rnd(nFrame)]];
-      if (Math.random() < 0.5) spec.iron_wheel = spec.iron_wheel.concat([[5, 1 + rnd(nFrame)]]);
-    } else if (box.wood_wheel > 0) {
-      spec.wood_wheel = [[5, 1 + rnd(nFrame)]];
-      if (Math.random() < 0.5) spec.wood_wheel = spec.wood_wheel.concat([[5, 1 + rnd(nFrame)]]);
+    const useIron = (box.iron_wheel > 0 && Math.random() < 0.3);
+    const key = useIron ? 'iron_wheel' : 'wood_wheel';
+    const first = takeCell(5);
+    if (first) {
+      spec[key] = [first];
+      if (Math.random() < 0.5) {
+        const second = takeCell(5);
+        if (second) spec[key] = spec[key].concat([second]);
+      }
     }
   }
 
-  /* 驱动件：风车桨 / 喷气口 / 仙术机关，各 45% */
+  /* 驱动件：风车桨 / 喷气口 / 仙术机关，各 45%（行 3） */
   ['propeller', 'jet', 'pump'].forEach(k => {
-    if (box[k] > 0 && Math.random() < 0.45) spec[k] = [[3, 1 + rnd(nFrame)]];
+    if (box[k] > 0 && Math.random() < 0.45) {
+      const cell = takeCell(3);
+      if (cell) spec[k] = [cell];
+    }
   });
 
-  /* 吃风件（第 83 轮补上）：这是 1-8 之前 0% 的根源。
-   * 它们必须放在**框上方**（tether 要求），和驱动件同一行。 */
+  /* 吃风件（行 3）：必须真的放得下 —— 1-8 全靠它 */
   ['umbrella', 'wind_wing'].forEach(k => {
-    if (box[k] > 0 && Math.random() < 0.6) spec[k] = [[3, 1 + rnd(nFrame)]];
+    if (box[k] > 0 && Math.random() < 0.6) {
+      const cell = takeCell(3);
+      if (cell) spec[k] = [cell];
+    }
   });
 
-  /* 可叠件 */
+  /* 可叠件：气球行 3、沙袋行 5 */
   if (box.balloon > 0 && Math.random() < 0.5) {
-    spec.balloon = [[3, 1 + rnd(nFrame)]];
-    spec._stacks = Object.assign(spec._stacks || {}, { balloon: 1 + rnd(3) });
+    const cell = takeCell(3);
+    if (cell) {
+      spec.balloon = [cell];
+      spec._stacks = Object.assign(spec._stacks || {}, { balloon: 1 + rnd(3) });
+    }
   }
   if (box.sandbag > 0 && Math.random() < 0.5) {
-    spec.sandbag = [[5, 1 + rnd(nFrame)]];
-    spec._stacks = Object.assign(spec._stacks || {}, { sandbag: 1 + rnd(3) });
+    const cell = takeCell(5);
+    if (cell) {
+      spec.sandbag = [cell];
+      spec._stacks = Object.assign(spec._stacks || {}, { sandbag: 1 + rnd(3) });
+    }
   }
 
   /* 种子（inner 件，放进一个非猪的框） */
@@ -66,18 +95,9 @@ function randomBuild(lv) {
     const cell = free.length ? free[rnd(free.length)] : frames[0];
     spec[kind + '_core'] = [cell];
     if (Math.random() < 0.85) {
-      /* ⚠ 触发时刻的范围必须覆盖**所有关卡**的窗口。
-       *
-       * 第 83 轮第一版写 0.6~3.8 秒，于是 1-8 的通关率只有 0.4% ——
-       * 而 1-8 的风种窗口是 **3.75~6.0 秒**（第 78 轮量的）。
-       * 0.6~3.8 几乎够不到它。
-       *
-       * 三关的窗口位置完全不同，这本身是设计信息：
-       *   1-5 屏障在前段 → 早按（1.4 秒）
-       *   1-7 台阶在中段 → 中按（2.5 秒）
-       *   1-8 坡在后段   → 晚按（3.75 秒起）
-       * 量具的采样范围必须覆盖这个跨度，否则它量的是"我的采样窗口"
-       * 而不是"玩家的机会"。改成 0.6~6.0。 */
+      /* 触发时刻的范围必须覆盖**所有关卡**的窗口。
+       * 三关的位置完全不同：1-5 屏障在前段（1.4s）、1-7 台阶在中段（2.5s）、
+       * 1-8 坡在后段（3.75s 起）。范围 0.6~6.0 覆盖整个跨度。 */
       spec._seeds = [{ t: +(0.6 + Math.random() * 5.4).toFixed(2), kind: kind }];
     }
   }
