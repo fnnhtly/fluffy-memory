@@ -48,15 +48,31 @@ function all(label, pairs) {
 
 function log(msg) { state.lines.push(msg); }
 
-/* 杀进程树。
+/* 杀进程树，并**删掉它用的浏览器临时配置目录**。
  *
  * `child.kill()` 只杀 launcher 进程，Edge 真正的浏览器进程是它的子孙，
  * 于是每跑一个脚本就留下一整棵浏览器树。跑到第 15 个脚本时，
  * 机器上已经堆了十几个 headless Edge —— 帧率掉下去、CDP 端口被抢、
  * 个别脚本连不上浏览器，表现成"崩溃或超时"。
- * 这些红全是假的，但它们和真回归长得一模一样，所以必须从根上消掉。 */
+ * 这些红全是假的，但它们和真回归长得一模一样，所以必须从根上消掉。
+ *
+ * ── 第 75 轮：还要删配置目录 ──
+ *
+ * 第 74 轮 `git commit` 报了 `ENOSPC`：`%TEMP%` 下 1362 个 `edge*` 目录、
+ * 27.8 GB。每个脚本 spawn 浏览器时都指定 `--user-data-dir=<tmp>/edgeXXX-时间戳`，
+ * 跑完从来没删。全项目 149 个脚本各拼一份，所以修法不能是"每个脚本加一行"，
+ * 只能修在**每个脚本都会走的这个收尾函数**上。
+ *
+ * 两个开关：
+ *   · `RAP_KEEP_PROFILE=1` —— 保留目录（调试时想翻 DevTools 的 profile）；
+ *   · 删不掉时静默（锁住的目录不能把整个测试搞崩）。
+ */
 function killTree(child) {
-  if (!child || !child.pid) return;
+  if (!child || !child.pid) {
+    /* pid 为 0 的假 child 也要走清理 —— 单测就是用它验清理逻辑的。 */
+    cleanupProfile(child);
+    return;
+  }
   try {
     if (process.platform === 'win32') {
       require('child_process').spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'],
@@ -65,6 +81,45 @@ function killTree(child) {
       child.kill('SIGKILL');
     }
   } catch (x) {}
+  cleanupProfile(child);
+}
+
+/* 删掉 child 的 `--user-data-dir`。判定和删除读同一份 `profileDirOf`。 */
+function cleanupProfile(child) {
+  if (process.env.RAP_KEEP_PROFILE === '1') return;
+  let sweeper = null;
+  try { sweeper = require('./temp_sweeper.js'); } catch (x) { return; }
+  const dir = sweeper.profileDirOf(child && child.spawnargs);
+  if (!dir) return;
+  /* 只删自己形状的目录 —— 万一有人把 user-data-dir 指到了别处
+   * （比如一个真实浏览器 profile），这里绝不能递归删掉它。 */
+  const base = require('path').basename(dir);
+  if (!sweeper.looksLikeProfileDir(base)) return;
+  /* ⚠ 要**重试**，而且要等够久。`taskkill /T /F` 返回时浏览器进程只是
+   * 收到了终止信号，它手里的 sqlite / leveldb 文件还没释放 ——
+   * 紧接着 rmSync 会 **EBUSY**。实测（probe_edge_orphan.js）：
+   *   taskkill 返回 → 立刻删 3 次全 EBUSY → 再等 1 秒 → 删得掉。
+   * 所以不是"删一次就好"，也不是"重试 3 次 × 120ms"（那也不够）。
+   * 现在最多等 1.5 秒，一旦目录消失就立刻退出 —— 正常情况约 250ms。
+   *
+   * 删不掉就放弃，是**对**的：清理失败不该让一个测试判负。 */
+  const fs = require('fs');
+  for (let i = 0; i < 15; i++) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (x) {}
+    if (!fs.existsSync(dir)) return;
+    sleepSync(100);
+  }
+}
+
+/* 同步睡一小会儿。Node 没有 sleepSync，用一个必定超时的 Atomics.wait。 */
+function sleepSync(ms) {
+  try {
+    const sab = new SharedArrayBuffer(4);
+    Atomics.wait(new Int32Array(sab), 0, 0, ms);
+  } catch (x) {
+    const t = Date.now();
+    while (Date.now() - t < ms) { /* spin */ }
+  }
 }
 
 /* 收尾：打印、判定、退出。errs = 页面异常列表，非空必然失败。 */

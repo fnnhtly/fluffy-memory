@@ -254,6 +254,30 @@ if (!fast) {
   results.push({ ...r, ok: pass, detail: m ? `问题 ${m[1]} 条${hasErr ? '' : ' + 有异常'}` : '无法解析' });
 }
 
+/* 4a) 临时目录卫生（第 75 轮）。
+ *
+ * 这一条是**元层**的：它不测游戏，它测"跑测试这件事本身会不会把机器搞坏"。
+ * 起因：`git commit` 报了 `ENOSPC` —— `%TEMP%` 下 1362 个 `edge*` 配置目录、
+ * 27.8 GB。每个脚本 spawn headless Edge 时指定 `--user-data-dir=<tmp>/edgeXXX-时间戳`，
+ * 跑完从来没删。修法在 `tools/lib/asserts.js` 的 killTree（每个脚本唯一的收尾口），
+ * 但那样也有漏网的可能，所以再加两道：
+ *   · `test_temp_hygiene.js` —— 验 killTree 真的会删、且不误删；
+ *   · `audit_profile_leaks.js` —— 验 verify 里每个 spawn 浏览器的脚本都会经过它。
+ */
+if (!fast) {
+  {
+    const r = run(process.execPath, [path.join('tools', 'test_temp_hygiene.js')], '临时目录卫生');
+    const m = (r.out || '').match(/ASSERTS (\d+) \/ (\d+)/);
+    const pass = !!(m && m[1] === m[2] && r.ok);
+    results.push({ ...r, ok: pass, detail: m ? `ASSERTS ${m[1]} / ${m[2]}` : '无法解析' });
+  }
+  {
+    const r = run(process.execPath, [path.join('tools', 'audit_profile_leaks.js')], '浏览器配置目录泄漏');
+    const pass = !!(r.ok && /✓ 每个 spawn 浏览器的脚本/.test(r.out));
+    results.push({ ...r, ok: pass, detail: pass ? '无泄漏' : '有脚本没走 killTree' });
+  }
+}
+
 // 4b) 像素探针（零件一览页 7 个图标真的画出来了）
 if (!fast) {
   const r = run(process.execPath, [path.join('tools', 'test_parts_page.js')], '零件一览页图标');
