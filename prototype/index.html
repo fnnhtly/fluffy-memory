@@ -3228,8 +3228,7 @@ const BIOMES = {
         ctx.lineTo(sx * (h - cn * 2.2), sy * h);
         ctx.lineTo(sx * h, sy * (h - cn * 2.2));
         ctx.closePath(); ctx.fill();
-      }
-      // 外描边：逐边，跳过共享边
+      }      // 外描边：逐边，跳过共享边
       ctx.strokeStyle = '#7a4f22'; ctx.lineWidth = Math.max(1.5, size * 0.055);
       ctx.beginPath();
       if (E.up) { ctx.moveTo(-h, -h); ctx.lineTo(h, -h); }
@@ -5067,7 +5066,27 @@ const BIOMES = {
         const r = p.def.radius || 0.5;
         spin = (car.odo || 0) / r;            // 里程 / 半径 = 弧度
       }
-      const baseRot = p.def.wheel ? 0 : ((p.dir || 0) + (car.a * 180 / Math.PI) / 90);
+      /* ══════════ 零件的朝向（第 76 轮修正）══════════
+       *
+       * 用户原话：「木框不要这样少一边，零件不要各自旋转」。
+       * 根因就在这里，而且只有一个符号：
+       *
+       *   世界坐标 Y 向上，`car.a` 是**逆时针**为正；
+       *   canvas 的 Y 向下，`ctx.rotate(θ)` 是**顺时针**为正。
+       *
+       * 所以要让零件跟着车身转 a，必须传 **−a**。原来传的是 +a，
+       * 于是每件零件相对车身多转了 **2a**：斜坡上 20° 就是 40°，
+       * 三块并排木框在局部坐标系里被画成歪 40° 的三个斜框 ——
+       * 用户看到的就是"各自旋转、每块都少了一边"（歪了之后
+       * 焊缝对不上，木色边跑到格子外面去了）。
+       *
+       * ⚠ 轮子原来是 `baseRot = 0`（不跟车身转）——
+       * 那是**第三**种朝向：车架歪 40°、轮子保持水平。
+       * 轮子是装在车架上的，必须和车架同角；它自己的自转是 `spin`，
+       * 在 drawPartShape 里单独叠加上去。
+       *
+       * 改法：所有零件统一 `p.dir − a/(π/2)`，不再分轮子/非轮子。 */
+      const baseRot = (p.dir || 0) - (car.a * 180 / Math.PI) / 90;
       /* 电池电量条已删（第 63 轮）：`def.energy` 不存在了，`batteryPctOf` 也不存在了。
        * 这里曾经读它 → `ReferenceError: batteryPctOf is not defined`，
        * 而那是一个**在渲染循环里抛的异常**：整个页面初始化失败，

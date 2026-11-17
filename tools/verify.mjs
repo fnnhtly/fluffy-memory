@@ -86,6 +86,11 @@ const SCRIPTS = [
   'test_wind_fx.js',
   'test_weld.js',
   'test_parts_connected.js',
+  /* 第 76 轮：整车是不是刚体。前两条只在**建造期**量接缝（那时 car.a 恒为 0），
+   * 行驶期的形状从来没量过 —— 于是"零件被画成 2a 偏转"活到了用户截图。 */
+  'test_rigid_parts.js',
+  /* 第 76 轮：焊接之后的缝在**行驶期**还在不在（含车身倾斜）。 */
+  'test_frame_edges.js',
   'test_seeds.js',
   'test_seed_levels.js',
   'test_seed_fx.js',
