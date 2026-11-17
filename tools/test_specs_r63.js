@@ -18,11 +18,9 @@ function chk(label, cond, extra) {
   else { fail++; console.log('✗ ' + label + '  ' + (extra || '')); }
 }
 
-/* 关 → 标准解 key。1-4 有两个变体，1-5 有四个（1-5e 是带雷种的正式解）。 */
-const SPEC_OF = {
-  '1-1': '1-1', '1-2': '1-2', '1-3': '1-3',
-  '1-4': '1-4i', '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7'
-};
+/* 关 → 标准解 key 现在只有一份（tools/lib/specmap.js）。
+ * 原来这里自己写了一张表，第 72 轮加第 7 关时就它没改到。 */
+const { SPEC_OF } = require('./lib/specmap.js');
 
 L.forEach(lv => {
   const key = SPEC_OF[lv.levelId];

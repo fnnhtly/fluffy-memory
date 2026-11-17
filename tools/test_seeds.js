@@ -288,8 +288,7 @@ function build(lv, spec) {
 /* ══════════ E 七个标准解仍然成立 ══════════ */
 {
   const levels = require('../prototype/levels.js');
-  const SPEC_OF = { '1-1': '1-1', '1-2': '1-2', '1-3': '1-3',
-                    '1-4': '1-4w', '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7' };
+  const SPEC_OF = require('./lib/specmap.js').SPEC_OF;
   Object.keys(SPEC_OF).forEach(key => {
     const lv = levels.filter(l => l.levelId === key)[0];
     const spec = R.SPECS[SPEC_OF[key]];

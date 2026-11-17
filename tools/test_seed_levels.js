@@ -43,8 +43,40 @@ const lv = id => LEVELS.filter(l => l.levelId === id)[0];
 // ---------- B 每一颗种子都有一关"必须用它" ----------
 /* 判据：这一关**不给种子以外的通行办法**。
  * 做两件事：带上种子必须能过，把种子拆掉必须过不去。
- * 只验前者的话，一个没有屏障/坑的关卡也会通过。 */
+ * 只验前者的话，一个没有屏障/坑/墙的关卡也会通过。 */
 {
+  // ---- 风种：1-8 的终点在一道 2 米高的台子上 ----
+  {
+    const L8 = lv('1-8');
+    chk('B0a 1-8 发给玩家风种', (L8 && L8.partsBox || {}).anemo_core > 0,
+      String(L8 && (L8.partsBox || {}).anemo_core));
+    chk('B0b 1-8 同时发给玩家吃风件（否则风场是空按钮）',
+      (L8 && L8.partsBox || {}).umbrella > 0, String(L8 && (L8.partsBox || {}).umbrella));
+    const spec = JSON.parse(JSON.stringify(R.SPECS['1-8'] || {}));
+    chk('B0c 1-8 有一条带风种的标准解 spec', Object.keys(spec).length > 0,
+      Object.keys(spec).join(','));
+    const withSeed = R.simulate(L8, spec, { maxTime: 90 });
+    chk('B0d 1-8 用风场飞上台子 → 通关', withSeed.result === 'win',
+      withSeed.result + ' x=' + (withSeed.car ? withSeed.car.x.toFixed(2) : '无车'));
+    chk('B0e 1-8 真的用掉了风种', withSeed.seedUse && withSeed.seedUse.anemo === 1,
+      JSON.stringify(withSeed.seedUse));
+    /* 反向 1：拆掉风种 */
+    const noSeed = JSON.parse(JSON.stringify(spec));
+    delete noSeed.anemo_core;
+    noSeed._seeds = [];
+    const bare = R.simulate(L8, noSeed, { maxTime: 90 });
+    chk('B0f 1-8 把风种拆掉 → 上不去那道台子', bare.result !== 'win',
+      bare.result + ' x=' + (bare.car ? bare.car.x.toFixed(2) : '无车'));
+    /* 反向 2：**带着风种但拆掉吃风件** → 风场托不动，也过不去。
+     * 这一条是风场机制的核心断言：风场只对吃风件做功。
+     * 少了它，"风场无条件抬升"的实现也能通过上面所有正向断言。 */
+    const noCanopy = JSON.parse(JSON.stringify(spec));
+    delete noCanopy.umbrella;
+    const nc = R.simulate(L8, noCanopy, { maxTime: 90 });
+    chk('B0g 1-8 拆掉吃风件 → 风场托不动，过不去', nc.result !== 'win',
+      nc.result + ' x=' + (nc.car ? nc.car.x.toFixed(2) : '无车'));
+  }
+
   // ---- 雷种：1-5 的路线中段立了一道雷屏障 ----
   {
     const L5 = lv('1-5');
@@ -110,12 +142,11 @@ const lv = id => LEVELS.filter(l => l.levelId === id)[0];
   }
 }
 
-// ---------- C 七关全部仍然可通关 ----------
+// ---------- C 八关全部仍然可通关 ----------
 {
-  const SPEC_OF = { '1-1': '1-1', '1-2': '1-2', '1-3': '1-3',
-                    '1-4': '1-4w', '1-5': '1-5e', '1-6': '1-6', '1-7': '1-7' };
+  const SPEC_OF = require('./lib/specmap.js').SPEC_OF;
   const ids = LEVELS.map(l => l.levelId);
-  chk('C0 关卡表里有 7 关', ids.length === 7, ids.join(','));
+  chk('C0 关卡表里有 8 关', ids.length === 8, ids.join(','));
   Object.keys(SPEC_OF).forEach(key => {
     const L = lv(key);
     const spec = R.SPECS[SPEC_OF[key]];

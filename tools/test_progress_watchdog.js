@@ -54,9 +54,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.log(`看门狗参数：窗口 ${W}s，门槛 ${D}m`);
   A.chk('看门狗参数是量出来的那一组（8 秒 / 2 米）', W === 8 && D === 2, `${W}s / ${D}m`);
 
-  // ---------- 1. 六关标准解都不能触发 ----------
+  // ---------- 1. 八关标准解都不能触发 ----------
+  /* ⚠ 这一支跑在浏览器里，拿不到 Node 的 `tools/lib/specmap.js`。
+   * 所以"关 → 标准解 key"必须由页面自己暴露一份 ——
+   * `window.__rap.SPEC_OF` 是 index.html 里从 specmap 抄过去的同一张表。
+   *
+   * 原来的写法是 `window.__rap.SPEC_OF[...]`，而页面**没有这个字段**，
+   * 于是 `.map` 抛 TypeError、整个脚本退出。加第 8 关时才发现 ——
+   * 说明这一条在那之前从来没被真正执行过（`keys[i] || lv.levelId` 的兜底
+   * 让 1-1~1-6 全部"碰巧"对上了，第 7 关 `1-7` 也对上，
+   * 直到第 8 关的名字和 key 不再相同才露出来）。 */
   const std = JSON.parse(await ev(`(()=>{const out=[];
-    const keys=['1-1','1-2','1-3','1-4i','1-5e','1-6','1-7'];
+    const keys = window.__rap.levels.map(l => l.levelId);
     window.__rap.levels.forEach((lv,i)=>{
       const k=keys[i]||lv.levelId;
       if(!window.__rap.RAP.SPECS[k]) return;
@@ -65,9 +74,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     });
     return JSON.stringify(out);})()`));
   std.forEach(s => A.log(`${s.id} → ${s.result} @ ${s.t.toFixed(1)}s ★${s.stars}`));
-  A.chk('六关标准解全部获胜（看门狗一个都没误杀）',
+  A.chk('八关标准解全部获胜（看门狗一个都没误杀）',
     std.every(s => s.result === 'win'), std.filter(s => s.result !== 'win').map(s => s.id).join(',') || '全部 win');
-  A.chk('六关没有一个被判 no_progress',
+  A.chk('八关没有一个被判 no_progress',
     std.every(s => s.reason !== 'no_progress'), std.map(s => s.reason).join(','));
 
   // ---------- 2. 慢慢溜的车要被判 no_progress，而不是白等到 60 秒 ----------

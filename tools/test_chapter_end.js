@@ -84,20 +84,20 @@ const PATCH = `(() => {
   const recsNow = async () => JSON.parse(await ev('JSON.stringify(window.__audit.recs)'));
   const has = (list, sub) => list.some(t => t.indexOf(sub) >= 0);
 
-  /* ⚠ 第 72 轮：**最后一关不再是 1-6**，而是 1-7（新增的岩种关）。
+  /* ⚠ 第 72 轮：**最后一关不再是 1-6**，而是动态取 `levels.length-1`
+   * （第 73 轮加到 8 关时这里又自动跟上了）。
    *
-   * 这个脚本原来把"最后一关"写死成 1-6（`launchSpec(5, "1-6")`），
-   * 于是加一关之后它整块红了 —— 而且红得很有说服力：
-   * 1-6 现在**确实**有下一关，「已是最后一关」当然不该出现。
-   * 判据本身没错，是它引用的那个关卡过期了。
+   * 标准解 key 也从 `tools/lib/specmap.js` 读 —— 第 72 轮这一行写死成
+   * `'1-7'`，第 73 轮加 1-8 时就错了（最后一关变成 1-8，
+   * 而它还在用 1-7 的解法去跑 1-8 的关卡）。
    *
-   * 现在从 `levels[levels.length-1]` 动态取最后一关，
-   * 加关时这段不用再改。 */
-  const LAST = (() => { return null; })();      // 占位，下面用 ev 取真实值
-  void LAST;
+   * 浏览器里拿不到 Node 模块，所以页面导出 `window.__rap.SPEC_OF`
+   * （index.html 里同一份表）。 */
   const lastIdx = await ev('window.__rap.levels.length - 1');
-  const lastSpec = await ev('window.__rap.levels[window.__rap.levels.length-1].levelId');
-  const LAST_SPEC = '1-7';                       // 标准解 key，和关卡同号
+  const lastId = await ev('window.__rap.levels[window.__rap.levels.length-1].levelId');
+  const LAST_SPEC = await ev('window.__rap.SPEC_OF[' + JSON.stringify(lastId) + ']');
+  A.chk('最后一关有登记的标准解（' + lastId + ' → ' + LAST_SPEC + '）',
+    !!LAST_SPEC, String(LAST_SPEC));
 
   // ---------- A. 只打通最后一关（其余关没通）→ 不许说"整章通关" ----------
   const runOne = async (idx, specKey) => {
@@ -109,7 +109,7 @@ const PATCH = `(() => {
     return false;
   };
   const doneLast = await runOne(lastIdx, LAST_SPEC);
-  A.chk('最后一关（' + lastSpec + '）真跑到了结算', doneLast);
+  A.chk('最后一关（' + lastId + '）真跑到了结算', doneLast);
   await sleep(3400);        // 等回放 + 卡片滑入
   const r1 = await recsNow();
   A.chk('只通了最后一关时，卡上不出现「整章通关」', !has(r1, '整章通关'),
@@ -124,10 +124,17 @@ const PATCH = `(() => {
   await sleep(200);
   /* ⚠ 第 72 轮：1-5 现在是带雷种的 `1-5e`（`1-5n` 会撞屏障），
    * 并且多了 1-7。这一支要把**每一关**都跑一遍才能建出"全章已通"的状态，
-   * 落下一关就会在 B 组红成"每关都有存档记录 前提成立 = false"。 */
-  const others = [[0, '1-1'], [1, '1-2'], [2, '1-3'], [3, '1-4i'],
-                  [4, '1-5e'], [5, '1-6'], [6, '1-7']]
-    .filter(pair => pair[0] !== lastIdx);
+   * 落下一关就会在 B 组红成"每关都有存档记录 前提成立 = false"。
+   *
+   * ⚠ 第 73 轮：这张表也不再手写。**每一关**都从页面自己取 key ——
+   * 第 72 轮这里是手写的 7 项，加第 8 关时漏了一项，
+   * 于是"全通"这个前提永远建不起来，后面四条断言跟着全红。
+   * 现在 `others` 是 `levels` 里除最后一关之外的全部。 */
+  const others = JSON.parse(await ev(`(()=>{
+    const R=window.__rap;
+    return JSON.stringify(R.levels.map((l,i)=>[i, R.SPEC_OF[l.levelId]||l.levelId])
+      .filter(p => p[0] !== ${lastIdx}));
+  })()`));
   for (const [idx, spec] of others) {
     await runOne(idx, spec);
   }

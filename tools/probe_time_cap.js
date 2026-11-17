@@ -19,7 +19,8 @@ const levels = fs.readdirSync(levelsDir).sort()
   .map(f => JSON.parse(fs.readFileSync(path.join(levelsDir, f), 'utf8')));
 /* ⚠ 第 72 轮：1-5 加了一道雷屏障，不带雷种的 `1-5m` 现在过不去。
  * 这一支量的是"标准解要跑多久"，所以必须用**能通关的**那条（1-5e）。 */
-const KEYS = ['1-1', '1-2', '1-3', '1-4i', '1-5e', '1-6', '1-7'];
+const { specKeyOf } = require('./lib/specmap.js');
+const KEYS = require('../prototype/levels.js').map(l => specKeyOf(l.levelId));
 
 console.log('=== 1. 各关标准解的通关耗时 ===');
 const stdTimes = [];

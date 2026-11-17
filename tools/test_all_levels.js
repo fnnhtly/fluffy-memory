@@ -65,7 +65,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     { idx: 3, spec: '1-4i', name: '1-4 冰面（铁轮 + 喷气口）', minStars: 1 },
     { idx: 3, spec: '1-4w', name: '1-4 冰面（木轮，靠大推力硬推）', minStars: 1 },
     { idx: 4, spec: '1-5e', name: '1-5 不用机械（仙术机关 + 雷种穿屏障）', minStars: 1 },
-    { idx: 6, spec: '1-7', name: '1-7 升起岩柱（岩种）', minStars: 1 }
+    { idx: 6, spec: '1-7', name: '1-7 升起岩柱（岩种）', minStars: 1 },
+    { idx: 7, spec: '1-8', name: '1-8 乘风而上（风种 + 伞）', minStars: 1 }
   ];
 
   for (const cs of CASES) {

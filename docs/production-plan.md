@@ -59,7 +59,7 @@
 | 切走窗口 | `tools/test_focus_blur.js` + `tools/probe_focus_combo.js` / `probe_focus_switch.js` | ✅ 28/28（第 58 轮：页面里原先**一条** `blur`/`visibilitychange` 监听都没有 → 按住的键永远松不开、`heldBtn` 卡在 1、回来时迎面撞一局已跑完的比赛。现在切走会清按住状态 + 自动暂停（暂停卡写明"窗口切走了，已经替你暂停"）+ 复位拖拽手势，且**取消**交互而非**松开**交互（不许凭空推车一下）。量具用无头环境里唯一送得到事件的组合：`setFocusEmulationEnabled:false` + `setWebLifecycleState:frozen`） |
 | 限时归属 | `tools/test_time_limit.js` + `probe_time_cap.js` / `probe_timeout_reach.js` / `probe_slow_legal.js` | ✅ 11/11（关卡 `timeLimit` 从死字段变活；1440 局实测 timeout 零触发，最慢合法局 22.13 秒 vs 限时 120 秒） |
 | 可调参数对账 | `tools/audit_params.js` | ✅ 4/4（`DEFAULTS` 23 个旋钮逐个查读者；注释里出现 `Params.xxx` 不算） |
-| 触地反馈量程 | `tools/test_touch_ladder.js` + `probe_impact_speed.js` / `probe_impact_range.js` / `probe_touch_ladder.js` | ✅ 21/21（四级档位原先铺在 0.8/2.5/4.5/6，而七关标准解 28 次触地全在 0.80~1.70 → 通关全程只有 lvl1。lvl2 挪到 1.35：标准解落地真的有尘土轻震，仍 0 条 lvl3+、0 伤害） |
+| 触地反馈量程 | `tools/test_touch_ladder.js` + `probe_impact_speed.js` / `probe_impact_range.js` / `probe_touch_ladder.js` | ✅ 21/21（四级档位原先铺在 0.8/2.5/4.5/6，而八关标准解 28 次触地全在 0.80~1.70 → 通关全程只有 lvl1。lvl2 挪到 1.35：标准解落地真的有尘土轻震，仍 0 条 lvl3+、0 伤害） |
 | 关卡数据对账 | `tools/audit_level_fields.js` + `tools/test_level_schema.js` | ✅ 18/18 + 20/20（第四张假旋钮表：`levels/*.json` 原有 **9 个死字段**（physics 整块、buildArea、grid.cell/px、start.row/goal.row、materials[].surfaceRow、chapter、note）已全部删除；`surfaceRow` 更是在 9 段材质里 **6 段说假话**。出口 `build_levels_js.js` 现在会拒收任何脏数据） |
 | 气球沙袋机制 | `tools/test_parts_lift.js` | ✅ 35/35 |
 | 1-6 教学设计 | `tools/test_1_6.js` + `tools/test_1_6_browser.js` | ✅ 18/18 + 16/16（Node 与真实浏览器必须给出同一个结论） |
