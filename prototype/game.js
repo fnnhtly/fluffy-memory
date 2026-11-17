@@ -287,7 +287,7 @@
      * 更松的 (12, 2) 只抓到 23 局。
      * 标准解的最长"无实质进展"实测只有 1.6 秒（1-6，升空那一段），
      * 离 8 秒有 5 倍余量 —— 这就是它不会误杀的依据。 */
-    progressWindow: 8.0,
+    progressWindow: 10.0,
     progressGain: 2.0,
     /* ---------- 结构伤害的起始法向速度 ----------
      *
@@ -2489,6 +2489,50 @@
      *   pop           —— 扎一个气球
      * 后两类走的是和玩家点车身完全相同的 dropSandbag / popBalloon，
      * 不是伪造状态（伪造状态会让测试绿而实机红）。 */
+    var acts = buildActTimeline(spec, opts);
+    var ai = 0;
+    /* 轨迹录制（第 82 轮）。
+     *
+     * ⚠ 为什么必须由**引擎**提供：第 81 和 82 轮连着两轮，我的扫描脚本
+     * 各自手写了一份"时间轴 + 逐帧 step"的循环，一次漏了 `_drops`、
+     * 一次漏了 `_seeds`，两次都量出了不存在的缺陷。
+     *
+     * 教训不是"下次记得补上"，而是**这个循环不该有第二份实现**。
+     * `opts.trace` 传一个数组进来，引擎按帧往里塞
+     * `{t, x, y, left, goalX, air, result}` —— 所有扫描工具读同一份轨迹，
+     * 引擎的时间轴怎么变，它们就跟着变。 */
+    var trace = opts.trace || null;
+    while (state.phase === 'run' && state.time < maxT) {
+      while (ai < acts.length && acts[ai].t <= state.time) {
+        if (acts[ai].k === 'drop') dropSandbag(state);
+        else if (acts[ai].k === 'pop') popBalloon(state);
+        else if (acts[ai].k === 'seed') triggerSeed(state, acts[ai].kind);
+        else if (acts[ai].k === 'press') pressInteract(state, 1);
+        else releaseInteract(state, 1);
+        ai++;
+      }
+      step(state, dt);
+      if (trace && state.car) {
+        var goalX = level.goal.col;
+        trace.push({
+          t: +state.time.toFixed(4),
+          x: +state.car.x.toFixed(4),
+          y: +state.car.y.toFixed(4),
+          left: +(goalX - state.car.x).toFixed(4),
+          goalX: goalX,
+          air: +(state.car.y - groundY(state, state.car.x)).toFixed(4),
+          result: state.result || null
+        });
+      }
+    }
+    return state;
+  }
+
+  /* 把 spec 里的 `_presses / _drops / _pops / _seeds` 展开成**一条**时间轴。
+   * 抽出来是为了让 `simulate()` 和任何"要自己驱动一局"的工具读同一份 ——
+   * 第 81/82 两轮的假数据都是"工具自己另写了一份"造成的。 */
+  function buildActTimeline(spec, opts) {
+    opts = opts || {};
     var acts = [];
     ((spec && spec._presses) || opts.presses || []).forEach(function (a) {
       acts.push({ t: a.t, k: a.k || 'press' });
@@ -2509,19 +2553,7 @@
       acts.push({ t: a.t, k: 'seed', kind: a.kind });
     });
     acts.sort(function (a, b) { return a.t - b.t; });
-    var ai = 0;
-    while (state.phase === 'run' && state.time < maxT) {
-      while (ai < acts.length && acts[ai].t <= state.time) {
-        if (acts[ai].k === 'drop') dropSandbag(state);
-        else if (acts[ai].k === 'pop') popBalloon(state);
-        else if (acts[ai].k === 'seed') triggerSeed(state, acts[ai].kind);
-        else if (acts[ai].k === 'press') pressInteract(state, 1);
-        else releaseInteract(state, 1);
-        ai++;
-      }
-      step(state, dt);
-    }
-    return state;
+    return acts;
   }
 
   var RAP = {

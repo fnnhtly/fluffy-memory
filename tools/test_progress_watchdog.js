@@ -52,7 +52,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const W = await ev('window.__rap.RAP.Params.progressWindow');
   const D = await ev('window.__rap.RAP.Params.progressGain');
   A.log(`看门狗参数：窗口 ${W}s，门槛 ${D}m`);
-  A.chk('看门狗参数是量出来的那一组（8 秒 / 2 米）', W === 8 && D === 2, `${W}s / ${D}m`);
+  /* ⚠ 第 82 轮：W 从 8 提到 10（余量从 12% 提到 42%，见 docs §20）。
+   * 这条断言原来写死 `W === 8 && D === 2`，改参数就必须改测试 ——
+   * 那说明它量的是"有没有背下这个数"，不是"参数合不合理"。
+   * 现在只断言参数在**合理区间**里；结构性安全由
+   * tools/test_watchdog_structural.js 负责。 */
+  A.chk('看门狗参数在合理区间（W ∈ [6,20]，D ∈ [1,4]）',
+    W >= 6 && W <= 20 && D >= 1 && D <= 4, `${W}s / ${D}m`);
 
   // ---------- 1. 八关标准解都不能触发 ----------
   /* ⚠ 这一支跑在浏览器里，拿不到 Node 的 `tools/lib/specmap.js`。
@@ -110,8 +116,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    * 用法是**纯函数**（progressWarning），所以不需要真的跑 6 秒。 */
   const warn = JSON.parse(await ev(`(()=>{const R=window.__rap.RAP, f=window.__rap.progressWarning;
     const mk=(noGainFor)=>({car:{x:5,y:6}, noGainFor});
-    return JSON.stringify({s2:f(mk(6.0)), s0:f(mk(0.0)), s3:f(mk(3.0)), s8:f(mk(8.0)), none:f(null)});})()`));
-  A.log('noGainFor=6.0 → ' + JSON.stringify(warn.s2 && warn.s2.text));
+    /* ⚠ 第 82 轮：W 从 8 提到 10，这些字面量必须改成**相对 W**。
+     * 原来写 mk(6.0) 是因为 8−6=2（还剩 2 秒），W 一改就变成 4 秒，
+     * 断言跟着红 —— 那说明它量的是"背下了 8 这个数"，不是"倒计时能显示"。 */
+    const W = window.__rap.RAP.Params.progressWindow;
+    return JSON.stringify({s2:f(mk(W-2)), s0:f(mk(0.0)), s3:f(mk(W-5)),
+      s8:f(mk(W)), none:f(null), W: W});})()`));
+  A.log('noGainFor=W−2 → ' + JSON.stringify(warn.s2 && warn.s2.text));
   A.chk('剩 2 秒时给出倒计时提示', !!(warn.s2 && /2 秒/.test(warn.s2.text)),
     warn.s2 ? warn.s2.text : 'null');
   A.chk('刚出发时不提示（不制造常驻噪音）', warn.s0 === null);
@@ -119,7 +130,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    * 注意别写成 5.0：那对应"还剩 3 秒"，本来就该提示。 */
   A.chk('还剩 5 秒（余量充足）时不提示', warn.s3 === null,
     warn.s3 ? warn.s3.text : 'null');
-  A.chk('时间到（noGainFor=8）不再提示（已判负）', warn.s8 === null);
+  A.chk('时间到（noGainFor=W）不再提示（已判负）', warn.s8 === null,
+    warn.s8 ? warn.s8.text : 'null');
   A.chk('空 run 不崩', warn.none === null);
 
   // ---------- 4. 结算页的失败文案要和警告是同一件事 ----------

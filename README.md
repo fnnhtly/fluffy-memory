@@ -80,7 +80,7 @@ records/shots/        自动化测试拍的两百多张过程图（**不入库**
 ```bash
 node prototype/check_html_logic.js   # 40 项数值校核，约 2 秒
 node tools/check_inline_js.js        # 内联脚本语法
-node tools/verify.mjs                # 全量：数值 + 98 项自检（含真实浏览器交互），约 8 分钟
+node tools/verify.mjs                # 全量：数值 + 100 项自检（含真实浏览器交互），约 8 分钟
 node tools/verify.mjs --fast         # 只跑数值部分
 ```
 

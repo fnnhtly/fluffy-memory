@@ -111,6 +111,10 @@ const SCRIPTS = [
    * 但顺带证明了这一关真的有决策：三种方向、时机窗口、9 种构型。 */
   'test_lift_predictable.js',
   'test_lift_level.js',
+  /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
+   * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
+  'test_watchdog_structural.js',
+  'test_watchdog_health.js',
   'test_seeds.js',
   /* 第 77 轮：车身姿态。平地静止必须水平、松手必须回正、坡上必须贴坡。
    * 纯 Node 跑真物理（不开浏览器）—— 它量的是引擎，不是画面。 */
