@@ -81,7 +81,8 @@ const SCRIPTS = [
   'test_world_anchor.js',
   'test_grid_is_visual.js',
   'test_hill_parallax.js',
-  'test_recentre.js'
+  'test_recentre.js',
+  'test_tray_scope.js'
 ];
 
 function run(cmd, args, label, timeoutMs = 180000) {

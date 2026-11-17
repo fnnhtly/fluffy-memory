@@ -116,7 +116,30 @@
   };
 
 
-  const TRAY = RAP.TRAY_ORDER.concat(['eraser']);
+  /* 托盘 = **本关给的零件** + 橡皮（第 67 轮，用户要求：
+   * 「为什么本关不给的零件要显示在物品栏」）。
+   *
+   * 原来托盘是 `RAP.TRAY_ORDER.concat(['eraser'])` —— 十三件全画出来，
+   * 本关不给的显示成 0 且变暗。当时理由是"让玩家知道游戏里还有什么"，
+   * 但这个理由站不住：
+   *   · 1-1 只需要三件，另外十件**永远**是 0，托盘一半是死格子；
+   *   · 0 的格子仍然占着位置、仍然要点一下才知道没货；
+   *   · 更糟的是它把"这一关的题面"藏起来了 —— 玩家看不出关卡设计师
+   *     给了他哪几件工具，而那正是解谜的起点（参考里托盘就是本关的零件箱）。
+   *
+   * 所以托盘改成**本关零件箱的投影**：partsBox 里有几件就画几格。
+   * 这样"托盘变空/变满"本身就在传达关卡难度变化，也顺手让每个槽变宽、
+   * 图标变大、能挂数字键徽标（见 drawTray）。
+   *
+   * 注意 `TRAY` 必须保持**可变**：下面大量地方直接读它（键盘 1-9、
+   * dragFromTray、弹回动画的落点），换关时原地替换内容而不是重新绑定。
+   * 唯一真源仍是 level().partsBox —— 这里只做投影，不另存一份。 */
+  let TRAY = [];
+  function refreshTray() {
+    const box = (level() && level().partsBox) || {};
+    TRAY = RAP.TRAY_ORDER.filter(p => (box[p] || 0) > 0).concat(['eraser']);
+  }
+
   const state = {
     levelIndex: 0, phase: 'build', build: RAP.newBuild(),
     /* 开局默认拿着木框：一进关直接点网格就能落第一块框，
@@ -779,11 +802,18 @@
       y: (ev.clientY - r.top) * VIEW_H / r.height - VIEW_OFF_Y
     };
   }
+  /* 托盘槽位。第 67 轮：托盘只放**本关给的**零件（见 refreshTray），
+   * 槽位也因此从 46px 放大到 64px —— 少了几件就该把空间还给剩下那几件，
+   * 而不是在中间留一片空白。
+   *
+   * 最宽的一关是 1-6：木框/木轮/风种/风车桨/热气球/压舱石/小猪/橡皮 = 8 格，
+   * 8×64 + 7×12 = 596px，居中后左右各留 342px —— 无论哪一关都放得下，
+   * 所以这里不需要"太宽就缩"的分支（多一条分支就多一处会走散的地方）。 */
   function trayRect(i) {
-    const n = TRAY.length, w = 46, gap = 7;
+    const n = TRAY.length, w = 64, gap = 12;
     const total = n * w + (n - 1) * gap;
     const x0 = (DW - total) / 2;
-    return { x: x0 + i * (w + gap), y: DH - 76, w, h: w };
+    return { x: x0 + i * (w + gap), y: DH - 88, w, h: w };
   }
   function cellAt(mx, my) {
     const o = buildOrigin();
@@ -1142,7 +1172,13 @@
     state.build = RAP.newBuild();
     state.phase = 'build';
     state.run = null;
-    state.selected = 'wood_frame';
+    /* 托盘跟着关卡走：先换关，再刷新托盘（refreshTray 读的是 level().partsBox）。
+     * 顺序不能反 —— 反过来拿到的是上一关的零件箱。 */
+    refreshTray();
+    /* 默认手里拿**本关第一件**零件，而不是写死木框：
+     * 万一某一关不给木框（比如以后的气球关），写死会让玩家一进关
+     * 就握着一件不存在的零件，点网格毫无反应。 */
+    state.selected = TRAY[0] || null;
     state.selectedByUser = false;   // 预置默认值不算"玩家选的"（见 selectPart）
     state.cam = buildCam();
     /* 每关进场时把"看全图"镜头重置成整关俯瞰。
@@ -3349,18 +3385,40 @@ const BIOMES = {
     TRAY.forEach((part, i) => {
       if (hit(trayRect(i), state.mouse.x, state.mouse.y)) hoverIdx = i;
     });
+    // 托盘底板：一条贯通的深色长条，让"这是本关的零件箱"成为一个整体
+    if (TRAY.length) {
+      const r0 = trayRect(0), rN = trayRect(TRAY.length - 1);
+      ctx.fillStyle = 'rgba(8,18,26,.55)';
+      roundRect(r0.x - 12, r0.y - 12, (rN.x + rN.w) - r0.x + 24, r0.h + 34, 16); ctx.fill();
+      ctx.strokeStyle = 'rgba(232,200,122,.22)'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
     TRAY.forEach((part, i) => {
       const rect = trayRect(i);
       const left = part === 'eraser' ? 1 : RAP.budgetLeft(level(), part, state.build);
       const sel = state.selected === part;
       ctx.fillStyle = sel ? '#4a7aa8' : 'rgba(20,26,32,.82)';
-      roundRect(rect.x, rect.y, rect.w, rect.h, 8); ctx.fill();
+      roundRect(rect.x, rect.y, rect.w, rect.h, 10); ctx.fill();
       if (sel) { ctx.strokeStyle = '#ffe08a'; ctx.lineWidth = 3; ctx.stroke(); }
-      const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2 - 4;
+      const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2 - 6;
       if (part === 'eraser') {
-        ctx.fillStyle = '#dde6ee'; roundRect(cx - 14, cy - 12, 28, 24, 4); ctx.fill();
+        ctx.fillStyle = '#dde6ee'; roundRect(cx - 18, cy - 14, 36, 28, 5); ctx.fill();
       } else {
-        drawPartShape(part, cx, cy, rect.w * 0.46, 0);
+        drawPartShape(part, cx, cy, rect.w * 0.56, 0);
+      }
+      /* 数字键徽标（1..9）。托盘跟着关卡变长变短之后，"这是我按 3 拿的那个"
+       * 必须有个固定的说法 —— 键盘快捷键本来就在（keydown 里的 '1'..'9'），
+       * 但界面上没有任何地方告诉过玩家。画在左上角，不挡零件本体。
+       *
+       * ⚠ 底色必须是**实心深色**。第一版用 rgba(232,200,122,.16) 这种
+       * 近乎透明的金，10px 小字压在草绿底上只有 2.72 —— 对比度审计当场报红。
+       * 小字号对底色比对字号敏感得多：徽标这种东西要么看得清，要么干脆不画。 */
+      if (i < 9) {
+        ctx.fillStyle = 'rgba(10,18,24,.88)';
+        roundRect(rect.x + 3, rect.y + 3, 17, 16, 5); ctx.fill();
+        ctx.strokeStyle = 'rgba(232,200,122,.45)'; ctx.lineWidth = 1;
+        roundRect(rect.x + 3, rect.y + 3, 17, 16, 5); ctx.stroke();
+        text(String(i + 1), rect.x + 11.5, rect.y + 15, 10.5,
+          sel ? '#ffe9b0' : '#e8d29a', 'center', true);
       }
       /* 数量：**一律白色**，用"有没有货"区分靠的是滑条/透明度，不是颜色。
        *
@@ -3373,15 +3431,15 @@ const BIOMES = {
        * 白色在这个底上 5.83，稳稳过线；而"用完"的语义已经由
        * 数字本身（0）和槽位的暗色表达，不需要再靠颜色重复一遍。 */
       text(part === 'eraser' ? '' : String(left),
-        rect.x + rect.w / 2, rect.y + rect.h + 14, 12,
+        rect.x + rect.w / 2, rect.y + rect.h + 16, 13,
         '#ffffff', 'center');
       // 悬停 / 选中 → 在槽上方显示零件名（"选了什么"必须一眼看到）
       if (i === hoverIdx || state.selected === part) {
         const nm = part === 'eraser' ? '橡皮' : RAP.PARTS[part].label;
-        const w = Math.max(72, nm.length * 15 + 26);
+        const w = Math.max(78, nm.length * 16 + 28);
         ctx.fillStyle = 'rgba(10,18,24,.92)';
-        roundRect(rect.x + rect.w / 2 - w / 2, rect.y - 34, w, 26, 8); ctx.fill();
-        text(nm, rect.x + rect.w / 2, rect.y - 16, 14, '#ffe9b0', 'center', true);
+        roundRect(rect.x + rect.w / 2 - w / 2, rect.y - 36, w, 28, 8); ctx.fill();
+        text(nm, rect.x + rect.w / 2, rect.y - 17, 15, '#ffe9b0', 'center', true);
       }
     });
   }
@@ -6169,7 +6227,13 @@ const BIOMES = {
                    observeBtnRect, recentreRect, buildViewAwayFromHome,
                    buildCellPx, get BUILD_PX() { return buildCellPx(); },
                    cellAt, canvasPos,
-                   trayRect, btnRect, TRAY, pauseRowRects, level, welcomeCard, welcomeBtnRect,
+                   /* ⚠ `TRAY` 必须导出成 **getter**，不能按值导出。
+                    * refreshTray() 是重新赋值（TRAY = [...]），按值导出会让
+                    * `__rap.TRAY` 永远停在初始化那一刻的那个数组 ——
+                    * 第 67 轮就是这么踩的：测试读到空数组，浏览器里托盘却正常。
+                    * 按值导出读的是一个**快照**，那是最难发现的一类假绿。 */
+                   trayRect, btnRect, get TRAY() { return TRAY; },
+                   refreshTray, pauseRowRects, level, welcomeCard, welcomeBtnRect,
                    welcomeSkipRect, levelCardRect, runTimeRects, runProgressRect,
                    runChallengeRect, challengeStatus, SAVE_KEY,
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,

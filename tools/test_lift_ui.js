@@ -67,12 +67,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     return JSON.stringify({ids:R.TRAY, rects:R.TRAY.map((_,i)=>R.trayRect(i))});})()`));
   const tray = trayInfo.rects, trayIds = trayInfo.ids;
   await shot('lu-01-build-tray');
-  /* 托盘格数跟着零件表走，**不能写死**。
-   * 第 63 轮零件从 9 件涨到 13 件（+ 橡皮 = 14 格），
-   * 旧断言写 `tray.length === 10` 当场红 —— 而功能完全正常。 */
-  A.chk('托盘格数 = 零件表长度 + 1（橡皮）',
-    tray.length === (await ev('window.__rap.RAP.TRAY_ORDER.length')) + 1,
-    tray.length + ' 格');
+  /* 托盘格数 = **本关零件箱**的件数 + 1（橡皮），不是零件总表。
+   *
+   * 这条断言的两次修订史正好是"假绿"的两种形状：
+   *   第 63 轮：写死 `tray.length === 10`，零件从 9 涨到 13 之后当场红 ——
+   *             功能正常，是量具在说谎（写死的数）。
+   *   第 67 轮：改成 `TRAY_ORDER.length + 1`，看着"跟着数据走"了，
+   *             其实同样是错的 —— 托盘从这一轮起只放**本关给的**零件，
+   *             1-6 是 8 格而不是 14 格，于是它又红了一次。
+   * 正确的参照物是 level().partsBox：这次从那一份现算。 */
+  const expectTray = JSON.parse(await ev(`(()=>{
+    const R=window.__rap, box=R.level().partsBox || {};
+    return JSON.stringify(R.RAP.TRAY_ORDER.filter(p => (box[p]||0) > 0).concat(['eraser']));
+  })()`));
+  A.chk('托盘格数 = 本关零件箱件数 + 1（橡皮）',
+    tray.length === expectTray.length && tray.length > 1,
+    tray.length + ' 格，期望 ' + expectTray.length);
+  A.chk('托盘内容 = 本关零件箱（本关不给的零件不出现）',
+    JSON.stringify(trayIds) === JSON.stringify(expectTray),
+    trayIds.join(',') + ' vs ' + expectTray.join(','));
   A.chk('托盘不超出 1280 宽',
     tray[0].x >= 8 && tray[tray.length - 1].x + tray[0].w <= 1272,
     `x ${Math.round(tray[0].x)} → ${Math.round(tray[tray.length - 1].x + tray[0].w)}`);
