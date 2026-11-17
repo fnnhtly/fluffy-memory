@@ -75,26 +75,50 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
    * 结果后面每次 drawRun 都在 `car.vx` 上抛异常、整个渲染循环被 try/catch 吞掉，
    * 于是"断电后还有 11 条粒子"其实是**卡在最后一帧**的假象。
    * 量具里的调试残留会伪装成产品缺陷，这是第二次栽在同一件事上。 */
+  /* ⚠ 第 71 轮：`p.powered` 随动力容量系统一起删了。
+   *
+   * 原来这一步是"把 powered 置 false"来模拟断电。现在驱动件**装了就一直出力**，
+   * 玩法里"停推"唯一的形状是**零件不在车上了**（框碎了、被消耗掉）。
+   * 所以这里改成把驱动件从 `car.parts` 里摘掉 —— 这才是真实的停推路径，
+   * 而且它同时覆盖了"框碎了之后特效应该停"这个真实场景。
+   *
+   * 保留 `B3 前提：车还在`：它上一次救过我（调试残留让渲染循环挂掉，画面冻结，
+   * 表现成"粒子永不消失"，看起来像产品缺陷）。 */
   const cut = JSON.parse(await ev(`(()=>{const S=window.__rap.state;
-    let n = 0;
-    (S.run.car.parts||[]).forEach(p => {
-      if (p.def && p.def.tool) { p.powered = false; n++; }
+    const before = (S.run.car.parts||[]).length;
+    const removed = [];
+    /* 先把要摘掉的存起来，D 组要装回去。 */
+    window.__savedAirParts = [];
+    S.run.car.parts = (S.run.car.parts||[]).filter(p => {
+      const d = p.def || (window.__rap.RAP.PARTS[p.part]);
+      if (d && d.blowsAir) { removed.push(p.part); window.__savedAirParts.push(p); return false; }
+      return true;
     });
-    return JSON.stringify({ cut: n, hasCar: !!S.run.car });})()`));
-  A.log('断电：把 ' + cut.cut + ' 个工具的 powered 置 false（车仍在：' + cut.hasCar + '）');
+    return JSON.stringify({ cut: removed.length, names: removed,
+      before: before, after: (S.run.car.parts||[]).length,
+      hasCar: !!S.run.car });})()`));
+  A.log('停推：从车上摘掉 ' + cut.cut + ' 个出风件（' + cut.names.join(',') +
+    '），零件 ' + cut.before + ' → ' + cut.after + '（车仍在：' + cut.hasCar + '）');
   await sleep(700);   // 等已有粒子自然消亡（寿命 0.34s）
   const off = JSON.parse(await ev(`(()=>{const S=window.__rap.state;
     return JSON.stringify({ n: (S.windFx||[]).length, emitting: S.windEmitting || 0,
       drawN: S.windFxDrawN || 0, alive: !!(S.run && S.run.car) });})()`));
-  A.log('断电 0.7 秒后：粒子 ' + off.n + ' 条，' + off.emitting + ' 个零件在出力，' +
+  A.log('停推 0.7 秒后：粒子 ' + off.n + ' 条，' + off.emitting + ' 个零件在出力，' +
         '本帧画出 ' + off.drawN + ' 条');
-  A.chk('B1 断电后不再生成新粒子（emitting 归零）', off.emitting === 0, String(off.emitting));
-  A.chk('B2 断电后剩下的粒子在 0.7 秒内全部散尽（特效不是常开的）',
+  A.chk('B1 停推后不再生成新粒子（emitting 归零）', off.emitting === 0, String(off.emitting));
+  A.chk('B2 停推后剩下的粒子在 0.7 秒内全部散尽（特效不是常开的）',
     off.n === 0, off.n + ' 条残留');
   A.chk('B3 前提：车还在（上面的差异不是"渲染循环挂了"造成的）', off.alive === true,
     'car alive=' + off.alive);
 
-  /* ---- D. 帧率无关：同一段真实时间、两种步长，稳态粒子数必须相当 ---- */
+  /* 把摘掉的零件装回去再跑 D 组。
+   * ⚠ 上一段 B 把出风件从 `car.parts` 里摘掉了 —— 不装回去的话
+   * D 组量的是"一辆没有驱动件的车"，两轮都是 0 条，
+   * D3（稳态不为 0）会红，而 D2（两轮相当）会**绿**：两个零当然相当。
+   * 一段测试破坏了下一段的前提，这两条断言必须显式复位。 */
+  await ev('(()=>{const S=window.__rap.state, car=S.run.car;' +
+    'if (window.__savedAirParts) car.parts = car.parts.concat(window.__savedAirParts);' +
+    'return 1;})()');
   const rate = JSON.parse(await ev(`(()=>{
     const S=window.__rap.state;
     /* 跑两遍 0.5 秒：一次 15 步 x 1/30s，一次 60 步 x 1/120s。
@@ -107,7 +131,9 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
     function trial(step, steps) {
       S.windFx = []; S.windAcc = 0;
       const car = S.run.car;
-      car.parts.forEach(p => { if (p.def && p.def.tool) p.powered = true; });
+      /* ⚠ 不再需要把 powered 置 true（字段已删）。驱动件装了就一直出力。
+       * （模板字符串里不能出现反引号，所以这里不用代码标记。） */
+      void car;
       for (let i = 0; i < steps; i++) window.__rap.spawnWindFx(car, step);
       const n = S.windFx.length;
       S.windFx = []; S.windAcc = 0;

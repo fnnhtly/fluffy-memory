@@ -1,12 +1,17 @@
-/* 动力连通性 + 系挂校验（第 63 轮新机制的核心）。
+/* 驱动件出力 + 系挂校验。
  *
- * 这个脚本验的是**语义**，不是像素。参考（萌娘百科「捣蛋猪」）的两条原话：
- *   · 「只要中间有动力连接件（框/可乐/火箭/分离器/弹簧都算，绳子不算），
- *      动力可以叠加」 → 驱动件必须连通到动力源
- *   · 气球「会被系在其下方最靠近自身的方框上；否则会直接飘走」
- *     重物「会系在其上方最接近自身的方框上；否则会直接落地，不起任何作用」
+ * ⚠ 第 71 轮：这个脚本原来验的是**动力连通性**（"驱动件必须连到动力源、
+ * 还要吃容量、超载打折"）—— 用户明确要求删掉那套设定，A/B/C/D 四段
+ * 的前提整个消失了。现在它们换成新机制下的**同类反例**：
  *
- * ⚠ 坐标系：建造网格 **row 越大越靠下**（partPos: y = (ROWS−1)/2 − r）。
+ *   A  驱动件装了就一直出力（不再需要动力源、不再需要连通）
+ *   B  驱动件装在离框很远的地方也照样出力（旧规则会判它断电）
+ *   C  没有种子也能跑（旧规则会判"没有动力源"）
+ *   D  种子是**一次性**的（旧规则这里是"超载"，现在是"用了就不能再用"）
+ *
+ * 参考（萌娘百科「捣蛋猪」）的系挂规则仍然有效，E/F 两段保持原样。
+ *
+ * ⚠ 坐标系：建造网格 **row 越大越靠下**（partPos: y = ROWS_anchor − r）。
  * 所以：
  *   气球要"框在它下方" = 气球的 row 比框**小**（球在上、框在下）
  *   沙袋要"框在它上方" = 沙袋的 row 比框**大**（框在上、石在下）
@@ -27,11 +32,12 @@ function chk(label, cond, extra) {
 function mk(parts) {
   /* partsBox 必须**给足预算**，否则 tryPlace 全部被拒（budgetLeft = 0），
    * 然后 buildVehicle 返回 null。第一版就是这么崩的（读 null.parts）。 */
-  const lv = { start: { col: 1 }, goal: { col: 5 }, grid: { cols: 10, rows: 18 },
-               mapRows: [], partsBox: {} };
-  ['wood_frame', 'iron_frame', 'wood_wheel', 'iron_wheel', 'anemo_core', 'geo_core',
-   'propeller', 'jet', 'balloon', 'sandbag', 'firework', 'pump', 'pig']
-    .forEach(id => { lv.partsBox[id] = 20; });
+  const lv = { levelId: 't', start: { col: 1 }, goal: { col: 30 },
+               grid: { cols: 40, rows: 18 },
+               mapRows: [], partsBox: {}, timeLimit: 120, boxes: [],
+               materials: [{ cols: [0, 39], type: 'mud' }] };
+  for (let r = 0; r < 18; r++) lv.mapRows.push(r < 10 ? '.'.repeat(40) : '#'.repeat(40));
+  Object.keys(R.PARTS).forEach(id => { lv.partsBox[id] = 20; });
   const b = R.newBuild();
   const fails = [];
   parts.forEach(p => {
@@ -43,54 +49,86 @@ function mk(parts) {
 }
 const find = (car, id) => (car && car.parts ? car.parts.find(p => p.part === id) : undefined);
 
-// ---- A 连通 ----
-{
-  const { lv, b } = mk([['wood_frame', 4, 2], ['anemo_core', 4, 2], ['propeller', 3, 2],
-                        ['wood_wheel', 5, 2], ['pig', 4, 2]]);
-  const c = R.buildVehicle(lv, b);
-  chk('A1 框+动力源+紧贴的桨 → 通电',
-    find(c, 'propeller') && find(c, 'propeller').powered === true,
-    find(c, 'propeller') ? 'powered=' + find(c, 'propeller').powered : '桨没放上去');
-  chk('A2 容量记到 supply', c && c.powerSupply === 2, 'supply=' + (c && c.powerSupply));
-  chk('A3 消耗记到 demand', c && c.powerDemand === 1, 'demand=' + (c && c.powerDemand));
-  chk('A4 够用 → 不超载', c && c.powerShort === false, 'short=' + (c && c.powerShort));
-}
-
-// ---- B 断开一格（放不进去 = 也不通，两条都算对） ----
-{
-  const { lv, b } = mk([['wood_frame', 4, 2], ['anemo_core', 4, 2], ['propeller', 2, 2],
-                        ['wood_wheel', 5, 2], ['pig', 4, 2]]);
-  const c = R.buildVehicle(lv, b);
-  const pp = find(c, 'propeller');
-  /* 这里有两种"正确"：桨被放置规则拦住（connect），或者放进去了但断电。
-   * 两种都表达"它没通上电"，所以两条路径都算过。 */
-  chk('B1 桨和框之间空一格 → 不通（被拒 或 断电）',
-    !pp || pp.powered === false, pp ? 'powered=' + pp.powered : '放置被拒（也算不通）');
-  chk('B2 不通的桨不计入 demand', c && c.powerDemand === 0, 'demand=' + (c && c.powerDemand));
-}
-
-// ---- C 没动力源 ----
+// ---- A 驱动件装了就一直出力（第 71 轮：不再需要动力源） ----
 {
   const { lv, b } = mk([['wood_frame', 4, 2], ['propeller', 3, 2],
                         ['wood_wheel', 5, 2], ['pig', 4, 2]]);
   const c = R.buildVehicle(lv, b);
-  chk('C1 没有动力源 → supply=0', c && c.powerSupply === 0, 'supply=' + (c && c.powerSupply));
-  chk('C2 没有动力源 → 桨断电',
-    find(c, 'propeller') && find(c, 'propeller').powered === false,
-    'powered=' + (find(c, 'propeller') && find(c, 'propeller').powered));
+  const pp = find(c, 'propeller');
+  chk('A1 框 + 桨（没有动力源）→ 桨照样在车上', !!pp, pp ? '装上了' : '没装上');
+  chk('A2 车上没有 powerSupply（容量系统已删）', c && c.powerSupply === undefined,
+    String(c && c.powerSupply));
+  chk('A3 车上没有 powerDemand', c && c.powerDemand === undefined,
+    String(c && c.powerDemand));
+  chk('A4 零件上没有 powered（不再有"通电"这个前置）',
+    pp && pp.powered === undefined, String(pp && pp.powered));
+
+  /* 真正要验的：这辆车跑起来桨真的在出力。
+   * 判据是"车往右走了" —— 而不是某个内部字段被置成了 true。 */
+  const st = R.createRun(lv, b);
+  const x0 = st.car.x;
+  for (let i = 0; i < 60; i++) R.step(st, 1 / 60);
+  chk('A5 没有动力源的桨仍然把车推向右边（60 帧后 x 前进 > 0.5 米）',
+    st.car.x - x0 > 0.5, 'Δx=' + (st.car.x - x0).toFixed(2) + ' 米');
 }
 
-// ---- D 超载 ----
+// ---- B 桨不需要连到种子（旧规则：必须紧贴动力源才通电） ----
 {
-  // 风种只给 2，装 2 个喷气口（每个占 2）→ demand 4 > supply 2
+  /* ⚠ 注意还有一条**别的**规则：`tryPlace` 的 `connect` ——
+   * 零件必须和已经摆好的东西相邻（不能凭空浮着）。那条是**摆放**规则，
+   * 和动力容量无关，第 71 轮保留。所以这里不能把桨放到离框 3 格的地方
+   * （会被 connect 拒掉，然后这辆车根本没有桨，±Δx 当然一样）。
+   *
+   * 要验的是"**离种子远**也照样出力"：种子塞在 4,1，桨装在 3,3 ——
+   * 两者隔了两格，旧规则会判它断电。 */
+  function run(parts) {
+    const { lv, b } = mk(parts);
+    const st = R.createRun(lv, b);
+    const x0 = st.car.x;
+    for (let i = 0; i < 60; i++) R.step(st, 1 / 60);
+    return { dx: st.car.x - x0, hasProp: st.car.parts.some(p => p.part === 'propeller') };
+  }
+  const far = run([['wood_frame', 4, 1], ['wood_frame', 4, 2], ['wood_frame', 4, 3],
+                   ['anemo_core', 4, 1], ['propeller', 3, 3],
+                   ['wood_wheel', 5, 1], ['wood_wheel', 5, 3], ['pig', 4, 2]]);
+  const none = run([['wood_frame', 4, 1], ['wood_frame', 4, 2], ['wood_frame', 4, 3],
+                    ['anemo_core', 4, 1],
+                    ['wood_wheel', 5, 1], ['wood_wheel', 5, 3], ['pig', 4, 2]]);
+  chk('B0 前提：桨真的装上了（否则下面的比较没有意义）', far.hasProp, String(far.hasProp));
+  chk('B1 桨离种子两格也照样出力（比不装桨跑得远）',
+    far.dx > none.dx + 0.15,
+    '装桨 Δx=' + far.dx.toFixed(2) + ' vs 不装 ' + none.dx.toFixed(2) + ' 米');
+}
+
+// ---- C 完全不装种子也能跑（旧规则：没有动力源就跑不动） ----
+{
+  const { lv, b } = mk([['wood_frame', 4, 2], ['wood_wheel', 5, 2], ['pig', 4, 2]]);
+  const st = R.createRun(lv, b);
+  chk('C1 一颗种子都没装 → 车照样能出发', st && st.phase === 'run',
+    st ? st.phase : 'null');
+  chk('C2 seedUse 三个计数都是 0', st && st.seedUse &&
+    st.seedUse.anemo === 0 && st.seedUse.geo === 0 && st.seedUse.electro === 0,
+    st && JSON.stringify(st.seedUse));
+}
+
+// ---- D 种子是一次性的（旧规则这里验的是"超载"） ----
+{
   const { lv, b } = mk([['wood_frame', 4, 2], ['anemo_core', 4, 2],
-                        ['jet', 3, 2], ['jet', 5, 2],
-                        ['wood_wheel', 6, 2], ['pig', 4, 2]]);
-  const c = R.buildVehicle(lv, b);
-  chk('D1 供不应求 → 超载标记', c && c.powerShort === true,
-    'supply=' + (c && c.powerSupply) + ' demand=' + (c && c.powerDemand));
-  chk('D2 容量确实小于需求', c && c.powerSupply < c.powerDemand,
-    (c && c.powerSupply) + ' < ' + (c && c.powerDemand));
+                        ['wood_wheel', 5, 2], ['pig', 4, 2]]);
+  const st = R.createRun(lv, b);
+  const first = R.triggerSeed(st, 'anemo');
+  const second = R.triggerSeed(st, 'anemo');
+  chk('D1 第一次触发风种成功', first === true, String(first));
+  chk('D2 第二次触发被拒（一次性）', second === false, String(second));
+  chk('D3 使用计数是 1，不会涨到 2', st.seedUse.anemo === 1, String(st.seedUse.anemo));
+  /* 对照：另一颗种子不该被这次触发影响。 */
+  const { lv: lv2, b: b2 } = mk([['wood_frame', 4, 2], ['anemo_core', 4, 2],
+                                 ['geo_core', 5, 2], ['wood_wheel', 5, 4], ['pig', 4, 2]]);
+  const st2 = R.createRun(lv2, b2);
+  R.triggerSeed(st2, 'anemo');
+  chk('D4 用掉风种不影响岩种（两颗种子各自独立）',
+    st2.seedUse.anemo === 1 && st2.seedUse.geo === 0,
+    JSON.stringify(st2.seedUse));
 }
 
 /* ---- E 热气球系挂 ----

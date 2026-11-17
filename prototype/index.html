@@ -873,15 +873,16 @@
     '1-2': ['这一关要"按一下"，说明不按就到不了终点。',
             '打气筒要装在猪的后面（朝右喷），喷的是空气，不用电池。',
             '成品：木框里放打气筒，朝右；跑起来等车慢下来时按 1 喷一下。'],
-    '1-3': ['这一关看的是"动力够不够用"：驱动件要连到动力源，还要吃容量。',
-            '风种给 2 点容量，风车桨占 1 点 —— 装第二个桨就没余量了。',
-            '成品：风种塞进中间的框，风车桨紧贴它上方（必须相邻才通电），朝右。'],
+    '1-3': ['这一关的第三星是"一颗种子都不用"：种子一次性的，用了就没了。',
+            '风种塞进框里（一次性），按 2 键会在脚下放出一片半径 6 米的风场。',
+            '风场只托得动**带伞或风之翼**的车 —— 没带就是白放。',
+            '成品：风车桨朝右推着走，想拿三星就一颗种子都别用。'],
     '1-4': ['这一关不能翻车，而且要爬冰坡 —— 冰面上木轮几乎打滑。',
             '铁轮冰面抓地 0.8，是过冰坡的办法；推力也要够大。',
             '成品：铁轮 + 喷气口（9 m/s²）。风车桨只有 5.0，爬不上那道 0.44 的坡。'],
     '1-5': ['这一关的第三星是"不用驱动件"，所以装了风车桨就拿不到三星。',
-            '仙术机关不耗动力容量，也不吃"驱动件"这条判定。',
-            '成品：不装动力源、不装驱动件，只放仙术机关朝右，跑起来按着。'],
+            '仙术机关按住蓄力、松开喷冲量，不算驱动件。',
+            '成品：不装驱动件，只放仙术机关朝右，跑起来按着。'],
     '1-6': ['这一关要抬头 —— 热气球给浮力，压舱石给配重，位置很关键。',
             '气球必须挂在框的**上方**、压舱石挂在框的**下方**，否则一个飘走一个落地。',
             '成品：3 个气球 + 2 个压舱石；起飞后点车身扔石头，飞得不够就扎气球。']
@@ -1026,17 +1027,20 @@
                  pass: (st.pumpPress || 0) <= (ch.max || 0) };
       /* `energyLeft` 分支已删（第 63 轮）：电量机制不存在了，
        * 留着它就是在读一个引擎从不赋值的 `car.energy`（audit_dead_reads 抓到的
-       * 第 1 条）。现在 1-3 用下面的 `powerSpare`。 */
-      /* 1-3「动力余量 ≥N」（第 63 轮）。
-       * 取代旧的 `energyLeft` —— 容量不会耗尽，"还剩多少电"这个问题
-       * 在新机制下不存在了。现在考的是"你有没有乱装驱动件"。
-       * HUD 上必须同时显示供给和需求，否则玩家不知道差在哪。 */
-      case 'powerSpare': {
-        const sup = car.powerSupply || 0, dem = car.powerDemand || 0;
-        const spare = sup - dem;
-        return { type: ch.type, label: '动力余量 ≥' + (ch.min || 0),
-                 value: sup + ' − ' + dem + ' = ' + spare,
-                 pass: spare >= (ch.min || 0) };
+       * 第 1 条）。 */
+      /* `powerSpare` 也跟着容量系统一起删了（第 71 轮，用户要求）。
+       *
+       * 现在 1-3 的第三星是 **`seedSpare`：一颗种子都没用**。
+       * 这是一道真取舍：装了种子更容易过，但拿不到这颗星。
+       * ⚠ 必须和引擎里的 `challengePass` 用**同一句话**：
+       * 引擎判 `state.seedUse` 三个数之和为 0，这里也必须读同一个字段。
+       * 两边各算一遍的话，HUD 会显示"已达成"而结算不给星。 */
+      case 'seedSpare': {
+        const u = (st && st.seedUse) || { anemo: 0, geo: 0, electro: 0 };
+        const total = (u.anemo || 0) + (u.geo || 0) + (u.electro || 0);
+        return { type: ch.type, label: '一颗种子都不用',
+                 value: total === 0 ? '没用到种子' : ('用了 ' + total + ' 颗'),
+                 pass: total === 0 };
       }
       /* 1-5「不用驱动件」（第 63 轮，取代 `motorUse`）。
        * 旧版写"已用 N 秒"，那是电量时代的话术；现在驱动件是**恒定的**，
@@ -1130,11 +1134,10 @@
     const m = {
       none: '无特殊条件',
       pumpPress: '不按仙术机关',
-      /* 第 63 轮：`energyLeft` / `motorUse` 随电量与马达一起删掉，
-       * 换成下面两条（`powerSpare` = 动力余量、`noTool` = 不用驱动件）。
-       * 这里曾经留着旧 key，于是新关卡的类型落到 `|| ch.type` 兜底，
-       * 玩家在选关卡面上看到的是英文原名 `powerSpare`。 */
-      powerSpare: '动力余量 ≥ ' + (ch.min || 1),
+      /* 第 71 轮：`powerSpare` 随容量系统一起删了，换成 `seedSpare`。
+       * ⚠ 这张表必须和新类型名同时改 —— 漏一个的话，那一关的挑战名
+       * 会落到 `|| '—'` 兜底，玩家在选关卡面上看到一条破折号。 */
+      seedSpare: '一颗种子都不用',
       noTool: '不用驱动件',
       noFlip: '不翻车',
       noBreak: '不散架（KRAK SNAP）',
@@ -1949,6 +1952,24 @@
           if (state.phase === 'run' && state.run) RAP.releaseInteract(state.run, parseInt(kk, 10));
           window.removeEventListener('keyup', up);
         });
+        return;
+      }
+      /* ══════════ 种子触发键（第 71 轮）══════════
+       *
+       * 种子是一次性的、范围性的效果，所以它**不该**按成"点一下慢慢来"——
+       * 时机就是玩法。用一个独立的单键（F），而不是复用 1–3：
+       * 那三个键是"按住蓄力"的交互件，语义完全不同（一个是松开才生效，
+       * 一个是按下立刻生效）。挤在一起玩家会分不清自己按的是哪一种。
+       *
+       * `RAP.triggerSeed(state.run, n)` 里的 n 是"车上第几颗种子"，
+       * 按**零件顺序**数（种子是内嵌件，不进交互组）。
+       * 一次只触发一颗：连按 F 会把车上的种子一颗颗放出去 ——
+       * 这比"一次全放"更像一个决定。 */
+      if (k === 'f') {
+        ev.preventDefault();
+        if (ev.repeat) return;
+        RAP.triggerSeed(state.run, 1);
+        return;
       }
     }
   });
@@ -3237,46 +3258,122 @@ const BIOMES = {
       ctx.lineTo(-h * 0.24, -h * 0.04); ctx.lineTo(-h * 0.02, -h * 0.04);
       ctx.closePath(); ctx.fill();
 
-    } else if (def.powerSrc) {
-      /* ---------- 动力源（风种 / 岩种）：一颗发光的晶体 ----------
-       * 这两种是"只给容量、自己不产生推力"的件，所以画成**一颗宝石**，
-       * 和会转的驱动件（桨/喷口）在视觉上完全分开。玩家一眼就能分辨
-       * "哪个是油箱、哪个是发动机" —— 这正是旧设计（马达+电池合并）丢失的信息。 */
-      const isGeo = def.powerSrc >= 5;          // 岩种容量 5，风种 2
-      const glow = isGeo ? '#ffd77a' : '#8ff0dc';
+    } else if (def.seedKind) {
+      /* ---------- 种子（风 / 岩 / 雷）：一颗发光的晶体 ----------
+       *
+       * 第 71 轮重写。旧版是"动力源"，用点数的数量表示容量（岩种 5 点、风种 2 点）
+       * —— 用户要求删掉动力容量，所以那些小点没有意义了。
+       * 现在每颗种子用**形状 + 颜色 + 角标**表达三件不同的事：
+       *
+       *   形状：风种是菱形（气流）、岩种是六边形（结晶）、雷种是四角星（电）
+       *   颜色：青 / 金 / 紫
+       *   角标：一个小的效果图标（风纹 / 石纹 / 闪电），说明它**干什么**
+       *
+       * 三个种子是**完全不同**的机制（抬升 / 托高 / 冲刺），
+       * 所以不能只靠颜色区分 —— 色盲玩家和缩略图尺寸下都会糊成一片。
+       * 形状差异是这里唯一的可靠区分手段。 */
+      const SK = def.seedKind;
+      const isGeo = SK === 'geo', isElec = SK === 'electro';
+      const glow = isGeo ? '#ffd77a' : (isElec ? '#c9a8ff' : '#8ff0dc');
       // 外发光
       ctx.save();
       ctx.globalAlpha = 0.30;
       ctx.fillStyle = glow;
       ctx.beginPath(); ctx.arc(0, 0, h * 0.92, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
-      // 晶体：六边形，岩种更厚重（多一圈描边）
       const R1 = h * (isGeo ? 0.60 : 0.54);
       ctx.beginPath();
-      for (let k = 0; k < 6; k++) {
-        const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
-        const px2 = Math.cos(a) * R1, py2 = Math.sin(a) * R1;
-        k === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+      if (isElec) {
+        /* 四角星：四个尖角，比菱形更"锐" —— 一眼和另外两个分开 */
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2 - Math.PI / 2;
+          const rr = (k % 2 === 0) ? R1 : R1 * 0.42;
+          const px2 = Math.cos(a) * rr, py2 = Math.sin(a) * rr;
+          k === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+        }
+      } else if (isGeo) {
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
+          const px2 = Math.cos(a) * R1, py2 = Math.sin(a) * R1;
+          k === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+        }
+      } else {
+        for (let k = 0; k < 4; k++) {          // 菱形
+          const a = (k / 4) * Math.PI * 2 - Math.PI / 2;
+          const px2 = Math.cos(a) * R1, py2 = Math.sin(a) * R1 * 0.86;
+          k === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+        }
       }
       ctx.closePath();
       const cg = ctx.createLinearGradient(-R1, -R1, R1, R1);
-      cg.addColorStop(0, isGeo ? '#ffe9b0' : '#c8f6ea');
+      cg.addColorStop(0, isGeo ? '#ffe9b0' : (isElec ? '#efe0ff' : '#c8f6ea'));
       cg.addColorStop(0.55, def.color);
-      cg.addColorStop(1, isGeo ? '#a8762a' : '#2f8a78');
+      cg.addColorStop(1, isGeo ? '#a8762a' : (isElec ? '#6a3fa8' : '#2f8a78'));
       ctx.fillStyle = cg; ctx.fill();
-      ctx.strokeStyle = isGeo ? 'rgba(110,74,20,.9)' : 'rgba(20,74,66,.9)';
+      ctx.strokeStyle = isGeo ? 'rgba(110,74,20,.9)'
+        : (isElec ? 'rgba(74,30,110,.9)' : 'rgba(20,74,66,.9)');
       ctx.lineWidth = Math.max(1.4, size * 0.045); ctx.stroke();
       // 内部亮核
       ctx.fillStyle = 'rgba(255,255,255,.72)';
       ctx.beginPath(); ctx.arc(-R1 * 0.18, -R1 * 0.22, R1 * 0.22, 0, Math.PI * 2); ctx.fill();
-      /* 容量点数：岩种 5 点、风种 2 点。
-       * 形态本身画不出"它能带几个"，而那是这一关唯一的算术。 */
-      for (let k = 0; k < def.powerSrc; k++) {
-        ctx.fillStyle = isGeo ? '#7a5a18' : '#1f6a5c';
+      /* 一次性角标：右下角一个"用掉就没了"的符号。
+       * 旧版这里画的是容量点数（岩 5 点、风 2 点）—— 那是容量系统的痕迹。
+       * 现在两个种子都是**一次性**的，所以角标改成"一圈断开的弧"，
+       * 和 HUD 上"已用"的图标同一套视觉。 */
+      ctx.strokeStyle = isGeo ? '#7a5a18' : (isElec ? '#5a2f88' : '#1f6a5c');
+      ctx.lineWidth = Math.max(1.4, size * 0.05);
+      ctx.beginPath();
+      ctx.arc(0, h * 0.66, size * 0.10, -0.9 * Math.PI, 0.55 * Math.PI);
+      ctx.stroke();
+
+    } else if (def.catchesWind) {
+      /* ---------- 伞 / 风之翼：会吃风的零件 ----------
+       *
+       * 它们只在风场里有意义，所以画成**张开的兜**：一眼看出"这东西吃风"。
+       * 伞是半圆 + 一根柄；风之翼是两片后掠的翼面 + 一道骨架。
+       * 两者的差别在**张开角度**（风之翼更平更宽 = 吃更多风），
+       * 和数值上的 1.0 / 1.8 对得上。 */
+      const isWing = def.catchesWind > 1.2;
+      if (isWing) {
+        ctx.fillStyle = def.color;
+        for (const side of [-1, 1]) {
+          ctx.beginPath();
+          ctx.moveTo(0, -h * 0.10);
+          ctx.quadraticCurveTo(side * h * 0.62, -h * 0.62, side * h * 0.98, -h * 0.06);
+          ctx.quadraticCurveTo(side * h * 0.52, h * 0.10, 0, h * 0.24);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.strokeStyle = 'rgba(30,74,96,.85)'; ctx.lineWidth = Math.max(1.2, size * 0.035);
+        for (const side of [-1, 1]) {
+          ctx.beginPath();
+          ctx.moveTo(0, -h * 0.10);
+          ctx.quadraticCurveTo(side * h * 0.62, -h * 0.62, side * h * 0.98, -h * 0.06);
+          ctx.stroke();
+        }
+      } else {
+        ctx.fillStyle = def.color;
         ctx.beginPath();
-        ctx.arc(-R1 * 0.5 + k * (R1 * 0.25), h * 0.70, Math.max(1.4, size * 0.045), 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(-h * 0.92, h * 0.06);
+        ctx.quadraticCurveTo(0, -h * 0.94, h * 0.92, h * 0.06);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(120,74,20,.85)'; ctx.lineWidth = Math.max(1.2, size * 0.035);
+        ctx.stroke();
+        // 伞面的辐条
+        ctx.strokeStyle = 'rgba(120,74,20,.45)'; ctx.lineWidth = Math.max(1, size * 0.026);
+        for (let k = -1; k <= 1; k++) {
+          ctx.beginPath();
+          ctx.moveTo(0, h * 0.06);
+          ctx.lineTo(k * h * 0.62, -h * 0.34);
+          ctx.stroke();
+        }
       }
+      // 共同的柄 / 龙骨：从伞面中心一路顶到格子下沿（和驱动件同一条规矩 ——
+      // 「零件都要连起来」，它必须接在下面那一格上）
+      ctx.strokeStyle = isWing ? '#2f5a66' : '#8a5a28';
+      ctx.lineWidth = Math.max(1.6, size * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(0, h * 0.06); ctx.lineTo(0, h * 0.96);
+      ctx.stroke();
 
     } else if (def.tool) {
       /* ---------- 驱动件（风车桨 / 喷气口） ----------
@@ -4203,14 +4300,18 @@ const BIOMES = {
   function drawHud() {
     const built = RAP.buildVehicle(level(), state.build);
     const mass = built ? built.mass : 0;
-    /* 建造期顶栏显示**动力配置**（第 63 轮）。
-     * 旧版这里写 `能量 ${Math.round(energy)}`，而 `built.energyMax`
-     * 在引擎里已经不存在 → 玩家看到的是「能量 NaN」（真机截图里就是这行）。
-     * 现在显示"驱动件要几点 / 动力源给几点"，这才是这一版真正要算的账。 */
-    const pSup = built ? (built.powerSupply || 0) : 0;
-    const pDem = built ? (built.powerDemand || 0) : 0;
-    const powTxt = (pSup === 0 && pDem === 0) ? '无动力件'
-      : (pDem > pSup ? ('动力不足 ' + pDem + '/' + pSup) : ('动力 ' + pDem + ' / ' + pSup));
+    /* 建造期顶栏（第 71 轮重写）。
+     *
+     * 旧版这里显示**动力配置**（"动力 2 / 1"）—— 容量系统删掉之后这个数
+     * 没有意义了。现在显示的是这一版真正要玩家判断的东西：**车上装了几颗种子**。
+     * 种子是一次性的，所以"还能用几次"就是"还剩几颗"，一目了然。
+     *
+     * ⚠ 不能显示成"动力 0 / 0"或者"无动力件"：那会让玩家以为系统还在，
+     * 只是自己没装。整行都要换掉。 */
+    const seedN = built ? built.parts.filter(p => p.def && p.def.seedKind).length : 0;
+    const windN = built ? built.parts.filter(p => p.def && p.def.catchesWind).length : 0;
+    const powTxt = seedN === 0 ? '无种子'
+      : ('种子 ' + seedN + (windN ? ('　吃风件 ' + windN) : '　（没带伞，风场没用）'));
     let line = `${level().levelId} ${level().name}　总重 ${mass.toFixed(1)} kg　${powTxt}` +
       `　交互键 ${built ? built.interactives.length : 0}/${RAP.Params.interactCap}`;
     /* 建造期就把"净重"算给玩家看 —— 气球/沙袋的全部意义都在这个数上：
@@ -4224,18 +4325,29 @@ const BIOMES = {
     }    let boxLine = '';
     if (state.phase === 'run' && state.run) {
       const car = state.run.car;
-      /* 顶栏第二行改成显示**动力**（第 63 轮）。
+      /* 行驶期顶栏第二行（第 71 轮重写）。
        *
-       * 旧版这里写「能量 N」，读的是 `car.energy` —— 一个引擎从不赋值的字段
-       * （audit_dead_reads 抓到的第 3 条）。电量机制删掉之后，
-       * 玩家该看的数是「供给 / 需求」：
-       *   · 够用 → 绿字 动力 2 / 1
-       *   · 超载 → 红字并写明缺多少（这正是 HUD 唯一能解释"为什么转得慢"的地方）
-       */
-      const sup = car.powerSupply || 0, dem = car.powerDemand || 0;
-      const short = car.powerShort;
-      const powText = sup === 0 && dem === 0 ? '无动力'
-        : (short ? ('动力 ' + sup + ' / ' + dem + ' 不足') : ('动力 ' + dem + ' / ' + sup));
+       * 旧版显示「动力 2 / 1」—— 容量系统删掉之后这个数不存在了。
+       * 现在这一行说三件**玩家此刻必须知道**的事：
+       *   · 种子用了几颗（一次性，用了就没了）
+       *   · 车现在处于什么特殊状态（冲刺 / 在风场里 / 站在岩柱上）
+       *   · 速度
+       *
+       * 状态是用**同一个来源**算的（state.windField / car.dashT / groundY vs terrain），
+       * 不是再判一遍 —— 否则 HUD 说"在风场里"而引擎不抬升，玩家会以为引擎坏了。 */
+      const used = state.run.seedUse
+        ? (state.run.seedUse.anemo + state.run.seedUse.geo + state.run.seedUse.electro) : 0;
+      const seedTotal = car.parts.filter(p => p.def && p.def.seedKind).length;
+      const tag = [];
+      if (car.dashT > 0) tag.push('冲刺 ' + car.dashT.toFixed(1) + 's');
+      if (state.run.windField) {
+        const inField = Math.hypot(car.x - state.run.windField.x,
+          car.y - state.run.windField.y) <= state.run.windField.r;
+        tag.push(inField ? (car.windCatch > 0 ? '乘风中' : '风场里·没带伞') : '风场在附近');
+      }
+      if (state.run.pillars && state.run.pillars.length) tag.push('岩柱');
+      const powText = seedTotal === 0 ? '无种子'
+        : ('种子 用 ' + used + ' / ' + seedTotal + (tag.length ? '　' + tag.join('　') : ''));
       line = `总重 ${car.mass.toFixed(1)} kg　${powText}` +
         `　速度 ${Math.hypot(car.vx, car.vy).toFixed(1)} m/s`;
       boxLine = `木箱 ${state.run.boxesGot}/${state.run.boxes.length}`;
@@ -4396,11 +4508,20 @@ const BIOMES = {
         }
         const rows2 = [
           ['质量', mass.toFixed(1) + ' kg', false],
-          /* 「能量」这一行改成**动力**（第 63 轮）。旧版读 `built.energyMax`，
-           * 那个字段已经不存在 → 面板上显示「能量 NaN」，
-           * 而这是玩家建造时最常盯的一块。 */
-          ['动力', (pSup === 0 && pDem === 0) ? '—' : (pDem + ' / ' + pSup),
-           pDem > pSup],
+          /* ⚠ 这一行原来是「动力 需求 / 供给」（第 63 轮），容量系统删掉之后
+           * `pSup` / `pDem` 两个变量都不存在了 —— 于是**每帧**在 drawHud 里抛
+           * `ReferenceError: pSup is not defined`，整个 HUD 画不出来。
+           *
+           * 这个异常被 `frame()` 的 try/catch 吞掉并画成一条红字，
+           * 而测试读不到它（`console.error` 的 Error 对象没有 `.value`）。
+           * 表现是"像素采样全是 0，像什么都没画"—— 我差点去查绘制代码。
+           * 现在换成这一版真正有用的读数：**车上几颗、吃风件几件**。 */
+          (function () {
+            const seeds = built ? built.parts.filter(p => p.def && p.def.seedKind).length : 0;
+            const catchWind = built ? built.parts.filter(p => p.def && p.def.catchesWind).length : 0;
+            return ['种子 / 吃风件', seeds + ' / ' + catchWind,
+              seeds > 0 && catchWind === 0];
+          })(),
           ['交互键', (built ? built.interactives.length : 0) + ' / ' + RAP.Params.interactCap, false],
           ['零件数', String(built ? built.parts.length : 0), false],
           ['重心偏移', hasCar ? ((cgOff >= 0 ? '+' : '−') + Math.abs(cgOff).toFixed(2) + ' m') : '—', Math.abs(cgOff) > 0.7]
@@ -4596,6 +4717,29 @@ const BIOMES = {
       cs.x += (targetX - cs.x) * k;
       cs.y += (targetY - cs.y) * k;
       cs.zoom += (targetZoom - cs.zoom) * k * 0.6;
+      /* 测试用的镜头锁（第 71 轮）。
+       *
+       * 为什么需要它：岩柱把 `groundY` 抬到柱顶之后，车的落点变了、
+       * 镜头的目标也变了，而 zoom 是**指数收敛**的 —— 它会一直朝新目标爬。
+       * 于是"触发前 / 触发后"两张图之间整块采样区都在平移，
+       * 差分测出来的是**镜头移动**，不是"柱子有没有画出来"。
+       * （反向验证抓到的：把 drawPillars 早退掉，那条断言照样通过。）
+       *
+       * `state.__lockCam` 只由测试写；玩家永远不设它，所以不影响手感。
+       * 写在这里而不是让测试去改 `camState`：改了下一帧就被缓动覆盖，
+       * "改一个会被覆盖的量"是这个项目反复踩的同一类坑。 */
+      if (state.__lockCam) {
+        cs.x = state.__lockCam.x;
+        cs.y = state.__lockCam.y;
+        cs.zoom = state.__lockCam.zoom;
+        /* ⚠ 震屏也必须一起关掉。
+         *
+         * `cam` 是 `cs` 加上 ±shake·0.55 的**随机偏移**。锁了 cs 而没锁 shake，
+         * 画面每帧还在抖 —— 差分判据会把抖动读成"这块区域变了"。
+         * 实测：把 drawPillars 整个早退掉，"柱身区域差异"仍然报 34.8%，
+         * 而那是 `triggerSeed` 里为了手感加的 `state.shake = 0.5` 造成的。 */
+        state.shake = 0;
+      }
       // 震屏衰减
       if (state.shake > 0) state.shake = Math.max(0, state.shake - elapsed * 3.2);
       const shk = state.shake;
@@ -4604,8 +4748,28 @@ const BIOMES = {
         y: cs.y + (Math.random() - 0.5) * shk * 0.55,
         zoom: cs.zoom
       };
+      /* ⚠ 把**这一帧真正用的镜头**留下来（第 71 轮）。
+       *
+       * `state.camLive` 是上一帧末尾写进去的，还带着震屏抖动；
+       * 测试拿它反算屏幕坐标，就会和这一帧实际画出来的位置差几像素到几十像素。
+       * 差几十像素在"采样一个小方块"这种判据里是致命的 —— 采到的是旁边的草地。
+       *
+       * 这是这个项目反复出现的同一个教训：**量具必须读渲染层读的那一份**。
+       * 岩柱/风场/屏障三个探针都靠它。 */
+      state.camLastDraw = cam;
     }
     drawWorld(st.terrain, cam);
+    /* ══════════ 种子的三种效果（第 71 轮）══════════
+     *
+     * 顺序有讲究，而且**必须在车之前**：
+     *   1. 岩柱先画 —— 它是"地面"，爬上来的柱顶要盖住原地形的轮廓，
+     *      否则柱子和地面会同时可见，看起来像两块地叠着；
+     *   2. 风场后画 —— 它是半透明的空气，应该盖在地面和柱子上；
+     *   3. 屏障最后 —— 它是最前面的那道墙，车在它后面还是前面由冲刺状态决定。
+     * 三者都在车之前画，所以车永远在最上层（玩家要看得见自己的车）。 */
+    drawPillars(cam);
+    drawWindField(cam);
+    drawBarriers(cam);
     // 木箱
     st.boxes.forEach(b => {
       if (b.got) return;
@@ -4917,16 +5081,20 @@ const BIOMES = {
     const bal = (st.car.parts || []).filter(p => p.def && p.def.liftMass)
       .reduce((a, p) => a + (p.n || 0), 0);
     const tips = [];
-    /* 「动力不足」这条排在最前面，因为它和另外两条是**互斥方向**的。
+    /* ⚠ 这里原来有一条「动力不够（装 N 点，只供 M 点）」的诊断，
+     * 读 `car.powerShort / powerDemand / powerSupply` —— 容量系统
+     * 第 71 轮删掉之后这三个字段都不存在了。留着它会让**每一局**
+     * 的失败卡都弹出「动力不够（装 undefined 点）」。
      *
-     * 旧版这里判的是"装了马达 + 电量 ≤ 0"—— 两个字段现在都不存在。
-     * 新机制下同一件事的形状是：**装了驱动件但容量不够**（powerShort），
-     * 于是驱动件按比例打折，车走得比预期慢。
-     * 这时候还让玩家"去想想动力或重心"，等于把人往错误方向推 ——
-     * 他会去加轮子、改配重，全都白费。 */
-    if (st.car.powerShort) {
-      tips.push('动力不够（装 ' + st.car.powerDemand + ' 点，只供 ' +
-                st.car.powerSupply + ' 点）');
+     * 取而代之的是这一版真正的新变量：**还有种子没用**。
+     * 种子是一次性的、范围性的，玩家最常见的一类失败就是
+     * "我造了一辆带种子的车，然后一路开过去一次都没触发"。
+     * 这句话是他真正需要的那句诊断。 */
+    const seedsLeft = (st.car.parts || []).filter(p => p.def && p.def.seedKind).length -
+      (((st.seedUse || {}).anemo || 0) + ((st.seedUse || {}).geo || 0) +
+       ((st.seedUse || {}).electro || 0));
+    if (seedsLeft > 0) {
+      tips.push('车上还有 ' + seedsLeft + ' 颗种子没用（按 2 号键触发）');
     }
     if (bags > 0) tips.push('还剩 ' + bags + ' 个压舱石没扔（点车身）');
     if (bal > 0) tips.push('还剩 ' + bal + ' 个气球没扎（点车身）');
@@ -5100,13 +5268,15 @@ const BIOMES = {
 
     text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 400, 16, '#cfe0ec', 'left');
     text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 400, 16, '#cfe0ec', 'center');
-    /* 结算卡右侧原来是「能量剩 N」—— 电量机制删掉之后那是个恒等于 NaN 的读数。
-     * 现在显示**动力配置**（需求 / 供给），它才是这一版真正影响成败的数。 */
+    /* 结算卡右侧原来是「能量剩 N」（第 63 轮），再后来是「动力 需求/供给」
+     * （第 63 轮），第 71 轮容量系统删掉之后**两个都不存在**了。
+     * 现在显示**种子用了几颗** —— 这是这一版唯一和"我用掉了什么"有关的数。
+     * 一颗都没装就写「无种子」，装了没用就写「0 / N」。 */
     {
-      const sup = (st.car && st.car.powerSupply) || 0;
-      const dem = (st.car && st.car.powerDemand) || 0;
-      const txt = (sup === 0 && dem === 0) ? '无动力件'
-        : ('动力 ' + dem + ' / ' + sup + (st.car && st.car.powerShort ? ' 不足' : ''));
+      const total = (st.car && st.car.parts || []).filter(p => p.def && p.def.seedKind).length;
+      const u = st.seedUse || { anemo: 0, geo: 0, electro: 0 };
+      const used = (u.anemo || 0) + (u.geo || 0) + (u.electro || 0);
+      const txt = total === 0 ? '无种子' : ('种子 ' + used + ' / ' + total);
       text(txt, X + W - 42, cardY + 400, 16, '#cfe0ec', 'right');
     }
 
@@ -5327,7 +5497,8 @@ const BIOMES = {
       const t = [];
       if (d.structure) t.push('结构');
       if (d.wheel) t.push('轮');
-      if (d.powerSrc) t.push('动力源');
+      if (d.seedKind) t.push('种子·一次性');
+      if (d.catchesWind) t.push('吃风');
       if (d.tool) t.push('驱动');
       if (d.liftMass) t.push('浮力');
       if (d.dropOne) t.push('压舱');
@@ -5821,8 +5992,10 @@ const BIOMES = {
       const tags = [def.mass + ' kg'];
       if (def.structure) tags.push('结构');
       if (def.wheel) tags.push('轮子');
-      if (def.powerSrc) tags.push('动力 +' + def.powerSrc);
-      if (def.tool) tags.push('驱动 ' + def.thrust + ' · 耗' + def.drawPower);
+      if (def.seedKind) tags.push('一次性·' +
+        (def.seedKind === 'anemo' ? '风场' : def.seedKind === 'geo' ? '岩柱' : '冲刺'));
+      if (def.catchesWind) tags.push('吃风 ×' + def.catchesWind);
+      if (def.tool) tags.push('驱动 ' + def.thrust);
       if (def.liftMass) tags.push('浮力 +' + def.liftMass + ' kg');
       if (def.dropOne) tags.push('压舱');
       if (def.oneShot) tags.push('一次性');
@@ -5974,8 +6147,13 @@ const BIOMES = {
    *   · 生命周期很短（0.35 秒），所以"停推"之后半秒内画面就干净了。
    *
    * 为什么在渲染层生成而不是引擎：这是纯视觉，不该进物理、
-   * 也不该让 headless 的断言依赖它。引擎已经通过 `p.powered` / `p.burn`
-   * 说清"有没有在出力"，这里只是把它画出来。
+   * 也不该让 headless 的断言依赖它。引擎已经通过"零件还在不在车上"
+   * 说清了"有没有在出力"，这里只是把它画出来。
+   *
+   * ⚠ 第 71 轮：`p.powered` 随动力容量系统一起删了。驱动件现在**装了就一直出力**，
+   * 所以"停推"在玩法里唯一的形状是**零件不在车上**（框碎了、被消耗掉）。
+   * 原来这里写 `p.powered && d.tool`，删掉 powered 之后恒为假 ——
+   * 所有风特效都不生成了，而画法本身没坏。
    *
    * ⚠ 生成速率必须按 dt 累积，不能"每帧生成 n 个" ——
    * 那样 30fps 和 60fps 的粒子数量差一倍，看起来像两辆不同的车。
@@ -5990,7 +6168,12 @@ const BIOMES = {
     (car.parts || []).forEach(p => {
       const d = RAP.PARTS[p.part];
       if (!d || !d.blowsAir) return;
-      const on = !!(p.powered && d.tool) || (p.burn > 0);
+      /* ⚠ `p.powered` 已经不存在了（第 71 轮：动力容量系统删掉，驱动件
+       * 装了就一直出力）。这里原来写的是 `p.powered && d.tool` ——
+       * 于是**所有驱动件的风特效都不生成了**（`undefined` 恒假）。
+       * 表现是 test_wind_fx 的 A1/A2/A3 三条全红，而画法本身没坏。
+       * 现在条件只有两个：它是驱动件，或者它正在烧（霄灯）。 */
+      const on = !!d.tool || (p.burn > 0);
       if (!on) return;
       emitting++;
       const bv = RAP.blowVec(p.part, p.dir || 0);
@@ -6027,6 +6210,189 @@ const BIOMES = {
     state.windFx = keep;
     // 上限：万一一帧卡了很久（切回来时 dt 被夹到 0.05），别让数组爆掉
     if (state.windFx.length > 260) state.windFx.splice(0, state.windFx.length - 260);
+  }
+
+  /* ══════════ 种子的三种视觉（第 71 轮）══════════
+   *
+   * 三个种子都是**看不见的物理**：风场是力、岩柱改的是 groundY、
+   * 雷屏障挡的是一条判定线。如果只在引擎里生效，玩家看到的是
+   * "我按了 F，车莫名其妙飞起来了" —— 那不是机制，那是 bug 的观感。
+   * 所以每一个都必须有明确、能持续读的视觉。
+   *
+   * 共同的约定：
+   *   · 全部按**世界坐标**画（worldToScreen），车一动它们留在地上；
+   *   · 全部用**半透明**，因为它们不是实体零件 —— 玩家要能看见车在它们里面；
+   *   · 剩余时间必须**看得出来**（风场在缩小、岩柱在升起、屏障在闪）。
+   */
+
+  /* 风场：一个半透明的圆 + 一圈向上的流线 + 中心的涡旋。
+   * 半径直接读 `wf.r`（引擎同一个数），不是另写一个 ——
+   * 画得比作用范围大或小都是在骗玩家。 */
+  function drawWindField(cam) {
+    const wf = state.run && state.run.windField;
+    state.windFieldDrawN = wf ? 1 : 0;
+    if (!wf) return;
+    const s = PPM * cam.zoom;
+    const c = worldToScreen(wf.x, wf.y, cam);
+    const rr = wf.r * s;
+    const k = Math.max(0, Math.min(1, wf.ttl / (wf.maxTtl || 1)));   // 1 → 0
+    ctx.save();
+    /* 地面上的圈：用椭圆表示"这是一个俯视的范围"（等距视角）。
+     * 只画下半 1/3 高度，让它是**躺在地上**的圈而不是空中的一个球。 */
+    const gy = worldToScreen(wf.x, wf.y, cam);
+    const eg = ctx.createRadialGradient(c.x, gy.y + rr * 0.25, rr * 0.10,
+      c.x, gy.y + rr * 0.25, rr * 0.95);
+    eg.addColorStop(0, 'rgba(180,255,238,' + (0.26 * k).toFixed(3) + ')');
+    eg.addColorStop(0.62, 'rgba(120,230,210,' + (0.13 * k).toFixed(3) + ')');
+    eg.addColorStop(1, 'rgba(120,230,210,0)');
+    ctx.fillStyle = eg;
+    ctx.beginPath();
+    ctx.ellipse(c.x, gy.y + rr * 0.25, rr * 0.98, rr * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 上涌的流线：位置由时间决定（`state.clock`），不随机 —— 随机会抖
+    const T = state.clock || 0;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 14; i++) {
+      const ph = (i / 14) * Math.PI * 2 + T * 1.6;
+      const rad = (0.20 + 0.72 * ((i * 37) % 100) / 100) * rr;
+      const bx = c.x + Math.cos(ph) * rad;
+      const by = gy.y + rr * 0.25 + Math.sin(ph) * rad * 0.42;
+      // 每条流线从地面往上冲，越往上越淡
+      const rise = (T * 1.9 + i * 0.37) % 1;          // 0 → 1 循环
+      const len = (0.55 + 0.9 * rise) * s;
+      ctx.globalAlpha = (0.10 + 0.42 * k) * (1 - rise) * (1 - rise);
+      ctx.strokeStyle = 'rgba(206,255,244,.95)';
+      ctx.lineWidth = Math.max(1, 2.2 * cam.zoom * (1 - rise * 0.5));
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + Math.sin(ph) * 4, by - len);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* 岩柱：从地面升起的一根方柱。
+   *
+   * `born` 到此刻的时间差决定它"升到几成高" —— 这正是玩家看到的
+   * "地长出来了"。**升起的动画不能影响物理**：物理里 `pillar.top` 立刻
+   * 就是最终高度（`triggerSeed` 那一刻写死），否则车会被一根
+   * 还在上升的柱子挤穿。所以这里只是**视觉补间**，物理早就是最终值。
+   * 反过来（让物理也跟着长）会让 0.2 秒内车被推上去 3 米 —— 那是弹射。 */
+  function drawPillars(cam) {
+    const ps = (state.run && state.run.pillars) || [];
+    /* 计数给测试读：`test_seed_fx` 靠它区分"没画"和"画了但颜色不对"
+     * （这两种情况的修法完全不同）。 */
+    state.pillarDrawN = ps.length;
+    if (!ps.length) return;
+    const s = PPM * cam.zoom;
+    const now = (state.run && state.run.time) || 0;
+    ps.forEach(p => {
+      const age = Math.max(0, now - (p.born || 0));
+      const grow = Math.min(1, age / 0.28);                 // 0.28 秒长到全高
+      const ease = 1 - Math.pow(1 - grow, 3);               // 缓出：先快后慢
+      const baseY = state.run.terrain.surfaceY(p.x);
+      const topY = baseY + (p.top - baseY) * ease;
+      const a = worldToScreen(p.x - p.w / 2, baseY, cam);
+      const b = worldToScreen(p.x + p.w / 2, topY, cam);
+      const wpx = b.x - a.x, hpx = a.y - b.y;
+      if (wpx <= 0 || hpx <= 0) return;
+      ctx.save();
+      // 柱身：上浅下深（和地形同色系，但更暖 —— 它是"新长出来的石头"）
+      const pg = ctx.createLinearGradient(a.x, b.y, a.x, a.y);
+      pg.addColorStop(0, '#c8b47a');
+      pg.addColorStop(0.30, '#a89468');
+      pg.addColorStop(1, '#7a6c4e');
+      ctx.fillStyle = pg;
+      roundRect(a.x, b.y, wpx, hpx, Math.max(2, wpx * 0.06));
+      ctx.fill();
+      // 顶面：一条亮带，让"这是可以站人的平台"读得出来
+      ctx.fillStyle = 'rgba(240,228,180,.85)';
+      ctx.fillRect(a.x + wpx * 0.02, b.y, wpx * 0.96, Math.max(2, hpx * 0.10));
+      // 两侧的竖向裂纹
+      ctx.strokeStyle = 'rgba(70,58,34,.45)';
+      ctx.lineWidth = Math.max(1, 1.6 * cam.zoom);
+      for (let i = 1; i <= 2; i++) {
+        const fx = a.x + wpx * (i / 3);
+        ctx.beginPath();
+        ctx.moveTo(fx, b.y + hpx * 0.14);
+        ctx.lineTo(fx + wpx * 0.03, a.y - hpx * 0.06);
+        ctx.stroke();
+      }
+      // 外描边
+      ctx.strokeStyle = 'rgba(58,46,26,.75)';
+      ctx.lineWidth = Math.max(1.5, 2.2 * cam.zoom);
+      roundRect(a.x, b.y, wpx, hpx, Math.max(2, wpx * 0.06));
+      ctx.stroke();
+      // 升起时的尘
+      if (grow < 1) {
+        ctx.globalAlpha = (1 - grow) * 0.55;
+        ctx.fillStyle = 'rgba(214,198,154,.9)';
+        for (let i = 0; i < 6; i++) {
+          const fx = a.x + wpx * (0.12 + 0.16 * i);
+          const fr = (3 + i * 1.7) * cam.zoom * (1 + grow);
+          ctx.beginPath();
+          ctx.arc(fx, a.y - (1 - grow) * 8 * cam.zoom, fr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    });
+  }
+
+  /* 雷屏障：一道竖直的紫色能量墙 + 闪电纹。
+   * 冲刺时把它画成"正在被穿过"（透明度下降 + 边缘发白），
+   * 这样玩家能看出"是冲刺让我穿过去的"，而不是"这堵墙有时候不管用"。 */
+  function drawBarriers(cam) {
+    const bs = (state.run && state.run.barriers) || [];
+    state.barrierDrawN = bs.length;
+    if (!bs.length) return;
+    const car = state.run.car;
+    const dashing = car && car.dashT > 0;
+    const T = state.clock || 0;
+    bs.forEach(br => {
+      const baseY = RAP.groundY(state.run, br.col + 0.5);
+      const a = worldToScreen(br.col, baseY, cam);
+      const b = worldToScreen(br.col + 1, baseY + br.h, cam);
+      const wpx = b.x - a.x, hpx = a.y - b.y;
+      if (wpx <= 0 || hpx <= 0) return;
+      ctx.save();
+      /* 冲刺时几乎穿透（0.22 而不是 0.34）。
+       * 0.34 时像素差异只有 4.5%~10.5% —— 在洞穴的深青背景上，
+       * 那点变化玩家读不出来，测试也在阈值的边缘抖。
+       * 这不是"为了让测试过"而调：玩家需要在**冲刺的那 4 秒里**
+       * 就看出"这堵墙现在挡不住我"，否则他会先撞一次才明白。 */
+      if (dashing) ctx.globalAlpha = 0.22;
+      // 墙体：紫色渐变 + 顶部更亮
+      const bg = ctx.createLinearGradient(a.x, b.y, a.x, a.y);
+      bg.addColorStop(0, 'rgba(214,178,255,.42)');
+      bg.addColorStop(0.45, 'rgba(150,104,220,.34)');
+      bg.addColorStop(1, 'rgba(84,48,140,.42)');
+      ctx.fillStyle = bg;
+      ctx.fillRect(a.x, b.y, wpx, hpx);
+      // 闪电纹：三条折线，随时间上下跑
+      ctx.strokeStyle = 'rgba(244,232,255,.85)';
+      ctx.lineWidth = Math.max(1.2, 2.0 * cam.zoom);
+      for (let i = 0; i < 3; i++) {
+        const fx = a.x + wpx * (0.22 + i * 0.28);
+        ctx.beginPath();
+        ctx.moveTo(fx, a.y);
+        const seg = 4;
+        for (let k2 = 1; k2 <= seg; k2++) {
+          const yy = a.y - hpx * (k2 / seg);
+          const jitter = Math.sin(T * 6 + i * 2.1 + k2 * 1.7) * wpx * 0.20;
+          ctx.lineTo(fx + jitter, yy);
+        }
+        ctx.stroke();
+      }
+      // 上下边缘
+      ctx.strokeStyle = 'rgba(232,212,255,.9)';
+      ctx.lineWidth = Math.max(1.6, 2.4 * cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(a.x, b.y); ctx.lineTo(a.x + wpx, b.y);
+      ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + wpx, a.y);
+      ctx.stroke();
+      ctx.restore();
+    });
   }
 
   function drawWindFx(cam) {
@@ -6095,6 +6461,10 @@ const BIOMES = {
     state.frameCount = (state.frameCount || 0) + 1;   // 只用于"rAF 还活着吗"这类测试
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    /* 全局动画时钟（第 71 轮）。风场的流线、雷屏障的闪电都按它走。
+     * ⚠ 用它而**不用** `performance.now()` —— 后者在无头浏览器里
+     * 会跟着 rAF 一起被节流，测试里"画了几帧"和"过了几秒"就对不上。 */
+    state.clock = (state.clock || 0) + dt;
     if (state.toastT > 0) state.toastT -= dt;
     if (state.runBanner > 0) state.runBanner = Math.max(0, state.runBanner - dt);
     state.arrowDrawN = 0;      // 每帧重置：方向箭头只在建造期画，测试靠它确认
@@ -6341,15 +6711,36 @@ const BIOMES = {
                 /* 霄灯烧完。这一刻玩家必须知道 —— 推力没了，
                  * 从此这盏灯只是配重。用轻的一声 + 一点烟。 */
                 SFX.bagDrop();
-              } else if (evs[i].indexOf('power_short') === 0) {
-                /* 动力超载（第 63 轮新机制）。
-                 * 这条必须在**出发后第一次**超载时提示一次：
-                 * 玩家装了 3 个喷气口但只有 2 点容量，驱动件会按比例降功率，
-                 * 而"为什么转得慢"在画面上没有任何别的解释。 */
-                const ms = evs[i].match(/supply=(\d+) demand=(\d+)/);
-                if (ms) {
-                  toast('动力不足：需要 ' + ms[2] + ' 点，只有 ' + ms[1] + ' 点');
+              } else if (evs[i].indexOf('wind_field') === 0) {
+                /* 风场生成 / 结束（第 71 轮）。
+                 * 风场是**看不见的力**，所以它在画面上必须有明确的开始和结束 ——
+                 * 玩家按了 2 号键，如果只有一股粒子，他不会知道自己买了 3 秒。 */
+                if (evs[i].indexOf('wind_field_end') === 0) {
+                  SFX.bagDrop();
+                } else {
+                  SFX.pop();
                 }
+              } else if (evs[i].indexOf('pillar') === 0) {
+                /* 岩柱升起。低沉的"轰"和轻的"噗"都表达不了"地长出来了"，
+                 * 用触地音 + 一次轻震屏最接近。
+                 * ⚠ SFX 里没有 `impact` 这个名字（那是**事件**名，不是音效名）。
+                 * 音效只有 thud / hurt / crack / structBreak 几个；
+                 * 写成 SFX.impact() 会每帧抛 TypeError，被 frame() 吞掉之后
+                 * 整个渲染循环停在上一帧 —— 表现是"画什么都没反应"。 */
+                SFX.thud(2);
+                state.shake = Math.max(state.shake || 0, 0.5);
+              } else if (evs[i].indexOf('dash_start') === 0) {
+                /* 冲刺开始：这一下的音量必须比普通动作大，
+                 * 因为接下来 4 秒玩家是"失控"的（速度快、方向固定）。 */
+                SFX.pop();
+                state.flash = Math.max(state.flash || 0, 0.35);
+              } else if (evs[i].indexOf('dash_end') === 0) {
+                SFX.bagDrop();
+              } else if (evs[i].indexOf('barrier_block') === 0) {
+                /* 撞上雷屏障。和"撞墙"必须能听出区别 ——
+                 * 屏障是"再试一次就好"，不是"这把废了"。 */
+                SFX.thud(1);
+                toast('雷屏障挡路：用雷种冲刺才穿得过');
               } else if (evs[i].indexOf('part_broken') === 0) {
                 /* 木框碎了：这局的「不散架」已经没了，必须有一声和"裂缝"完全不同的音。
                  * 原来这里什么都不做 —— 碎框唯一的表现是通用撞击音 + 木框耐久条消失，
@@ -6539,6 +6930,10 @@ const BIOMES = {
                    runChallengeRect, challengeStatus, SAVE_KEY,
                    readRecord, saveProgress, starsOf, mergeGoals, goalNames,
                    totalStars, GOALS, RAP, tapAt: (wx, wy) => RAP.tapAt(state.run, wx, wy),
+                   /* 种子触发（第 71 轮）。测试要能走和玩家按 F 键**同一条路径**，
+                    * 而不是自己写 state 字段 —— 后者会让测试绿而实机红
+                    * （一次性/范围性这些规则都在 triggerSeed 里）。 */
+                   triggerSeed: (which) => RAP.triggerSeed(state.run, which),
                    drawStackBadge, liftLineOf: () => liftLineCache,
                    challengeNameOf, goalNames, challengeStatus, overGoalNotice,
                    progressWarning, failText, failCulprit, chapterDone, resultNextBtn, frameHpOf, frameSegRects,

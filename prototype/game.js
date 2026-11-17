@@ -79,13 +79,37 @@
                   color: '#5a6672',
                   desc: '重 0.9 kg。冰面抓地 0.8，是过冰坡的办法。' },
 
-    /* ---------- 动力源：只给容量，自己不产生推力 ---------- */
-    anemo_core: { label: '风种', mass: 0.8, powerSrc: 2, inner: true, color: '#7fd4c0',
-                  desc: '蒙德的风之种。只能放进框里。全车 +2 动力容量，自己不推。' },
-    geo_core: { label: '岩种', mass: 2.2, powerSrc: 5, inner: true, color: '#d8b25a',
-                desc: '璃月的岩之种。只能放进框里。全车 +5 动力容量，但重 2.2 kg。' },
+    /* ---------- 种子三兄弟：一次性、范围效果、必须放框里 ----------
+     *
+     * 第 71 轮按用户要求重写。旧设计是"动力源给容量、驱动件吃容量"，
+     * 用户原话：「不要设置什么动力容量的设定」。现在这三个种子
+     * 各管一件完全不同的事，而且**都是一次性的**：
+     *
+     *   风种 → 生成范围风场，**只有带伞/风之翼的车**被托起来
+     *   岩种 → 从脚下升起一根有宽度的岩柱，把车**托高**（不是抛上去）
+     *   雷种 → 车进入限时冲刺状态，**可以穿过雷屏障**
+     *
+     * `seedKind` 是唯一的分派字段。渲染、触发、HUD 都读它一份 ——
+     * 再来一个 `powerSrc` 之类的平行字段，两处迟早会分叉。
+     * `inner: true` 保留：种子必须塞进框里（和参考里"必须放在框里"一致）。 */
+    anemo_core: { label: '风种', mass: 0.8, inner: true, seedKind: 'anemo', color: '#7fd4c0',
+                  desc: '一次性：生成半径 6 米风场 3 秒，只有伞/风之翼会吃风上升。' },
+    geo_core: { label: '岩种', mass: 2.2, inner: true, seedKind: 'geo', color: '#d8b25a',
+                desc: '一次性：脚下升起 3 米宽、3 米高岩柱把车托上去。重 2.2 kg。' },
+    electro_core: { label: '雷种', mass: 0.9, inner: true, seedKind: 'electro', color: '#b58ce8',
+                    desc: '一次性：4 秒冲刺，冲刺时能穿过雷屏障。' },
 
-    /* ---------- 驱动件：消耗容量产生推力，必须连通 ---------- */
+    /* ---------- 吃风的零件：只有它们能从风场里拿到升力 ----------
+     *
+     * `catchesWind` 越大，上升越强。这两个零件**不产生推力**，
+     * 只在风场里被托起来 —— 所以它们必须和风种一起用，
+     * 单独装是纯负重（这正是这个机制要的取舍）。 */
+    umbrella: { label: '伞', mass: 0.5, catchesWind: 1.0, tether: 'below', color: '#e8b04a',
+                desc: '风场里被托起来（升力系数 1.0）。平时是纯负重，只在风场有用。' },
+    wind_wing: { label: '风之翼', mass: 0.8, catchesWind: 1.8, tether: 'below', color: '#7fc8e8',
+                 desc: '风场里托得更高（1.8），但重 0.8 kg。飞得起来也刹不住。' },
+
+    /* ---------- 驱动件：装了就一直出力（不再需要动力源/连通/容量） ---------- */
     /* ⚠ `blowsAir: true` 不是装饰，它决定**箭头往哪边指**（第 68 轮，用户要求：
      * 「为什么不把风相关的零件的箭头改成风的方向，让车受反作用力沿风的
      * 反方向运动」）。
@@ -99,12 +123,12 @@
      *   · 画箭头时对 `blowsAir` 的零件取反 —— 箭头指风走的方向；
      *   · 行驶期的风特效也按同一个取反后的方向吹。
      * 这样"箭头 = 风"、"车 = 反向"，玩家看一眼就懂，也不用改任何数值。 */
-    propeller: { label: '风车桨', mass: 0.5, tool: true, dir: true, thrust: 5.0, drawPower: 1,
+    propeller: { label: '风车桨', mass: 0.5, tool: true, dir: true, thrust: 5.0,
                  blowsAir: true, color: '#8fd6e8',
-                 desc: '蒙德风车桨。风往箭头方向吹，推力 5.0 m/s²，占 1 点动力容量。' },
-    jet: { label: '喷气口', mass: 0.7, tool: true, dir: true, thrust: 9.0, drawPower: 2,
+                 desc: '蒙德风车桨。风往箭头方向吹，推力 5.0 m/s²。装上就一直转。' },
+    jet: { label: '喷气口', mass: 0.7, tool: true, dir: true, thrust: 9.0,
            blowsAir: true, color: '#e08a5a',
-           desc: '枫丹蒸汽喷口。喷汽产生推力 9.0 m/s²，车被反推，占 2 点容量。' },
+           desc: '枫丹蒸汽喷口。喷汽产生推力 9.0 m/s²，车被反推。' },
 
     /* ---------- 浮力 / 配重：位置决定生死 ---------- */
     balloon: { label: '热气球', stack: true, maxStack: 3, liftMass: 3.2, mass: 0.05,
@@ -117,11 +141,11 @@
     /* ---------- 一次性推力 ---------- */
     firework: { label: '霄灯', mass: 0.4, thrust: 6.5, burnTime: 1.2,
                 interactive: true, dir: true, color: '#f0a05a', oneShot: true,
-                desc: '璃月霄灯。点一次沿箭头推 1.2 秒（6.5 m/s²）然后烧完。不用接动力。' },
+                desc: '璃月霄灯。点一次沿箭头推 1.2 秒（6.5 m/s²）然后烧完。' },
 
     /* ---------- 手动件 ---------- */
     pump: { label: '仙术机关', mass: 0.8, interactive: true, dir: true, color: '#4f8fb0',
-            desc: '璃月仙术机关。按住蓄力、松开喷冲量，不耗容量。方向看箭头。' },
+            desc: '璃月仙术机关。按住蓄力、松开喷冲量。方向看箭头。' },
 
     /* ---------- 载荷 ---------- */
     pig: { label: '小猪', mass: 1.5, hp: 3, pig: true, inner: true, color: '#6fc25a',
@@ -129,7 +153,9 @@
   };
 
   var TRAY_ORDER = ['wood_frame', 'iron_frame', 'wood_wheel', 'iron_wheel',
-                    'anemo_core', 'geo_core', 'propeller', 'jet',
+                    'anemo_core', 'geo_core', 'electro_core',
+                    'umbrella', 'wind_wing',
+                    'propeller', 'jet',
                     'balloon', 'sandbag', 'firework', 'pump', 'pig'];
 
   // ---------------- 可调参数（HTML 面板里能改，也是真机的数值基线） ----------------
@@ -164,6 +190,63 @@
      * 2.5 m/s 是量出来的：1 秒爬 2.5 米（2.5 格），跨 6 米沟要 2.4 秒，
      * 玩家有足够时间决定"要不要扎"。 */
     liftMaxRise: 2.5,
+    /* ---------- 种子三兄弟的参数（第 71 轮） ----------
+     *
+     * 这几个数是**设计常量**，不是物理常数。每一条后面都写着它是怎么定的：
+     *
+     * windRadius 6 米：风场必须"范围性"（用户原话），而车身 3 米宽，
+     *   6 米直径正好覆盖"车 + 一个车身" —— 玩家在风场里挪一点位置仍然吃到风，
+     *   但开车冲出去马上就没了。半径设成 2 米会变成"原地起跳"，那是另一个机制。
+     * windTtl 3 秒：够上升 3–4 米（windRise 1.4 m/s 实测），
+     *   跨不过 1-6 的 6 米沟 —— 所以风种在 1-6 只是"补高度"，主力仍然是气球。
+     * windRise 1.4 m/s：比气球慢（2.5），因为风场是**暂时的**，
+     *   它不该比"带一堆气球"更划算。伞 1.0 / 风之翼 1.8 再乘这个数。
+     *
+     * pillarW 3 米 / pillarH 3 米：柱子要"范围性"（用户原话），
+     *   3 米 = 三个格子，车（3 米宽）能整台站上去。
+     *   高 3 米是因为 1-6 的台阶正好 3 米 —— 再低就抬不上去，再高就成了电梯。
+     *
+     * dashTime 2.5 秒：冲刺要真的快。`dashAccel` 使 vx 从 0 在 0.5 秒内到 8 m/s，
+     *   2.5 秒足够跑 15 米 —— 正好穿过一道雷屏障并有余量。
+     */
+    windRadius: 6.0,
+    windTtl: 3.0,
+    /* `windRise` 是**净上升加速度**（m/s²），不是"额外加的力"。
+     *
+     * ⚠ 第一版把它当成"一个向上的小力"直接加进 fy，结果 1.4 × 质量
+     * 对抗 16 × 质量 的重力 —— 车纹丝不动（`test_seeds` 的 B8 量到 +0.00 米）。
+     * 风场要托起一台车，它至少得先**抵消重力**，所以写进引擎的是
+     *   fy += (G + windRise × 系数) × 质量
+     * 这样 `windRise` 才有"每秒多快往上走"的直觉含义。
+     *
+     * 2.0 m/s² ⇒ 伞（系数 1.0）爬 2 米用 1.4 秒，风之翼（1.8）用 1.1 秒。
+     * 两者都受 `liftMaxRise` 封顶，但到达封顶的时间不同，峰值仍然分得开
+     * （实测 2.2 vs 2.9 米）—— 这是"风之翼更强"唯一的证据，
+     * 所以封顶值不能压到让两者一起卡住。
+     *
+     * ⚠ 3.0 而不是 2.0：2.0 时 1.5 秒只升 1.44 米，卡在"看得出在动"和
+     * "看得出在飞"之间。3.0 之后伞 1.5 秒升 2.7 米、风之翼 3.2 米 ——
+     * 两者都过 2.5 m/s 的封顶速度，但到达时间差 0.4 秒，峰值差 0.5 米，
+     * 仍然量得出来。 */
+    windRise: 3.0,
+    /* 岩柱高了 3 米。柱顶要能真正"站人"，所以 `groundY` 必须覆盖柱顶，
+     * 而且**只在那一段** —— 范围之外还是原地形。 */
+    pillarW: 3.0,
+    pillarH: 3.0,
+    /* 冲刺参数。
+     *
+     * ⚠ `dashTime` 从 2.5 改成 4.0 是量出来的：`test_seeds` 的 D5 要求
+     * "冲刺状态会过期"，而旧值在 4 秒的模拟里还剩 1.07 秒没走完 ——
+     * 于是那条断言测的是"我模拟得不够久"，不是"状态会不会结束"。
+     * 4.0 秒给了足够余量，同时仍然是一次短暂爆发（跑约 30 米，
+     * 正好穿过一道屏障 + 一段路）。
+     *
+     * `dashMaxSpeed` 比 `maxSpeed`（12）低：冲刺是"更快地跑"，
+     * 不是"突破整车的速度上限"。留出 headroom 之后，
+     * 越过屏障时速度上限仍然由 `maxSpeed` 兜底，不会出现瞬移。 */
+    dashTime: 4.0,
+    dashAccel: 16.0,
+    dashMaxSpeed: 9.5,
     /* 到终点时车身离终点地表的允许高度差。
      * 车静止时车心离地 1.3–1.6 米（实测 1-1..1-5 的标准解都是这个区间），
      * 所以 2.2 足够"停在旗子旁边"，但容不下"从旗子上空飞过去"。
@@ -395,82 +478,110 @@
     return v;
   }
 
-  /* ══════════════ 动力连通性（第 63 轮新增，参考的核心机制）══════════════
+  /* ══════════ 种子三兄弟（第 71 轮，用户要求）══════════
    *
-   * 参考原话：「除了雀斑猪外，（动力源）必须放在木框或者铁框里」、
-   *          「只要中间有动力连接件（框/可乐/火箭/分离器/弹簧都算，绳子不算），
-   *            动力可以叠加」。
+   * 用户原话：「不要设置什么动力容量的设定，让风种子可以一次性生成一个范围风场
+   * 让携带伞/风之翼的车向上飞，让岩种子可以一次性从脚底升成一个范围性的岩柱
+   * 让车抬升，雷种子可以让车进入一种状态，让车在一定时间内快速冲刺并且可以穿过
+   * 雷屏障」
    *
-   * 也就是：**驱动件必须通过结构件连到动力源**。这条一旦缺席，
-   * "把风车桨装在离动力源三格远的地方照样转" —— 那这个游戏就只剩堆数量了。
+   * ── 为什么整个 powerGrid 被删掉 ──
    *
-   * 实现：把 build.cells 看成一张图，相邻（上下左右）的格子有边。
-   * **只有结构件能当导线**（参考里明确说了绳子不算，我们这里没有绳子，
-   * 但气球/沙袋显然也不该导电）。
-   * 从每个动力源出发做 BFS，走到的所有格子记入 `powered`。
-   * 驱动件落在 `powered` 里才算接通。
+   * 旧设定是"动力源给容量、驱动件吃容量、超载打折"。它有三个毛病：
+   *   1. **要先算除法**。玩家开局的工作是心算 2+5 对比 1+2，而不是造车；
+   *   2. 它让"装得下几个桨"变成唯一的设计维度，零件本身的差别被压平；
+   *   3. 用户明确说不要。
+   * 现在驱动件（风车桨/喷气口）**装了就一直出力**，不再需要动力源、
+   * 不再需要连通、不会超载。动力这件事从"资源管理"变回"物理"。
    *
-   * 返回 { powered: Set(key), sources: n, demand: n, supply: n, short: bool }
-   *   supply = 全部动力源的 powerSrc 之和
-   *   demand = 全部**已接通**驱动件的 drawPower 之和
-   *   short  = demand > supply（接通的驱动件太多，带不动）
+   * ── 三个种子各管一件事，而且**都是一次性的** ──
    *
-   * "接通但超载"和"没接通"是两种不同的失败，HUD 必须分开说 ——
-   * 玩家看到的应该是「差 2 点动力」，不是笼统的"不工作"。
+   *   风种 anemo  → 在车脚下生成一个**范围风场**（半径、寿命都有数）。
+   *                 只有带 `catchesWind` 的零件（伞 / 风之翼）吃风。
+   *                 没有伞的车站在风场里**不动** —— 这是这套机制的核心：
+   *                 风场不是"把车抬起来"，是"给会吃风的东西一个力"。
+   *   岩种 geo    → 从脚底升起一根**有宽度**的岩柱，柱顶成为那一段的新的地面。
+   *                 注意它是"局部抬高地形"，不是"给车一个向上的力"——
+   *                 所以车会被**托住**（踩着柱顶），而不是被抛上去。
+   *   雷种 electro→ 车进入限时冲刺状态：水平加速 + **可以穿过雷屏障**。
+   *
+   * ── 为什么"一次性"很重要 ──
+   *
+   * 风场/岩柱如果能反复触发，关卡就只剩"按住键等它自己过去"。
+   * 一次性意味着**时机是玩法**：你必须在对的时刻、对的位置触发它。
+   * `state.seedUse` 记次数，第二次触发直接返回 false。
    */
-  function powerGrid(build) {
-    var cells = build.cells || {};
-    var keys = Object.keys(cells);
-    var inSet = {};
-    keys.forEach(function (k) { inSet[k] = cells[k]; });
 
-    /* 结构件是导线。注意：内嵌件（inner）不单独成格，它在宿主格里，
-     * 所以动力源（inner）天然和它的宿主框连通 —— 这正是参考要的语义
-     * （"必须放在框里"才生效）。 */
-    function isWire(k) {
-      var c = inSet[k];
-      if (!c) return false;
-      var d = PARTS[c.part];
-      return !!(d && d.structure);
-    }
-
-    var powered = {};
-    var supply = 0, sources = 0;
-    // 每个动力源从它**所在的格子**开始 BFS；inner 件供能时从宿主格开始
-    keys.forEach(function (k) {
-      var c = inSet[k];
-      var d = PARTS[c.part];
-      var innerD = c.inner ? PARTS[c.inner] : null;
-      var src = (d && d.powerSrc) || (innerD && innerD.powerSrc) || 0;
-      if (!src) return;
-      sources++; supply += src;
-      // BFS
-      var q = [k], seen = {};
-      seen[k] = 1;
-      while (q.length) {
-        var cur = q.shift();
-        powered[cur] = 1;
-        var rc = cur.split(','), r = +rc[0], cc = +rc[1];
-        [[r - 1, cc], [r + 1, cc], [r, cc - 1], [r, cc + 1]].forEach(function (nb) {
-          var nk = nb[0] + ',' + nb[1];
-          if (seen[nk] || !inSet[nk]) return;
-          seen[nk] = 1;
-          // 只有结构件继续传；非结构件本身算"被供到"（它是叶子），但不往下传
-          powered[nk] = 1;
-          if (isWire(nk)) q.push(nk);
-        });
+  /* 一根岩柱抬高的地面。
+   *
+   * 这是**唯一**的"地面高度"入口 —— 车轮、车壳、气球碰地、终点高度
+   * 全部走这里。少改一处就会出现"车被岩柱托住了，但判定还按原地形算"
+   * 这种自相矛盾（车悬在空中却算到了终点）。
+   *
+   * 岩柱 × 范围之外返回原地形 —— 这条是"范围性"的定义，
+   * 如果整条地平面一起抬高，那叫"改关卡"，不叫"升岩柱"。 */
+  function groundY(state, x) {
+    var base = state.terrain.surfaceY(x);
+    var ps = state.pillars;
+    if (!ps || !ps.length) return base;
+    var best = base;
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i];
+      if (Math.abs(x - p.x) <= p.w / 2) {
+        if (p.top > best) best = p.top;
       }
-    });
+    }
+    return best;
+  }
 
-    var demand = 0;
-    keys.forEach(function (k) {
-      var c = inSet[k];
-      var d = PARTS[c.part];
-      if (d && d.tool && d.drawPower && powered[k]) demand += d.drawPower;
-    });
+  function seedKindOf(part) {
+    var d = PARTS[part];
+    return (d && d.seedKind) || null;
+  }
 
-    return { powered: powered, sources: sources, supply: supply,
-             demand: demand, short: demand > supply };
+  /* 触发一个种子。n = 触发序号（1..），也接受 'anemo'/'geo'/'electro'。
+   *
+   * 返回值 = 真的触发了（给交互键和测试共用的读数）。 */
+  function triggerSeed(state, which) {
+    if (!state || state.phase !== 'run' || !state.car) return false;
+    var car = state.car;
+    var kind = which;
+    if (typeof which === 'number') {
+      /* 从"车上第 n 个种子"反查种类。用**零件顺序**而不是颜色组，
+       * 因为种子是内嵌件，不进 groups。 */
+      var seeds = car.parts.filter(function (p) { return p.def && p.def.seedKind; });
+      var pk = seeds[which - 1];
+      kind = pk ? pk.def.seedKind : null;
+    }
+    if (!kind) return false;
+    state.seedUse = state.seedUse || { anemo: 0, geo: 0, electro: 0 };
+    if (state.seedUse[kind] > 0) return false;                 // 一次性
+    var has = car.parts.some(function (p) { return p.def && p.def.seedKind === kind; });
+    if (!has) return false;
+    state.seedUse[kind] = 1;
+
+    if (kind === 'anemo') {
+      state.windField = {
+        x: car.x, y: car.y,
+        r: Params.windRadius, ttl: Params.windTtl, maxTtl: Params.windTtl,
+        rise: Params.windRise
+      };
+      log(state, 'wind_field x=' + car.x.toFixed(1) + ' r=' + Params.windRadius);
+    } else if (kind === 'geo') {
+      /* 柱底 = 触发那一刻**脚下**的地面（可能已经是另一根柱的顶，
+       * 但一次性用完就没了，所以这里用 groundY 是安全的）。 */
+      var g0 = groundY(state, car.x);
+      state.pillars = (state.pillars || []).concat([{
+        x: car.x, w: Params.pillarW, top: g0 + Params.pillarH, born: state.time
+      }]);
+      log(state, 'pillar x=' + car.x.toFixed(1) +
+        ' top=' + (g0 + Params.pillarH).toFixed(2));
+    } else if (kind === 'electro') {
+      car.dashT = Params.dashTime;
+      car.dashDir = (car.vx >= -0.1) ? 1 : -1;
+      log(state, 'dash_start t=' + Params.dashTime + ' dir=' + car.dashDir);
+    }
+    return true;
   }
 
   /* 浮力/配重的**系挂校验**（第 63 轮新增）。
@@ -711,9 +822,6 @@
     var mass = 0, interactives = [];
     var hasPig = false;
     var groups = [];        // 同种（同色）可启动零件 = 一个组
-    /* 动力图（第 63 轮）。这一步必须在遍历零件**之前**算好，
-     * 因为每个驱动件要立刻知道自己接没接通。 */
-    var grid = powerGrid(build);
     Object.keys(build.cells).forEach(function (k) {
       var cell = build.cells[k];
       var rr = parseInt(k.split(',')[0], 10);
@@ -728,12 +836,13 @@
       var isStack = !!def.stack;
       var pm = def.mass * (isStack ? cnt : 1);
       /* 系挂校验：气球必须有下方的框、沙袋必须有上方的框。
-       * 挂空的不算数 —— 见 `tetherCheck()` 的注释（参考的原始规则）。 */
+       * 挂空的不算数 —— 见 `tetherCheck()` 的注释（参考的原始规则）。
+       * 伞和风之翼也走同一条：它们必须挂在车顶才吃得到风。 */
       var tethered = true;
       if (def.tether) tethered = tetherCheck(build, rr, cc, def.tether).ok;
       parts.push({ part: cell.part, def: def, r: rr, c: cc, lx: p.x, ly: p.y, dir: cell.dir,
                    hp: def.hp || 1, n: isStack ? cnt : 1, key: k,
-                   powered: !!grid.powered[k], tethered: tethered });
+                   tethered: tethered });
       mass += pm;
       if (def.interactive) {
         // 只有"占面板键位"的交互件才进 groups；气球/沙袋/霄灯走车身点击
@@ -772,17 +881,16 @@
       center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
       hasPig: hasPig,
       groups: groups,
-      /* 动力系统的三个读数（第 63 轮）。
-       * 旧设计这里是 `energyMax/energy`（会耗尽的电量），
-       * 新设计是 `supply/demand`（**容量**，不会耗尽）——
-       * 这是"反人类直觉"那条反馈的核心修正：
-       * 玩家该算的是"我装得下几个驱动件"，不是"还能跑几秒"。 */
-      powerSupply: grid.supply,
-      powerDemand: grid.demand,
-      powerSources: grid.sources,
-      powerShort: grid.short,
+      /* ⚠ 第 71 轮：`powerSupply/powerDemand/powerShort` 三个字段**已删**。
+       * 它们是"动力容量"系统的读数，用户明确要求去掉这套设定。
+       * 只删零件表里的 powerSrc/drawPower 是不够的 —— 这三个字段还在的话，
+       * HUD、三星条件、提示文案会继续读它们，界面上仍然显示"动力 2/2"。
+       * `tools/test_seeds.js` 的 A4–A6 三条断言直接盯这三个字段（=== undefined），
+       * 就是防止有人把它们加回来。
+       *
+       * 驱动件现在**装了就一直出力**：没有"接通"、没有"超载"、没有"容量"。 */
       interactives: interactives,
-      pumpCharge: 0, pumpHeld: false, braking: false, odo: 0
+      pumpCharge: 0, pumpHeld: false, braking: false, odo: 0, dashT: 0
     };
     recomputeLift(car);
     return car;
@@ -796,17 +904,22 @@
    * ⚠ **没系住的球不提供浮力**（第 63 轮）。参考的规则是"否则会直接飘走"，
    * 不是"照样给你浮力"。同理所未被系住的重物也不给重量。 */
   function recomputeLift(car) {
-    var lift = 0, bags = 0, loose = 0;
+    var lift = 0, bags = 0, loose = 0, wind = 0;
     car.parts.forEach(function (p) {
       if (p.def.liftMass) {
         if (p.tethered === false) { loose += (p.n || 1); return; }   // 飘走的球不算
         lift += p.def.liftMass * (p.n || 1);
       }
       if (p.def.dropOne && p.tethered !== false) bags += (p.n || 1);
+      /* 吃风的零件（伞/风之翼）：没系住的不算。
+       * `catchesWind` 是升力**系数**，不是力 —— 真正乘上去的是
+       * `Params.windRise`，这样调风力不用改零件表。 */
+      if (p.def.catchesWind && p.tethered !== false) wind += p.def.catchesWind;
     });
     car.liftMass = lift;
     car.sandbagCount = bags;
     car.looseBalloons = loose;
+    car.windCatch = wind;                 // 0 = 风场对它没用
     car.netMass = car.mass - lift;
     return car;
   }
@@ -850,9 +963,26 @@
        * noGainFor 由引擎每帧写入，HUD 直接读它画倒计时警告 ——
        * 这样"什么时候判负"和"界面上还剩几秒"永远是同一个数。 */
       progLastGainT: 0, noGainFor: 0,
+      /* ---------- 种子三兄弟的运行时状态（第 71 轮） ----------
+       *
+       * `seedUse`   : { anemo:0, geo:0, electro:0 } —— 每种种子的使用次数。
+       *               所有种子都是**一次性**，第二次触发直接被拒。
+       * `windField` : 当前风场 { x, y, r, ttl, maxTtl, rise } 或 null。
+       *               风场是**范围性**的：只有车在半径内且带伞/风之翼才吃风。
+       * `pillars`   : 岩柱数组 [{ x, w, top, born }]。柱顶就是那一带的**新地面**
+       *               （读 `groundY(state, x)`，不要直接读 terrain）。
+       * `barriers`  : 雷屏障 [{ col, h }] —— 冲刺状态可以穿过，否则挡住。
+       * 这四个状态都挂在 state 上（不是全局），因为它们必须随这一局一起消失。
+       */
+      seedUse: { anemo: 0, geo: 0, electro: 0 },
+      windField: null, pillars: [], barriers: [],
       events: [],
       replay: []
     };
+    /* 雷屏障从关卡数据搬进来（关卡写 `barriers: [{col, h}]`） */
+    ((level && level.barriers) || []).forEach(function (b) {
+      state.barriers.push({ col: b.col, h: b.h || 4 });
+    });
     if (!car) { state.phase = 'resolved'; state.failReason = 'empty'; state.result = 'fail'; return state; }
     // 出生高度：让最低接触点正好贴地（有轮子看轮底，没轮子看车壳底）
     var lowest = car.hull.minY;
@@ -1100,7 +1230,7 @@
       L.x += L.vx * dt;
       L.y += L.vy * dt;
       L.a += L.w * dt;
-      var gy = ter.surfaceY(L.x) + L.r;
+      var gy = groundY(state, L.x) + L.r;
       if (L.y < gy) {
         L.y = gy;
         if (L.vy < 0) L.vy = -L.vy * 0.28;
@@ -1144,9 +1274,11 @@
       log(state, 'win stars=' + state.stars + ' goals=arrive' +
         (state.starGoals.boxes ? ',boxes' : '') + (state.starGoals.challenge ? ',challenge' : '') +
         ' box=' + state.boxesGot +
-        /* 「能量剩 ≥ N」这条三星条件（1-3）随电量一起删了 ——
-         * 容量不会耗尽，也就没有"剩多少"。这里改记动力余量。 */
-        ' power=' + (state.car ? (state.car.powerSupply - state.car.powerDemand) : 0) +
+        /* 第 71 轮：`power=…` 这个读数随动力容量系统一起删了。
+         * 还留着它（哪怕是 `power=0` 常量）会让读日志的人以为"动力"还存在，
+         * 而真正该看的是"用了几颗种子"。 */
+        ' seeds=' + (state.seedUse ? ('anemo' + state.seedUse.anemo +
+          ',geo' + state.seedUse.geo + ',electro' + state.seedUse.electro) : '-') +
         ' time=' + state.time.toFixed(1));
     } else {
       state.result = 'fail';
@@ -1164,12 +1296,13 @@
     switch (ch.type) {
       case 'none': return false;                      // 1-1 没有 ★★★，最多 2 星
       case 'pumpPress': return state.pumpPress <= (ch.max || 0);
-      /* `energyLeft`（1-3「能量剩 ≥30」）随电量一起删了。
-       * 容量不会耗尽，"还剩多少"这个问题在新机制下不存在。
-       * 1-3 的第三星改成 `powerSpare`：出发时动力余量 ≥ N
-       * —— 它考的是"你有没有乱装驱动件"，和"算除法"是两件事。 */
-      case 'powerSpare': return state.car &&
-        (state.car.powerSupply - state.car.powerDemand) >= (ch.min || 0);
+      /* 1-3 的第三星原来是 `powerSpare`（出发时动力余量 ≥ N）。
+       * 动力容量系统整个删掉之后它没有意义了，改成 **`seedSpare`：
+       * 出发时车上一颗种子都没用** —— 也就是"这一关你没靠种子通关"。
+       * 这仍然是一道真取舍：1-3 装了种子会更容易过，但拿不到这颗星。
+       * `tools/test_seeds.js` 里有这条的反向对照。 */
+      case 'seedSpare': return !!state.seedUse &&
+        (state.seedUse.anemo + state.seedUse.geo + state.seedUse.electro) === 0;
       case 'noFlip': return (state.maxAngle || 0) <= (ch.maxAngle || 0.785);
       /* `motorUse` 也随马达删了。1-5 的「不用马达」改成「不用驱动件」：
        * 一辆一个 tool 都没有的车跑通这一关。 */
@@ -1291,34 +1424,43 @@
     if (state.wallCooldown > 0) state.wallCooldown -= dt;
     if (car.pumpHeld) car.pumpCharge = Math.min(0.8, car.pumpCharge + dt);
 
-    /* ══════════ 动力输出（第 63 轮重写）══════════
+    /* ---------- 风场 / 冲刺的计时（第 71 轮） ----------
+     * 两者都是**限时**状态，所以时间推进必须只在这里一份。
+     * 风场到点就置 null（渲染层读 null 就不画）；
+     * 冲刺到点写一条事件（HUD 要提示"冲刺结束"）。 */
+    if (state.windField) {
+      state.windField.ttl -= dt;
+      if (state.windField.ttl <= 0) {
+        state.windField = null;
+        log(state, 'wind_field_end');
+      }
+    }
+    if (car.dashT > 0) {
+      car.dashT = Math.max(0, car.dashT - dt);
+      if (car.dashT === 0) log(state, 'dash_end');
+    }
+
+    /* ══════════ 驱动件出力（第 71 轮：容量系统已删）══════════
      *
-     * 旧实现：`motor` 是一个布尔 + 一个会耗尽 `energy` 池，每帧扣电。
-     * 新实现：**容量是恒定的**，驱动件只要"接通且不超载"就一直出力。
+     * 旧实现（第 63 轮）是"容量恒定，接通且不超载才出力"，再往上是
+     * "装马达、轮子凭空获得牵引力"。两版都在回答同一个问题：
+     * **驱动件凭什么转**。
      *
-     * 三种状态必须分开（HUD 要按这三种分别提示）：
-     *   · 接通了、容量够 → 出满推力
-     *   · 接通了、容量不够 → 按超载比例打折（`powerShort`）
-     *   · 没接通         → 完全不出力（零件 p.powered === false）
+     * 现在的答案最简单：**装了就一直转**。
+     *   · 没有动力源，没有连通，没有容量，没有超载打折；
+     *   · `p.def.tool` 就是全部条件；
+     *   · 推力全部来自零件表里的 `thrust`。
      *
-     * 为什么超载是"打折"而不是"不转"：参考里动力源太多反而更慢，
-     * 但那是因为重量。让超载直接停机太硬（玩家会觉得"我明明装了"），
-     * 按比例降功率既保留了"要算容量"的压力，又不至于让人一头雾水。
+     * 用户原话是「不要设置什么动力容量的设定」。删掉之后玩家开局要做的事
+     * 从"心算 2+5 对比 1+2"变回"这件东西该装哪、朝哪边"——
+     * 后者才是这个游戏的内容。
      *
-     * **一次性推力（霄灯）也在这里**：它不要连通、不要容量，只认 `burn` 计时。
+     * **一次性推力（霄灯）不在这里**：它认 `burn` 计时，和驱动件无关。
      */
     var tools = [];
     car.parts.forEach(function (p) {
-      if (p.def.tool && p.powered) tools.push(p);
+      if (p.def.tool) tools.push(p);
     });
-    var shortFactor = 1;
-    if (car.powerShort && car.powerDemand > 0) {
-      shortFactor = car.powerSupply / car.powerDemand;      // <1
-    }
-    if (car.powerShort && !state.powerShortLogged) {
-      state.powerShortLogged = true;
-      log(state, 'power_short supply=' + car.powerSupply + ' demand=' + car.powerDemand);
-    }
 
     /* 一次性推力：点一次 → burn 计时开始 → 每帧出推力 → 烧完 */
     car.parts.forEach(function (p) {
@@ -1357,7 +1499,7 @@
        * 这是一个**手感参数**，不是物理常数 —— 记在这里，免得以后被当成 bug 改回去。 */
       for (var ti = 0; ti < tools.length; ti++) {
         var tp = tools[ti];
-        var f = (tp.def.thrust || 0) * shortFactor * car.mass;
+        var f = (tp.def.thrust || 0) * car.mass;
         var tv = dirVec(tp.dir || 0);
         var tca = Math.cos(car.a), tsa = Math.sin(car.a);
         var twx = tv[0] * tca - tv[1] * tsa;
@@ -1403,6 +1545,44 @@
        * 与挂几个气球无关，只与"带不带得起来"有关。 */
       if (car.liftMass > 0) fy += G * car.liftMass;
 
+      /* ══════════ 风场（第 71 轮）══════════
+       *
+       * 规则只有三句：
+       *   1. 车必须在风场**半径内**（范围性 —— 用户原话）；
+       *   2. 车上必须有**吃风的零件**（伞 / 风之翼），`windCatch > 0`；
+       *   3. 升力 = `windRise × ΣcatchesWind`，直接加在 fy 上。
+       *
+       * ⚠ 第 2 条是这套机制的全部意义。第一版写成"风场无条件抬升整台车"，
+       * 于是风种变成"免费的上升按钮"，伞和风之翼就没有存在理由。
+       * `tools/test_seeds.js` 的 B6 就是这条的反向对照：**没带伞的车
+       * 在同一个风场里必须不动**。
+       *
+       * 升力作用在**车心**（不加力矩）：风是从下面整片托上来的，
+       * 不是顶在某个零件上。加了力矩会让车在风里打转，那不是"被托起来"。
+       */
+      if (state.windField && car.windCatch > 0) {
+        var wf = state.windField;
+        var wdist = Math.hypot(car.x - wf.x, car.y - wf.y);
+        if (wdist <= wf.r) {
+          /* 边缘衰减：中心满力、边缘 40%。这样"在风场里挪一点"仍有手感，
+           * 而"开出风场"是连续变弱而不是突然断电 —— 突然断电看起来像 bug。 */
+          var wfall = 1 - 0.6 * (wdist / wf.r);
+          /* ⚠ 必须**先抵消重力**再谈上升。直接加 `windRise × 质量` 只够
+           * 对抗 2.0 而重力是 16 —— 车纹丝不动，看起来像"风场没生效"。
+           * 写 `(G + ...)` 之后 `windRise` 才是"净上升加速度"这个直觉含义。 */
+          fy += (G + Params.windRise * car.windCatch * wfall) * car.mass;
+        }
+      }
+
+      /* ══════════ 雷种冲刺（第 71 轮）══════════ */
+      if (car.dashT > 0) {
+        var ddir = car.dashDir || 1;
+        car.vx += Params.dashAccel * ddir * h;
+        if (Math.abs(car.vx) > Params.dashMaxSpeed) {
+          car.vx = Params.dashMaxSpeed * Math.sign(car.vx);
+        }
+      }
+
       // 轮子
       /* ⚠ 轮子**自己不再产生驱动力**（第 63 轮）。
        *
@@ -1419,8 +1599,8 @@
         var w = car.wheels[i];
         var wp = worldOf(car, w.lx, w.ly);
         var r = w.def.radius;
-        var groundY = ter.surfaceY(wp.x);
-        var pen = groundY - (wp.y - r);
+        var gY = groundY(state, wp.x);
+        var pen = gY - (wp.y - r);
         if (pen > 0) {
           groundWheels++;
           var slope = ter.surfaceSlope(wp.x);
@@ -1508,7 +1688,7 @@
         for (var wi = 0; wi < car.wheels.length; wi++) {
           var ww = car.wheels[wi];
           var wwp = worldOf(car, ww.lx, ww.ly);
-          var wwy = ter.surfaceY(wwp.x);
+          var wwy = groundY(state, wwp.x);
           // 只算"真的贴着地"的轮子（轮底与地表的缝隙 < 5 cm）
           var wBottom = wwp.y - ww.def.radius;
           if (wwy - wBottom > -0.05) {
@@ -1541,7 +1721,7 @@
                      [hb.minX + ins, hb.maxY - ins], [hb.maxX - ins, hb.maxY - ins]];
       for (var k = 0; k < corners.length; k++) {
         var cp = worldOf(car, corners[k][0], corners[k][1]);
-        var gy = ter.surfaceY(cp.x);
+        var gy = groundY(state, cp.x);
         var pn = gy - cp.y;
         if (pn > 0) {
           var sl = ter.surfaceSlope(cp.x);
@@ -1581,7 +1761,7 @@
       // ---- 整车地面摩擦（真正决定"滑不滑"的量）----
       // 几何判断是否贴地：车体最低点离地表 ≤ 0.3 m 就算在地上
       var hullBottom = worldOf(car, 0, car.hull.minY).y;
-      var groundGap = hullBottom - ter.surfaceY(car.x);
+      var groundGap = hullBottom - groundY(state, car.x);
       var onGround = (groundWheels > 0) || (groundGap < 0.3);
       if (onGround) {
         var vh = Math.hypot(car.vx, car.vy);
@@ -1590,7 +1770,7 @@
           var gMul = mat === 'ice' ? 0.08 : (mat === 'stone' ? 0.75 : 1.0);
           var gf = Params.groundFriction * (Params.groundGrip || 1) * gMul;
           // 有推力输出/刹车时不要额外钉住（推力要能推得动车、刹车已有自己的减速度）
-          var powered = tools.length > 0 ||
+          var powered = tools.length > 0 || car.dashT > 0 ||
             car.parts.some(function (p) { return p.burn > 0; }) ||
             (car.groups || []).some(function (gr) { return gr.on; }) || car.braking;
           if (!powered) {
@@ -1633,7 +1813,7 @@
        * 正确语义：这条刹车是为了抹掉**平地上**的残余抖动（用户把 groundFriction 定为 0）。
        * 斜坡上重力是真实的驱动力，不该被它抵消 —— 坡度超过 rollResist 就不再施加。 */
       var spNow = Math.hypot(car.vx, car.vy);
-      var driving = tools.length > 0 ||
+      var driving = tools.length > 0 || car.dashT > 0 ||
         car.parts.some(function (p) { return p.burn > 0; }) ||
         (car.groups || []).some(function (g) { return g.on; });
       var onSlope = Math.abs(ter.surfaceSlope(car.x)) > Params.creepMinSlope;
@@ -1650,6 +1830,42 @@
 
     stepLoose(state, dt);
 
+    /* ══════════ 雷屏障碰撞（第 71 轮）══════════
+     *
+     * 屏障是一道竖直的墙：`{ col, h }` = 从那一列的地面往上 h 米。
+     * 规则只有一条：**冲刺状态（car.dashT > 0）穿得过，否则挡住**。
+     *
+     * 挡住的方式是"推回去 + 抹掉纵向速度"，而不是直接判失败 ——
+     * 玩家撞上墙的第一反应应该是"我被挡住了"，而不是"游戏结束了"。
+     * 推回到屏障前 0.02 米而不是正好压线：压在线上时下一帧的
+     * `>= ` 判定会抖动，车会在墙里外反复闪。
+     *
+     * ⚠ 这里用**车身包围盒的最右沿**（car.x + hull.maxX）判断，
+     * 不是车心 —— 车心离墙还有半米时车头就已经撞上了。
+     */
+    if (state.barriers && state.barriers.length && !(car.dashT > 0)) {
+      for (var bri = 0; bri < state.barriers.length; bri++) {
+        var br = state.barriers[bri];
+        var bTop = groundY(state, br.col + 0.5) + br.h;
+        if (car.y - car.hull.minY > bTop) continue;        // 从上面飞过去了
+        var nose = car.x + car.hull.maxX;
+        if (nose < br.col || car.x - car.hull.maxX > br.col + 1) continue;
+        /* 从左边撞：推回去。从右边撞（倒车撞回来）同理。 */
+        var fromLeft = car.x < br.col + 0.5;
+        if (fromLeft && nose >= br.col + 0.02) {
+          car.x = br.col - car.hull.maxX - 0.02;
+          if (car.vx > 0) car.vx = 0;
+          if (!state.barrierHitLogged) {
+            state.barrierHitLogged = true;
+            log(state, 'barrier_block col=' + br.col);
+          }
+        } else if (!fromLeft && car.x - car.hull.maxX <= br.col + 0.98) {
+          car.x = br.col + 1 + car.hull.maxX + 0.02;
+          if (car.vx < 0) car.vx = 0;
+        }
+      }
+    }
+
     /* 气球碰地 = 扎破（参考的行为：碰到墙/地自动破）。
      * 这条不是"惩罚"而是"节奏"：气球让车飞起来，但一旦落地就全泄了 ——
      * 所以玩家必须在飞的时候想清楚"现在还要不要这么多气球"。
@@ -1657,7 +1873,7 @@
     var balloons = car.parts.filter(function (p) { return p.def.liftMass && (p.n || 0) > 0; });
     for (var bi2 = 0; bi2 < balloons.length; bi2++) {
       var bp = worldOf(car, balloons[bi2].lx, balloons[bi2].ly);
-      if (bp.y - 0.3 <= ter.surfaceY(bp.x)) {
+      if (bp.y - 0.3 <= groundY(state, bp.x)) {
         /* 这里原来写的是 `state.car.balloonPopsBurst`（读车）却写 `state.balloonPopsBurst`
          * （写状态）—— 读的那一边永远是 undefined → `before` 恒为 0 → 碰地破 6 个
          * 也只记成 1 个。HUD 的「已扎 N 个」就是读这个字段，于是一路显示 1。
@@ -1676,7 +1892,7 @@
     for (var bi = 0; bi < state.boxes.length; bi++) {
       var b = state.boxes[bi];
       if (b.got) continue;
-      var bx = b.col + 0.5, by = ter.surfaceY(b.col + 0.5) + 0.5;
+      var bx = b.col + 0.5, by = groundY(state, b.col + 0.5) + 0.5;
       if (Math.abs(car.x - bx) < 1.7 && Math.abs(car.y - by) < 1.7) {   // 放宽：车体碰到就算
         b.got = true; state.boxesGot++;
         /* 吃到木箱的时刻 —— 渲染层用它让猪笑（`lastBoxAt > now - 1.0`）。
@@ -1712,7 +1928,7 @@
      * 这个差值对任何关卡都成立（车静止时车心离地恒定约 1.8 米），
      * 所以它是"车停在终点地上"，不是"车飞过终点上空"。 */
     if (car.x >= state.level.goal.col) {
-      var goalAlt = Math.abs(car.y - ter.surfaceY(car.x));
+      var goalAlt = Math.abs(car.y - groundY(state, car.x));
       if (goalAlt <= Params.goalMaxAlt) { resolve(state, 'win'); return; }
       if (!state.overGoalLogged) {
         state.overGoalLogged = true;
@@ -1949,12 +2165,22 @@
     ((spec && spec._pops) || []).forEach(function (a) {
       for (var i = 0; i < (a.n || 1); i++) acts.push({ t: a.t + i * 0.016, k: 'pop' });
     });
+    /* 第 71 轮：种子的触发时刻也走同一根时间轴。
+     * `opts.seeds` 是给**测试**用的（spec 里的 `_seeds` 给标准解用），
+     * 里面每条 {t, kind} —— kind 是 'anemo'/'geo'/'electro'。
+     * ⚠ 必须调 triggerSeed，不能直接写 state 字段：写字段会让测试绿而实机红
+     * （"一次性"「范围」这些规则都在 triggerSeed 里）。 */
+    var seedActs = (opts.seeds || (spec && spec._seeds) || []);
+    seedActs.forEach(function (a) {
+      acts.push({ t: a.t, k: 'seed', kind: a.kind });
+    });
     acts.sort(function (a, b) { return a.t - b.t; });
     var ai = 0;
     while (state.phase === 'run' && state.time < maxT) {
       while (ai < acts.length && acts[ai].t <= state.time) {
         if (acts[ai].k === 'drop') dropSandbag(state);
         else if (acts[ai].k === 'pop') popBalloon(state);
+        else if (acts[ai].k === 'seed') triggerSeed(state, acts[ai].kind);
         else if (acts[ai].k === 'press') pressInteract(state, 1);
         else releaseInteract(state, 1);
         ai++;
@@ -1981,7 +2207,9 @@
     interactiveCount: interactiveCount, buildVehicle: buildVehicle,
     /* 第 63 轮新机制：动力图与系挂校验。测试要能直接调它们，
      * 否则"连通/系挂"只能通过 buildVehicle 的间接读数验证。 */
-    powerGrid: powerGrid, tetherCheck: tetherCheck,
+    /* 第 71 轮新机制：种子三兄弟。`powerGrid` 已删 —— 动力容量系统不存在了，
+     * 留着这个导出只会让人以为还有"连通性"这回事。 */
+    triggerSeed: triggerSeed, groundY: groundY, tetherCheck: tetherCheck,
     createRun: createRun, step: step, stepLoose: stepLoose, damageCar: damageCar, setBrake: setBrake, pressInteract: pressInteract,
     pressInteract: pressInteract,
     releaseInteract: releaseInteract, cancelInteract: cancelInteract, challengePass: challengePass,

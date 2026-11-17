@@ -144,9 +144,23 @@ const dunderWritten = new Set();
 console.log('\n=== B. 渲染层读的 def.__X ===');
 console.log('读：' + ([...dunderRead].sort().join(', ') || '（无）'));
 console.log('写：' + ([...dunderWritten].sort().join(', ') || '（无）'));
-const orphan = [...dunderRead].filter(k => !dunderWritten.has(k)).sort();
+
+/* `__` 字段里也有**测试钩子**这一类：渲染层读它、但引擎正常运行时从不写它，
+ * 写的人是测试脚本（通过 `window.__rap.state` 直接赋值）。
+ * 它们和 TEST_ONLY 里那些 state 字段是同一类东西，必须有登记，
+ * 否则每加一个钩子都要么改这条断言、要么把钩子藏起来。
+ *
+ * ⚠ 但这一条**不能变成"凡是孤儿都放行"** —— 那样 B 组就永远绿了。
+ * 登记必须写明"谁写、为什么渲染层需要读"。 */
+const DUNDER_TEST_ONLY = {
+  lockCam: '测试钩子：钉住镜头做逐像素差分。写的人是 test_seed_fx.js（直接赋 state.__lockCam），' +
+           '渲染层读它来决定是否跳过镜头缓动与震屏。正常游玩时它永远是 undefined。'
+};
+const orphan = [...dunderRead].filter(k => !dunderWritten.has(k) && !DUNDER_TEST_ONLY[k]).sort();
+const allowed = [...dunderRead].filter(k => !dunderWritten.has(k) && DUNDER_TEST_ONLY[k]).sort();
 line(orphan.length === 0, '渲染层没有"读了个空"的 __ 字段',
-  orphan.length ? '孤儿：' + orphan.join(', ') : '共 ' + dunderRead.size + ' 个，全部有写入方');
+  orphan.length ? '孤儿：' + orphan.join(', ') : '共 ' + dunderRead.size + ' 个，全部有写入方' +
+  (allowed.length ? '（测试钩子 ' + allowed.join(', ') + '）' : ''));
 
 /* ---------- C. 引擎事件标签 ---------- */
 const tags = new Set();

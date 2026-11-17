@@ -44,13 +44,21 @@ const claims = [
   { id: 'iron_wheel', re: /抓地\s*(\d+(?:\.\d+)?)/, actual: () => R.PARTS.iron_wheel.iceGrip, label: '铁轮冰面抓地' },
   { id: 'wood_frame', re: /耐久\s*(\d+)\s*段/, actual: () => R.PARTS.wood_frame.maxHp, label: '木框耐久段数' },
   { id: 'iron_frame', re: /耐久\s*(\d+)\s*段/, actual: () => R.PARTS.iron_frame.maxHp, label: '岩框耐久段数' },
-  { id: 'anemo_core', re: /\+(\d+)\s*动力容量/, actual: () => R.PARTS.anemo_core.powerSrc, label: '风种容量' },
-  { id: 'geo_core', re: /\+(\d+)\s*动力容量/, actual: () => R.PARTS.geo_core.powerSrc, label: '岩种容量' },
+  /* ⚠ 第 71 轮：动力容量系统删掉了，原来这两条（风种 +2 容量 / 岩种 +5 容量）
+   * 在引擎里已经没有对应字段 —— 保留它们的话会永远报"文案=没写 引擎=undefined"。
+   * 换成新机制下真正存在的数字：风场半径、岩柱宽高、冲刺时长、吃风系数。 */
+  { id: 'anemo_core', re: /半径\s*(\d+(?:\.\d+)?)\s*米/, actual: () => R.Params.windRadius, label: '风场半径' },
+  /* 寿命的正则要按真实文案写成"风场 3 秒"这个语序，
+   * 第一版写的是 `(\d+) 秒风场` —— 顺序反了，永远匹配不到。 */
+  { id: 'anemo_core', re: /风场\s*(\d+(?:\.\d+)?)\s*秒/, actual: () => R.Params.windTtl, label: '风场寿命' },
+  { id: 'geo_core', re: /(\d+(?:\.\d+)?)\s*米宽/, actual: () => R.Params.pillarW, label: '岩柱宽度' },
+  { id: 'geo_core', re: /(\d+(?:\.\d+)?)\s*米高/, actual: () => R.Params.pillarH, label: '岩柱高度' },
   { id: 'geo_core', re: /重\s*(\d+(?:\.\d+)?)\s*kg/, actual: () => R.PARTS.geo_core.mass, label: '岩种重量' },
+  { id: 'electro_core', re: /(\d+(?:\.\d+)?)\s*秒冲刺/, actual: () => R.Params.dashTime, label: '雷种冲刺时长' },
+  { id: 'umbrella', re: /系数\s*(\d+(?:\.\d+)?)/, actual: () => R.PARTS.umbrella.catchesWind, label: '伞吃风系数' },
+  { id: 'wind_wing', re: /（(\d+(?:\.\d+)?)）/, actual: () => R.PARTS.wind_wing.catchesWind, label: '风之翼吃风系数' },
   { id: 'propeller', re: /推力\s*(\d+(?:\.\d+)?)\s*m\/s²/, actual: () => R.PARTS.propeller.thrust, label: '风车桨推力' },
-  { id: 'propeller', re: /占\s*(\d+)\s*点动力容量/, actual: () => R.PARTS.propeller.drawPower, label: '风车桨耗容量' },
   { id: 'jet', re: /推力\s*(\d+(?:\.\d+)?)\s*m\/s²/, actual: () => R.PARTS.jet.thrust, label: '喷气口推力' },
-  { id: 'jet', re: /占\s*(\d+)\s*点容量/, actual: () => R.PARTS.jet.drawPower, label: '喷气口耗容量' },
   { id: 'firework', re: /推\s*(\d+(?:\.\d+)?)\s*秒/, actual: () => R.PARTS.firework.burnTime, label: '霄灯燃烧时长' },
   { id: 'firework', re: /（(\d+(?:\.\d+)?)\s*m\/s²）/, actual: () => R.PARTS.firework.thrust, label: '霄灯推力' }
 ];
@@ -71,8 +79,11 @@ chk('descriptions 里的数字全部和引擎一致（文案不撒谎）', claim
 
 console.log('\n=== C 功能性标志必须真的被读过 ===');
 const src = fs.readFileSync(path.join(__dirname, '..', 'prototype', 'game.js'), 'utf8');
-/* 只检查**新增**的几个功能性字段。老的（structure/wheel/mass）早就有读的人。 */
-const flags = ['powerSrc', 'tool', 'drawPower', 'oneShot', 'burnTime', 'tether', 'thrust'];
+/* 只检查**新增**的几个功能性字段。老的（structure/wheel/mass）早就有读的人。
+ * ⚠ 第 71 轮：`powerSrc` / `drawPower` 随动力容量系统一起删了，
+ * 这两个名字不再属于零件表 —— 留在清单里会永远报"没人读"。
+ * 换成新机制的字段：seedKind / catchesWind。 */
+const flags = ['seedKind', 'catchesWind', 'tool', 'oneShot', 'burnTime', 'tether', 'thrust'];
 const orphan = [];
 flags.forEach(f => {
   /* 表里写了几次不重要，重要的是**引擎代码里读过它**。
@@ -83,13 +94,19 @@ flags.forEach(f => {
 chk('每个新功能字段都至少有一处读它（没有"写了没人读"的假规格）',
   orphan.length === 0, orphan.length ? '没人读：' + orphan.join(',') : '全部有读');
 
-/* 反向检查：所有零件至少要被某条分支画到（否则玩家看到空气）*/
-console.log('\n=== D 每件都能被画出来（渲染层有分支）===');
+/* 反向检查：所有零件至少要被某条分支画到（否则玩家看到空气）
+ * ⚠ 这张表必须**跟着零件表一起改**。第 71 轮新增了电种/伞/风之翼、
+ * 删掉了 powerSrc 分支，表里不同步就会同时报"画不出"和"无映射"。
+ * ⚠ 也别忘了 `html` 这个变量：我上一次改写时把读文件那一行一起删掉了，
+ * 于是脚本在 `re.test(html)` 上抛 ReferenceError，verify 报"无法解析"——
+ * 断言一条都没跑到，看起来像"这个审计挂了"。 */
 const html = fs.readFileSync(path.join(__dirname, '..', 'prototype', 'index.html'), 'utf8');
 const drawable = {
   wood_frame: /def\.structure/, iron_frame: /def\.structure/,
   wood_wheel: /def\.wheel/, iron_wheel: /def\.wheel/,
-  anemo_core: /def\.powerSrc/, geo_core: /def\.powerSrc/,
+  anemo_core: /def\.seedKind/, geo_core: /def\.seedKind/,
+  electro_core: /def\.seedKind/,
+  umbrella: /def\.catchesWind/, wind_wing: /def\.catchesWind/,
   propeller: /def\.tool/, jet: /def\.tool/,
   balloon: /def\.liftMass/, sandbag: /def\.dropOne/,
   firework: /def\.oneShot/, pump: /def\.interactive/, pig: /def\.pig/

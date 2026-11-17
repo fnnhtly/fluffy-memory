@@ -86,6 +86,8 @@ const SCRIPTS = [
   'test_wind_fx.js',
   'test_weld.js',
   'test_parts_connected.js',
+  'test_seeds.js',
+  'test_seed_fx.js',
   'test_tray_scope.js'
 ];
 

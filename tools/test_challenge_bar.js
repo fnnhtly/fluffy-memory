@@ -58,9 +58,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     test(1, {pumpPress:0, car:{energy:100}}, '1-2 一次没按');
     test(1, {pumpPress:1, car:{energy:100}}, '1-2 按了一次');
     test(1, {pumpPress:2, car:{energy:100}}, '1-2 按了两次');
-    // 1-3 的第三星从「能量剩 ≥30」改成「动力余量 ≥1」—— 容量不会耗尽
-    test(2, {car:{powerSupply:2, powerDemand:1}}, '1-3 余量 1');
-    test(2, {car:{powerSupply:2, powerDemand:2}}, '1-3 余量 0');
+    /* ⚠ 第 71 轮：1-3 的第三星从「动力余量 >=1」改成「一颗种子都不用」
+     * （容量系统被删掉了，见 docs/parts-redesign.md 第 8 节）。
+     * 这两条 fixture 必须跟着改 —— 旧写法塞 car.powerSupply/powerDemand，
+     * 而新分支读的是 state.seedUse，于是两个用例**都**判"满足"，
+     * "余量 0 不满足"那条就红了。
+     * 新用例的两侧：一颗种子都没用 / 用了两颗。
+     * （这段在模板字符串里，注释中不能出现反引号。） */
+    test(2, {seedUse:{anemo:0,geo:0,electro:0}, car:{}},
+      '1-3 一颗种子都没用');
+    test(2, {seedUse:{anemo:1,geo:1,electro:0}, car:{}},
+      '1-3 用了两颗种子');
     test(3, {maxAngle:0.3, car:{energy:100}}, '1-4 倾角 17°');
     test(3, {maxAngle:1.4, car:{energy:100}}, '1-4 倾角 80°');
     // 1-5 从「不用马达」改成「不用驱动件」：noTool 读车上有没有 tool
@@ -77,8 +85,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   A.chk('1-2 没按打气筒时条件满足（≤1 次）', byTag('1-2 一次没按').pass === true);
   A.chk('1-2 按了一次仍满足（这颗星叫「只按一下」）', byTag('1-2 按了一次').pass === true);
   A.chk('1-2 按了两次后条件不满足', byTag('1-2 按了两次').pass === false);
-  A.chk('1-3 动力余量 1 满足（≥1）', byTag('1-3 余量 1').pass === true);
-  A.chk('1-3 动力余量 0 不满足', byTag('1-3 余量 0').pass === false);
+  A.chk('1-3 一颗种子都没用 → 满足', byTag('1-3 一颗种子都没用').pass === true);
+  A.chk('1-3 用了两颗种子 → 不满足', byTag('1-3 用了两颗种子').pass === false);
   A.chk('1-4 倾角 17° 满足', byTag('1-4 倾角 17').pass === true);
   A.chk('1-4 倾角 80° 不满足（翻车了）', byTag('1-4 倾角 80').pass === false);
   A.chk('1-5 没装驱动件满足', byTag('1-5 没有驱动件').pass === true);
