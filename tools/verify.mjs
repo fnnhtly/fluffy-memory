@@ -89,6 +89,7 @@ const SCRIPTS = [
   'test_seeds.js',
   'test_seed_levels.js',
   'test_seed_fx.js',
+  'test_seed_button.js',
   'test_tray_scope.js'
 ];
 

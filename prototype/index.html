@@ -874,7 +874,7 @@
             '打气筒要装在猪的后面（朝右喷），喷的是空气，不用电池。',
             '成品：木框里放打气筒，朝右；跑起来等车慢下来时按 1 喷一下。'],
     '1-3': ['这一关的第三星是"一颗种子都不用"：种子一次性的，用了就没了。',
-            '风种塞进框里（一次性），按 F 键会在脚下放出一片半径 6 米的风场。',
+            '风种塞进框里（一次性），点右下角的种子钮（或按 F）会在脚下放出一片半径 6 米的风场。',
             '风场只托得动**带伞或风之翼**的车 —— 没带就是白放。',
             '成品：风车桨朝右推着走，想拿三星就一颗种子都别用。'],
     '1-4': ['这一关不能翻车，而且要爬冰坡 —— 冰面上木轮几乎打滑。',
@@ -883,15 +883,15 @@
     '1-5': ['中段有一道**雷屏障**：普通车撞上去就被顶住，冲不过去。',
             '雷种（一次性）能让车冲刺 4 秒，冲刺状态下穿得过屏障。',
             '仙术机关按住蓄力、松开喷冲量，不算驱动件 —— 第三星还保得住。',
-            '成品：仙术机关朝右 + 雷种塞进空框，跑起来按 F 穿屏障。'],
+            '成品：仙术机关朝右 + 雷种塞进空框，跑到屏障前点右下角种子钮（或按 F）穿过去。'],
     '1-7': ['终点在一道 2 米高的硬台阶上，轮子爬不上去。',
             '岩种（一次性）会在**车脚下**升起一根 3 米高的柱子，把车顶上去。',
             '柱子要等车**开到台阶脚下**再按 —— 早了它会变成一道挡在面前的墙。',
-            '成品：风车桨朝右推着走，车贴到台阶跟前时按 F。'],
+            '成品：风车桨朝右推着走，车贴到台阶跟前时点右下角种子钮（或按 F）。'],
     '1-8': ['终点在一道 2 米高的台子上，但这一关没有岩种 —— 只有风种。',
             '风种（一次性）在脚下放出一片半径 6 米、持续 3 秒的风场。',
             '风场**只托得动吃风件**：伞托得轻，风之翼托得高。没带就白放。',
-            '成品：风车桨朝右，车开到台子跟前时按 F，风把它举过台沿。'],
+            '成品：风车桨朝右，车开到坡脚时点种子钮（或按 F），风把它举上去。'],
     '1-6': ['这一关要抬头 —— 热气球给浮力，压舱石给配重，位置很关键。',
             '气球必须挂在框的**上方**、压舱石挂在框的**下方**，否则一个飘走一个落地。',
             '成品：3 个气球 + 2 个压舱石；起飞后点车身扔石头，飞得不够就扎气球。']
@@ -947,6 +947,30 @@
       back: { x: rx, y: P.y + 156, w: rw, h: 44 }
     };
   }
+  /* 车上有几颗**还没用过**的种子（第 74 轮）。
+   *
+   * 两个来源必须是同一份逻辑：`btnRect('seed')` 用它决定"有没有按钮"，
+   * 绘制用它决定"画成亮的还是灰的"。各写一遍的话，
+   * 会出现"按钮画成灰的但还点得动"或者反过来。
+   *
+   * 返回 { total, left, next } —— next 是下一颗会用到的种子种类（'anemo' 等），
+   * 没有可用的时是 null。 */
+  function seedInfoOf(run) {
+    const car = (run || {}).car;
+    if (!car) return { total: 0, left: 0, next: null };
+    const kinds = (car.parts || [])
+      .filter(p => p.def && p.def.seedKind)
+      .map(p => p.def.seedKind);
+    const use = (run && run.seedUse) || { anemo: 0, geo: 0, electro: 0 };
+    /* 每种种子都是**一次性**的：用掉的那种就不再算"还剩"。 */
+    const seen = {};
+    const list = [];
+    kinds.forEach(k => { if (!seen[k]) { seen[k] = 1; list.push(k); } });
+    const left = list.filter(k => !(use[k] > 0));
+    return { total: list.length, left: left.length, next: left[0] || null };
+  }
+  function seedCountOf(run) { return seedInfoOf(run).left; }
+
   function btnRect(name) {
     if (state.phase === 'build') {
       if (name === 'launch') return { x: DW / 2 + 150, y: 258, w: 76, h: 76 };
@@ -965,6 +989,23 @@
       if (name === 'restartRun') return { x: 24, y: 138, w: 46, h: 46 };
       if (name === 'help') return { x: DW - 70, y: 84, w: 46, h: 46 };
       if (name === 'interact') return { x: 0, y: DH - 150, w: 92, h: 92 };
+      /* 种子按钮（第 74 轮）。
+       *
+       * ⚠ 这一块原来什么都不画 —— 刹车钮删掉之后就空着。
+       * 而三颗种子的**唯一**触发方式是 F 键，全项目只有 `if (k === 'f')` 一处，
+       * 没有任何触屏入口。也就是说 1-5 / 1-7 / 1-8 在手机上根本过不去，
+       * 而那三关的解法**只有**种子。
+       *
+       * 位置选在右下：那里是刹车钮留下的空位，离交互键（居中）和
+       * 暂停/重开（左上）、帮助（右上）都不重叠。92×92 和交互键同尺寸，
+       * 拇指够得着。
+       *
+       * 热区条件：行驶期 **且车上有种子**。车上没有种子时返回 null ——
+       * 幽灵热区是这个项目反复踩的坑（`test_ghost_buttons` 把守那一类）。 */
+      if (name === 'seed') {
+        const has = seedCountOf(state.run) > 0;
+        return has ? { x: DW - 130, y: DH - 150, w: 92, h: 92 } : null;
+      }
       // 刹车钮已删（用户要求）。`brake` 这个名字不再返回矩形 ——
       // 任何遗留的 `btnRect('brake')` 都会拿到 null，而不是一个点得着的幽灵热区。
       // 注意：行驶期"重开"只在左上角（绿圆钮 restartRun）。
@@ -1594,6 +1635,23 @@
     }
 
     if (state.phase === 'run' && state.run) {
+      /* 种子按钮（第 74 轮）：**必须在交互键和点车身之前判**。
+       *
+       * 顺序有讲究：它和交互键那一排不重叠（A5 断言把守），
+       * 但和"点车身"那片区域是重叠的 —— 车身会滚动，鼠标点到按钮上时
+       * 底下可能正好有个气球。先判按钮，玩家的意图（点按钮）优先。 */
+      const sbR = btnRect('seed');
+      if (sbR && hit(sbR, p.x, p.y)) {
+        const info = seedInfoOf(state.run);
+        if (info.next) {
+          /* 走和 F 键**完全相同**的入口 `RAP.triggerSeed`，
+           * 不是另写一份逻辑 —— 一次性/范围性/音效全在那一个函数里。 */
+          if (RAP.triggerSeed(state.run, info.next)) SFX.pop();
+        } else {
+          SFX.deny();
+        }
+        return;
+      }
       const gs = state.run.car.groups || [];
       const nm = Math.min(3, gs.length);
       const xs = DW / 2 - (nm * 104) / 2;
@@ -4686,6 +4744,54 @@ const BIOMES = {
           wy += 28;
         });
       }
+      /* ══════════ 种子按钮（第 74 轮）══════════
+       *
+       * 为什么非做不可：三颗种子的唯一触发方式是 F 键，而
+       * 1-5 / 1-7 / 1-8 的**解法只有种子**。项目里从来没有
+       * `touchstart` / `pointerdown` —— 也就是说这三关在手机上过不去，
+       * 而用户第 64 轮明确要求"长按屏幕出摇杆（电脑，手机）"。
+       *
+       * 形状沿用交互键那一套（92×92 圆角方块），位置在右下 ——
+       * 那是刹车钮删掉之后空出来的地方，离交互键和左上/右上都不重叠。
+       *
+       * 三个状态必须画得出来：
+       *   · 还有种子 → 亮色 + 种子图标 + "F" 键帽（键盘玩家也认得出）
+       *   · 已用光   → 灰掉 + "已用"，还能看见但点不动
+       *   · 没种子   → **不画**（连按钮都没有；btnRect 也返回 null）
+       */
+      {
+        const sb = btnRect('seed');
+        if (sb) {
+          const info = seedInfoOf(state.run);
+          const usable = !!info.next;
+          ctx.fillStyle = 'rgba(10,18,24,.55)';
+          roundRect(sb.x - 4, sb.y - 4, sb.w + 8, sb.h + 8, 18); ctx.fill();
+          ctx.fillStyle = usable ? 'rgba(40,74,88,.96)' : 'rgba(38,46,54,.92)';
+          roundRect(sb.x, sb.y, sb.w, sb.h, 15); ctx.fill();
+          ctx.strokeStyle = usable ? 'rgba(206,244,255,.9)' : 'rgba(140,155,168,.45)';
+          ctx.lineWidth = 2; ctx.stroke();
+          /* 图标：和零件表里同一个形状（风种菱形 / 岩种六边形 / 雷种四角星），
+           * 84% 缩略版 —— 玩家在托盘里见过的那个形状。 */
+          if (usable) {
+            drawPartShape(info.next + '_core', sb.x + sb.w / 2, sb.y + sb.h / 2 - 6,
+              46, 0, 3);
+          }
+          text(usable ? '种子' : '已用', sb.x + sb.w / 2, sb.y + sb.h - 12, 13,
+            usable ? '#e8f7ff' : 'rgba(160,175,188,.85)', 'center', true);
+          /* 键帽：键盘玩家看到 F 就知道有快捷键；触屏玩家忽略它也无妨。 */
+          if (usable) {
+            ctx.fillStyle = 'rgba(10,18,24,.88)';
+            roundRect(sb.x + 6, sb.y + 6, 20, 20, 6); ctx.fill();
+            ctx.strokeStyle = 'rgba(206,244,255,.55)'; ctx.lineWidth = 1; ctx.stroke();
+            text('F', sb.x + 16, sb.y + 21, 12, '#cef4ff', 'center', true);
+          }
+          /* 还剩几颗：1 颗时不画（画面已经说清楚了），2 颗起才有意义。 */
+          if (info.left > 1) {
+            text('×' + info.left, sb.x + sb.w - 10, sb.y + sb.h - 12, 12,
+              '#cef4ff', 'right', true);
+          }
+        }
+      }
     }
 
     // ---- 出发横幅：读秒 2 秒，告诉玩家"这是第几关、这关要干什么" ----
@@ -5131,7 +5237,7 @@ const BIOMES = {
       (((st.seedUse || {}).anemo || 0) + ((st.seedUse || {}).geo || 0) +
        ((st.seedUse || {}).electro || 0));
     if (seedsLeft > 0) {
-      tips.push('车上还有 ' + seedsLeft + ' 颗种子没用（按 F 键触发）');
+      tips.push('车上还有 ' + seedsLeft + ' 颗种子没用（点右下角种子钮，或按 F）');
     }
     if (bags > 0) tips.push('还剩 ' + bags + ' 个压舱石没扔（点车身）');
     if (bal > 0) tips.push('还剩 ' + bal + ' 个气球没扎（点车身）');

@@ -44,7 +44,7 @@
 | 3-12 数据校验 | `docs/check-312.md` | ✅ 全绿（不进切片，备查） |
 | 测试用例 | `tests/cases.md` + `tests/*.json`（15 个） | ✅ schema 自检通过 |
 | 关卡数据 | `levels/01.json`…`06.json`（出口 `tools/build_levels_js.js`） | ✅ schema 校验通过（出口会拒绝任何脏数据） |
-| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**86 项自检全绿**（63 个脚本 + 23 项静态/度量尺自检） |
+| HTML 效果展示 | `prototype/index.html` + `game.js` + `levels.js` + `README.md` | ✅ 可玩；**87 项自检全绿**（64 个脚本 + 23 项静态/度量尺自检） |
 | 数值校核 | `prototype/check_html_logic.js`、`tools/check_inline_js.js` | ✅ 40/40 |
 | 木框耐久可见性 | `tools/test_frame_damage.js` + `tools/probe_damage_tiers.js` | ✅ 15/15（三档像素读数：绿/金/红；掉耐久有音效与轻抖；碎后整块隐去） |
 | 撞击演出去重 | `tools/test_impact_dedupe.js` + `tools/probe_impact_spam.js` | ✅ 8/8（旧版一次硬着陆写 34 条 `impact` → 慢放/白闪反复重置；现在 22 个接触收敛成 1 条） |
