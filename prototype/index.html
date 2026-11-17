@@ -2203,9 +2203,24 @@ const BIOMES = {
   canyon: { rock: [186, 122, 78], grass: '#d8a24f', grass2: '#a8763a', grass3: '#f0cc84',
     edge: '#4a2a16', skyTop: '#E8A96B', skyMid: '#F4D8A8', skyLow: '#FBF0D2',
     hill: '#B07A5A', jungle: ['#7d5a3a', '#63452c', '#4a3320'], cave: false, dim: 0.26 },
-  cave: { rock: [58, 74, 84], grass: '#4e7a52', grass2: '#33543a', grass3: '#6f9e6a',
-    edge: '#08110f', skyTop: '#0d1a22', skyMid: '#132530', skyLow: '#1b3340',
-    hill: '#0b1822', jungle: ['#15302a', '#102420', '#0b1a17'], cave: true, dim: 0.08 },
+  /* ⚠ 第 85 轮：`cave` 整体提亮了。
+   *
+   * 原来这一套从 rock 到 jungle **全是 0.05~0.20 的亮度**：
+   *   rock [58,74,84]  skyTop #0d1a22  skyMid #132530  skyLow #1b3340
+   *   hill #0b1822     jungle [#15302a, #102420, #0b1a17]
+   * 实测 1-3 的画面里 **68.1% 的像素亮度 < 40**（1-1 只有 3.6%）。
+   *
+   * "洞穴本来就该暗"是设计意图，但"暗到没有层次"是缺陷 ——
+   * 玩家看不出地面在哪、哪里是墙。判据（tools/test_legibility.js）
+   * 定的是全黑像素 < 40%，而这一套需要把**所有层**一起抬：
+   * 只提亮 rock 会让岩体和天空糊成一片，那反而更糟。
+   *
+   * 提亮原则：保留冷蓝色相（和其余六套区分），把亮度整体推到
+   * 0.15~0.35。缩略图主色 rock 从 [58,74,84] → [74,96,112]，
+   * 与其余七套的距离仍然远超阈值 18（tools/test_level_thumbs 把守）。 */
+  cave: { rock: [74, 96, 112], grass: '#5e8a62', grass2: '#3f6448', grass3: '#82b07c',
+    edge: '#101d1b', skyTop: '#16283a', skyMid: '#1e3648', skyLow: '#2a4a5c',
+    hill: '#16303f', jungle: ['#1e3e36', '#17322c', '#112722'], cave: true, dim: 0.08 },
   ice: { rock: [150, 178, 198], grass: '#cfeef8', grass2: '#9ed4e8', grass3: '#f0ffff',
     edge: '#4a7286', skyTop: '#9FCBE8', skyMid: '#D8EEF8', skyLow: '#F4FCFF',
     hill: '#8FB6CC', jungle: ['#7FA8BE', '#6B95AC', '#5A8199'], cave: false, dim: 0.26 },
