@@ -1,4 +1,13 @@
-/* 结论探针：两块并排木框之间那条"隔断"有多宽，以及它是不是"各自转动"。
+/* 「并排木框之间那道隔断有多宽」（第 69 轮起，第 78 轮改判据）。
+ *
+ * ⚠ **第 78 轮：用户要求删掉焊接机制，本文件的判据整体反转。**
+ * 原来守的是"并排两块共用一条边框（≤0.30 格）"，
+ * 现在守的是"两块各画各的，接缝是两层（≥0.35 格）"。
+ * 起因是用户看到斜坡上的车「每块框都缺一条边」——那正是焊接画的。
+ *
+ * 判据变了，但**它仍然是一条会失败的判据**：
+ * 如果有人把焊接加回来，接缝会掉回 0.22 格，下面的断言立刻红。
+ * 下面保留第 69 轮的原始说明，作为"为什么当初要做焊接"的记录。
  *
  * 量出来的事实（tools/probe_seam_width.js）：
  *   · 行驶期所有结构件的角度相对车身**恒为 0**（drawPartShape 收到的 dir 全是 0，
@@ -96,11 +105,12 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
   /* 判据：接缝处的木色带必须**只有一块边框厚**（≈0.22 格），
    * 而不是两块叠起来（≈0.45 格）。
    * 上界取 0.30：比一块略宽（有外描边），但远小于两块。 */
-  A.chk('A 并排木框之间的分割线只有**一块**边框厚（≤0.30 格）',
-    r1.inCells !== null && r1.inCells <= 0.30,
-    r1.inCells + ' 格（两块叠加是 0.45）');
-  A.chk('A2 分割线也确实存在（不是把接缝整个擦掉变成一堵空墙）',
-    r1.inCells !== null && r1.inCells >= 0.12, r1.inCells + ' 格');
+  /* 第 78 轮：判据反转 —— 焊接删了，接缝必然是两层。 */
+  A.chk('A 并排木框之间的分割线是**两层**边框（≥0.35 格）',
+    r1.inCells !== null && r1.inCells >= 0.35,
+    r1.inCells + ' 格（单块 0.22，两层 0.44）');
+  A.chk('A2 分割线不会厚到离谱（≤0.60 格，两块边框的上限）',
+    r1.inCells !== null && r1.inCells <= 0.60, r1.inCells + ' 格');
 
   /* 单块木框（旁边什么都没有）仍然要画完整四边 */
   await ev(`(()=>{const S=window.__rap.state;
@@ -174,9 +184,9 @@ const PAGE = 'file:///' + path.join(ROOT, 'prototype', 'index.html').replace(/\\
   })()`));
   A.log('三块竖着叠的木框：竖直扫描的木色片段 ' + JSON.stringify(vert.runs) +
         '；中间那条 ' + vert.midW + 'px = ' + vert.inCells + ' 格');
-  A.chk('C 上下相邻的木框之间也只有**一块**边框厚（≤0.30 格）',
-    vert.inCells !== null && vert.inCells <= 0.30,
-    vert.inCells + ' 格（两块叠加是 0.45）');
+  A.chk('C 上下相邻的木框之间也是**两层**边框（≥0.35 格）',
+    vert.inCells !== null && vert.inCells >= 0.35,
+    vert.inCells + ' 格（单块 0.22，两层 0.44）');
   A.chk('C2 上下接缝确实存在（不是整个擦掉）',
     vert.inCells !== null && vert.inCells >= 0.12, vert.inCells + ' 格');
 

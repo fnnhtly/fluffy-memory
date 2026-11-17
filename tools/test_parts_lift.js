@@ -277,7 +277,14 @@ console.log('\n=== 终点高度门槛 ===');
   R.step(st, 1 / 60);
   ok(st.phase === 'run', '在终点上空 8 米不算到达', `${st.result || 'running'} ${st.failReason || ''}`);
   // 再放回地面
-  st.car.x = 20; st.car.y = st.terrain.surfaceY(20) + 1.5;
+  /* ⚠ 放在终点线**之后**一格，不是正好压在线上。
+   *
+   * 原来写 `st.car.x = 20`（goal.col = 20），然后只 step 一帧。
+   * 第 77 轮改了接触模型之后，车在那一帧里会被推回 0.0002 米，
+   * 于是 `car.x >= goal.col` 差一点点不成立 —— 一条判据因为**浮点级别的
+   * 位移**变红。判据本身没错（"落回地面才算到"是对的），是夹具压线压得太死：
+   * 任何真实玩法里车都是**越过**终点线，不会恰好停在 `x == goal.col`。 */
+  st.car.x = 21; st.car.y = st.terrain.surfaceY(21) + 1.5;
   R.step(st, 1 / 60);
   ok(st.result === 'win', '落回地面才算到达', `${st.result}/${st.failReason}`);
 }

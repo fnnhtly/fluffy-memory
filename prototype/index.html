@@ -3042,80 +3042,7 @@ const BIOMES = {
     ctx.restore();
   }
 
-  /* ══════════ 结构件的"焊接"边（第 69 轮，用户要求）══════════
-   *
-   * 用户原话：「我想让车上的零件都连起来，比如两个木框的两边粘连起来，
-   * 不会在下坡时各自转动」。
-   *
-   * 先量清楚（tools/probe_part_rotation.js / probe_seam_width.js）：
-   *   · 行驶期三块木框相对车身的角度**恒为 0**，car.a 从 -17° 转到 -25° 时
-   *     它们一起转 —— 车**本来就是刚体**，没有"各自转动"这回事；
-   *   · 但两块木框接缝处的木色横带是 **0.451 格宽**，而单块边框只有 0.225 格。
-   *     正好是 A 的右边框 + B 的左边框**并排成一道墙**。
-   *
-   * 眼睛看到那道双倍厚的隔断，就把它读成"两个独立的箱子贴在一起"；
-   * 车一倾斜，这条粗墙跟着转，于是更像"各自在转"。
-   *
-   * 修法：相邻的两个结构件**共用一面墙**——只由其中一方画，另一方跳过。
-   * 谁画按 (行, 列) 字典序决定：小的那个画。这样
-   *   · 一条共享边恰好被画一次（不会两条、也不会零条）；
-   *   · 结果与遍历顺序无关（不能靠"先画谁"来决定，那是隐式状态）。
-   *
-   * 返回本地坐标系下的四条边：true = 这一侧要画墙。null = 整块四边都画。
-   *
-   * 为什么按"本地"返回：drawPartShape 里的 ctx 已经按 dir 旋转过了，
-   * 而相邻关系是**网格**里的事 —— 两者差一个 −dir·90° 的旋转。
-   * 这个换算只写在这里一份，别在绘制里再算一遍。
-   */
-  const WELD_GRID = [[0, 1], [1, 0], [0, -1], [-1, 0]];   // 右 / 下 / 左 / 上（行增大向下）
-  const WELD_NAMES = ['right', 'down', 'left', 'up'];
-  function weldedEdges(hasStruct, r, c, dir) {
-    if (r === undefined || r === null || c === undefined || c === null) return null;
-    if (!hasStruct(r, c)) return null;
-    const d = ((dir || 0) % 4 + 4) % 4;
-    const out = { right: true, down: true, left: true, up: true };
-    for (let g = 0; g < 4; g++) {
-      const nr = r + WELD_GRID[g][0], nc = c + WELD_GRID[g][1];
-      if (!hasStruct(nr, nc)) continue;
-      /* 谁负责这面共享墙：(行,列) 字典序小的那个。
-       * 用坐标而不是"遍历顺序"来决定，是因为遍历顺序会随 build.order 变，
-       * 同一辆车在建造期和行驶期可能画出不同的缝。 */
-      const mine = (r < nr) || (r === nr && c < nc);
-      if (!mine) continue;
-      const local = ((g - d) % 4 + 4) % 4;
-      out[WELD_NAMES[local]] = true;
-    }
-    /* 邻居存在但我不是"负责方"→ 那一条不画。上面只把要画的设成 true，
-     * 所以这里要把"邻居存在且不由我画"的边显式关掉。 */
-    for (let g = 0; g < 4; g++) {
-      const nr = r + WELD_GRID[g][0], nc = c + WELD_GRID[g][1];
-      if (!hasStruct(nr, nc)) continue;
-      const mine = (r < nr) || (r === nr && c < nc);
-      if (mine) continue;
-      const local = ((g - d) % 4 + 4) % 4;
-      out[WELD_NAMES[local]] = false;
-    }
-    return out;
-  }
-  /* 建造期的 hasStruct：从 state.build.cells 现查 */
-  function buildHasStruct(r, c) {
-    const cell = state.build.cells[r + ',' + c];
-    if (!cell) return false;
-    const d = RAP.PARTS[cell.part];
-    return !!(d && d.structure);
-  }
-
-  /* 行驶期的 hasStruct：从**这一局的车**里查（不是 state.build ——
-   * 车出发后 build 可能已经被改过，或者框已经碎了）。
-   * 用零件的 (r, c) 当网格坐标，和建造期完全一致。 */
-  function runHasStruct(r, c) {
-    const car = state.run && state.run.car;
-    if (!car) return false;
-    return (car.parts || []).some(p =>
-      p.r === r && p.c === c && p.def && p.def.structure);
-  }
-
-  function drawPartShape(part, cx, cy, size, dir, hp, spin, pct, edges) {
+  function drawPartShape(part, cx, cy, size, dir, hp, spin, pct) {
     const def = RAP.PARTS[part];
     if (!def) {
       ctx.fillStyle = 'rgba(230,236,242,.9)';
@@ -3151,49 +3078,48 @@ const BIOMES = {
        * 因为两者只差耐久（3 vs 9）和质量（1.2 vs 2.4）——
        * 画得一样的话，那组取舍就只剩数值了。
        *
-       * 第 69 轮：四条边**可以分别关掉**（见 weldedEdges）。
+       * 第 78 轮：**四条边永远都画**（焊接机制已按用户要求删掉）。
        * 关掉的是"和邻居共享的那一面墙" —— 由邻居负责画。
        * 不这么做的话，两块并排木框的接缝是两条边框叠加，
        * 实测 0.451 格厚（单块只有 0.225），眼睛读成"两个箱子"。
        * 用户那句「不会在下坡时各自转动」，说的就是这个观感。 */
-      const E = edges || { right: true, down: true, left: true, up: true };
       const isStone = (def.hp || 0) >= 6;
       const bw = size * (isStone ? 0.26 : 0.22);
       /* 每条边画成一个矩形。共享边直接跳过 —— 不是画淡，是**不画**：
        * 画淡了还剩一条浅缝，那仍然在说"这里是两块"。 */
       if (isStone) {
         ctx.fillStyle = '#8b9288';
-        if (E.up) ctx.fillRect(-h, -h, size, bw);
-        if (E.left) ctx.fillRect(-h, -h, bw, size);
+        if (true) ctx.fillRect(-h, -h, size, bw);
+        if (true) ctx.fillRect(-h, -h, bw, size);
         ctx.fillStyle = '#6e7568';
-        if (E.down) ctx.fillRect(-h, h - bw, size, bw);
-        if (E.right) ctx.fillRect(h - bw, -h, bw, size);
+        if (true) ctx.fillRect(-h, h - bw, size, bw);
+        if (true) ctx.fillRect(h - bw, -h, bw, size);
         // 凿痕（只在外露的边上刻，缝里不刻）
         ctx.strokeStyle = 'rgba(40,46,40,.5)'; ctx.lineWidth = Math.max(1, size * 0.03);
         ctx.beginPath();
-        if (E.up || E.left) {
+        if (true) {
           ctx.moveTo(-h + bw * 0.4, -h + bw * 2.2); ctx.lineTo(-h + bw * 2.4, -h + bw * 0.5);
         }
-        if (E.down || E.right) {
+        if (true) {
           ctx.moveTo(h - bw * 2.2, h - bw * 0.5); ctx.lineTo(h - bw * 0.5, h - bw * 2.2);
         }
         ctx.stroke();
       } else {
         // 四条边框（木色，带一点渐变感：上浅下深）
         ctx.fillStyle = '#c99354';
-        if (E.up) ctx.fillRect(-h, -h, size, bw);
-        if (E.left) ctx.fillRect(-h, -h, bw, size);
+        if (true) ctx.fillRect(-h, -h, size, bw);
+        if (true) ctx.fillRect(-h, -h, bw, size);
         ctx.fillStyle = '#b57f42';
-        if (E.down) ctx.fillRect(-h, h - bw, size, bw);
-        if (E.right) ctx.fillRect(h - bw, -h, bw, size);
+        if (true) ctx.fillRect(-h, h - bw, size, bw);
+        if (true) ctx.fillRect(h - bw, -h, bw, size);
       }
       // 木纹（同理，只画在外露的上下边上）
       ctx.strokeStyle = 'rgba(110,72,34,.45)'; ctx.lineWidth = Math.max(1, size * 0.032);
       ctx.beginPath();
-      if (E.up) {
+      if (true) {
         ctx.moveTo(-h + bw, -h + bw * 0.45); ctx.lineTo(h - bw, -h + bw * 0.45);
       }
-      if (E.down) {
+      if (true) {
         ctx.moveTo(-h + bw, h - bw * 0.45); ctx.lineTo(h - bw, h - bw * 0.45);
       }
       ctx.stroke();
@@ -3201,28 +3127,26 @@ const BIOMES = {
        * 共享边不该有内壁阴影 —— 那一侧根本没有"壁"，是通的。 */
       ctx.strokeStyle = 'rgba(58,38,18,.55)'; ctx.lineWidth = Math.max(2, size * 0.085);
       ctx.beginPath();
-      if (E.up) { ctx.moveTo(-h + bw, -h + bw); ctx.lineTo(h - bw, -h + bw); }
-      if (E.down) { ctx.moveTo(-h + bw, h - bw); ctx.lineTo(h - bw, h - bw); }
-      if (E.left) { ctx.moveTo(-h + bw, -h + bw); ctx.lineTo(-h + bw, h - bw); }
-      if (E.right) { ctx.moveTo(h - bw, -h + bw); ctx.lineTo(h - bw, h - bw); }
+      if (true) { ctx.moveTo(-h + bw, -h + bw); ctx.lineTo(h - bw, -h + bw); }
+      if (true) { ctx.moveTo(-h + bw, h - bw); ctx.lineTo(h - bw, h - bw); }
+      if (true) { ctx.moveTo(-h + bw, -h + bw); ctx.lineTo(-h + bw, h - bw); }
+      if (true) { ctx.moveTo(h - bw, -h + bw); ctx.lineTo(h - bw, h - bw); }
       ctx.stroke();
       ctx.strokeStyle = 'rgba(28,16,6,.45)'; ctx.lineWidth = Math.max(1, size * 0.04);
       ctx.beginPath();
-      if (E.up) { ctx.moveTo(-h + bw * 1.25, -h + bw * 1.25); ctx.lineTo(h - bw * 1.25, -h + bw * 1.25); }
-      if (E.down) { ctx.moveTo(-h + bw * 1.25, h - bw * 1.25); ctx.lineTo(h - bw * 1.25, h - bw * 1.25); }
-      if (E.left) { ctx.moveTo(-h + bw * 1.25, -h + bw * 1.25); ctx.lineTo(-h + bw * 1.25, h - bw * 1.25); }
-      if (E.right) { ctx.moveTo(h - bw * 1.25, -h + bw * 1.25); ctx.lineTo(h - bw * 1.25, h - bw * 1.25); }
+      if (true) { ctx.moveTo(-h + bw * 1.25, -h + bw * 1.25); ctx.lineTo(h - bw * 1.25, -h + bw * 1.25); }
+      if (true) { ctx.moveTo(-h + bw * 1.25, h - bw * 1.25); ctx.lineTo(h - bw * 1.25, h - bw * 1.25); }
+      if (true) { ctx.moveTo(-h + bw * 1.25, -h + bw * 1.25); ctx.lineTo(-h + bw * 1.25, h - bw * 1.25); }
+      if (true) { ctx.moveTo(h - bw * 1.25, -h + bw * 1.25); ctx.lineTo(h - bw * 1.25, h - bw * 1.25); }
       ctx.stroke();
       /* 铁角包边：只在**真正的角**上画 —— 两条相邻的边都外露时才是角。
        * 焊在一起的地方不是角，是接缝。 */
       const cn = size * 0.1;
       ctx.fillStyle = '#6f7a86';
-      const corners = [
-        [-1, -1, E.up, E.left], [1, -1, E.up, E.right],
-        [-1, 1, E.down, E.left], [1, 1, E.down, E.right]
-      ];
-      for (const [sx, sy, e1, e2] of corners) {
-        if (!e1 || !e2) continue;
+      /* 第 78 轮：焊接删了，四条边永远都画 —— 四个角也就永远是角。 */
+      const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+      for (const [sx, sy] of corners) {
+        if (false) continue;
         ctx.beginPath();
         ctx.moveTo(sx * h, sy * h);
         ctx.lineTo(sx * (h - cn * 2.2), sy * h);
@@ -3231,16 +3155,16 @@ const BIOMES = {
       }      // 外描边：逐边，跳过共享边
       ctx.strokeStyle = '#7a4f22'; ctx.lineWidth = Math.max(1.5, size * 0.055);
       ctx.beginPath();
-      if (E.up) { ctx.moveTo(-h, -h); ctx.lineTo(h, -h); }
-      if (E.down) { ctx.moveTo(-h, h); ctx.lineTo(h, h); }
-      if (E.left) { ctx.moveTo(-h, -h); ctx.lineTo(-h, h); }
-      if (E.right) { ctx.moveTo(h, -h); ctx.lineTo(h, h); }
+      if (true) { ctx.moveTo(-h, -h); ctx.lineTo(h, -h); }
+      if (true) { ctx.moveTo(-h, h); ctx.lineTo(h, h); }
+      if (true) { ctx.moveTo(-h, -h); ctx.lineTo(-h, h); }
+      if (true) { ctx.moveTo(h, -h); ctx.lineTo(h, h); }
       ctx.stroke();
       /* 挂点铆钉：画在"外露的左上角 / 右下角"内侧。
        * 那两个位置原来是固定的两点；现在只在对应两边都外露时才画。 */
       const rivets = [
-        [-h + bw * 0.5, -h + bw * 0.5, E.up && E.left],
-        [h - bw * 0.5, h - bw * 0.5, E.down && E.right]
+        [-h + bw * 0.5, -h + bw * 0.5, true],
+        [h - bw * 0.5, h - bw * 0.5, true]
       ];
       ctx.fillStyle = '#3c4650';
       for (const [dx, dy, on] of rivets) {
@@ -3707,10 +3631,7 @@ const BIOMES = {
           else delete state.popped[k];
         }
         drawPartShape(cell.part, p.x, p.y, PX * sc, cell.dir,
-          cell.part === 'wood_frame' ? 3 : undefined, undefined, undefined,
-          /* 焊接边：和相邻的结构件共用一面墙（第 69 轮）。
-           * 建造期用 buildHasStruct（从 state.build.cells 现查）。 */
-          weldedEdges(buildHasStruct, +k.split(',')[0], +k.split(',')[1], cell.dir));
+          cell.part === 'wood_frame' ? 3 : undefined, undefined, undefined);
         /* 堆叠徽标：气球/沙袋同一格可以放 1–3 个，形状本身画不出"这里堆了几个"。
          * 用右下角的圆角数字，和托盘上的计数同一套视觉。 */
         const n = RAP.cellCount(cell);
@@ -5094,11 +5015,7 @@ const BIOMES = {
        * 也就是说一个删掉零件留下的悬空引用，能让整个游戏白屏。
        * 现在第 8 个参数固定传 undefined —— drawPartShape 对它的默认值是 1，
        * 而 `def.energy` 这一支已经没有任何零件走得到了。 */
-      drawPartShape(p.part, s.x, s.y, size, baseRot, p.hp, spin, undefined,
-        /* 行驶期同样要焊：用 p.r / p.c 查同车的结构件邻居。
-         * 这必须读**同一份** weldedEdges —— 建造期和行驶期画出不同的缝，
-         * 玩家会觉得"发射之后车变了"。 */
-        weldedEdges(runHasStruct, p.r, p.c, p.dir || 0));
+      drawPartShape(p.part, s.x, s.y, size, baseRot, p.hp, spin, undefined);
       /* 行驶期也要看得到"这一格还挂着几个气球 / 还有几个沙袋"。
        * 用和建造期同一个徽标，视觉上是同一套语言；≤1 不画，免得满屏数字。
        * 可点提示：还活着的气球画一圈淡金虚线，告诉玩家"这个能点"。 */

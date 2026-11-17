@@ -80,16 +80,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     std.every(s => s.reason !== 'no_progress'), std.map(s => s.reason).join(','));
 
   // ---------- 2. 慢慢溜的车要被判 no_progress，而不是白等到 60 秒 ----------
-  /* 1-5 上「单框 + 单轮」：实测能以 0.2~0.4 m/s 一路溜到 x≈15，
-   * 然后顶在墙前 —— 速度始终高于 stuck 的 0.2 阈值，所以 stuck 抓不到。
-   * 这正是这个看门狗存在的理由。 */
+  /* 判据：**任何**一个"车在动但没有朝终点靠近"的构型都要被判 no_progress。
+   *
+   * ⚠ 第 77 轮换过样本。原来用的是 1-5「单框 + 单轮」——
+   * 它能以 0.2~0.4 m/s 一路溜到 x≈15 再顶墙。质心/接触模型修正之后，
+   * 单框单轮的车会**翻倒**（pig_lost @4.4s），根本溜不到墙前。
+   * 也就是说那一份样本依赖的是**旧的错误物理**：车之所以能溜，
+   * 正是因为车身姿态是错的。判据本身（"溜 != 有进展"）没错，
+   * 是那个夹具不再产生它要测的现象了。
+   *
+   * 现在换成「只有一块木框、没有轮子」：车壳拖地滑出去然后停住，
+   * 8 秒内没有靠近终点 → no_progress。这个构型在 1-1 和 1-5 上都成立。 */
   const slow = JSON.parse(await ev(`(()=>{const R=window.__rap.RAP;
-    const lv=window.__rap.levels[4];
-    const spec={wood_frame:[[4,1]],wood_wheel:[[5,1]],pig:[[4,1]]};
+    const lv=window.__rap.levels[0];
+    const spec={wood_frame:[[4,1]],pig:[[4,1]]};
     const r=R.simulate(lv,spec,{maxTime:90});
     return JSON.stringify({result:r.result, reason:r.failReason||'', t:r.time,
       noGainFor:r.noGainFor, x:r.car.x, goal:lv.goal.col});})()`));
-  A.log(`1-5 单框单轮 → ${slow.result}/${slow.reason} @ ${slow.t.toFixed(1)}s，` +
+  A.log(`1-1 单框无轮 → ${slow.result}/${slow.reason} @ ${slow.t.toFixed(1)}s，` +
     `最远 x=${slow.x.toFixed(1)}/${slow.goal}`);
   A.chk('慢慢溜的车被判 no_progress（不是 stuck、也不是 timeout）',
     slow.reason === 'no_progress', slow.reason);

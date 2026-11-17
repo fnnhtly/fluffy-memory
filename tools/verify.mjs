@@ -91,7 +91,13 @@ const SCRIPTS = [
   'test_rigid_parts.js',
   /* 第 76 轮：焊接之后的缝在**行驶期**还在不在（含车身倾斜）。 */
   'test_frame_edges.js',
+  /* 第 78 轮：焊接机制已按用户要求删除。这一条守"真的没了"：
+   * 名字一个都不剩、drawPartShape 只剩 8 个参数、每块框四条边都画。 */
+  'test_no_welding.js',
   'test_seeds.js',
+  /* 第 77 轮：车身姿态。平地静止必须水平、松手必须回正、坡上必须贴坡。
+   * 纯 Node 跑真物理（不开浏览器）—— 它量的是引擎，不是画面。 */
+  'test_car_stance.js',
   'test_seed_levels.js',
   'test_seed_fx.js',
   'test_seed_button.js',

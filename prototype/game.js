@@ -968,6 +968,10 @@
       interactives: interactives,
       pumpCharge: 0, pumpHeld: false, braking: false, odo: 0, dashT: 0
     };
+    /* 真实质心（第 77 轮）。必须在 recomputeLift 之前算 ——
+     * 两者都读 parts 的质量分布，但质心要先可用，因为浮力的
+     * "净重"读数在 HUD 上和它对账。 */
+    measureCom(car);
     recomputeLift(car);
     return car;
   }
@@ -1096,7 +1100,46 @@
     var w = car.hull.maxX - car.hull.minX, h = car.hull.maxY - car.hull.minY;
     var inertia = car.mass * (w * w + h * h) / 12;
     car.invI = 1 / Math.max(0.4, inertia);
+    measureCom(car);
     recomputeLift(car);
+    return car;
+  }
+
+  /* ══════════ 真实质心（第 77 轮）══════════
+   *
+   * 用户原话：「车在下坡前会异常倾斜甚至翻倒」。
+   *
+   * 量出来的事实（tools/test_car_stance.js）：1-1 的标准解在**纯平地**上
+   * 从 0° 松手，会自己歪到 **−4.8°** 并停在那里；两格的小车更狠，
+   * 平地直接翻到 **−134.9°**（底朝天）。
+   *
+   * 根因是两处「质心假装在原点」：
+   *
+   *   1. 重力只加了力 `fy = −G·m`，**力矩恒为 0** —— 等于宣称
+   *      "整车质量集中在局部原点 (0,0)"。而真实分布的质心在 lx = −0.5
+   *      （1-1 标准解：三块框 + 小猪 + 两个轮子）。
+   *   2. 轮子法向力的力矩按"绕原点"算，却乘了一个 **0.5**。
+   *
+   * 那个 0.5 恰好等于"把缺失的重力力矩补回来"：
+   * 两轮 N 相等时，绕原点的力矩是 −25.1（折半）/ −50.2（不折半），
+   * 而缺失的重力力矩是 +50.4。所以 0.5 是**补偿**，不是物理。
+   *
+   * 现在把质心算出来（`comLx/comLy`），重力按真实力臂给力矩，
+   * 轮子的 0.5 折减一起去掉。这样平地平衡角严格是 0°，
+   * 而且"车头偏重会低头"这件事**第一次真的成立** —— HUD 上那个
+   * 「重心偏移」读数从此是物理量，不再只是个提示数字。
+   *
+   * ⚠ `car.center` 是**包围盒**中心（HUD 的"重心偏移"以它为基准），
+   * 和这里不是一回事，不要合并。
+   */
+  function measureCom(car) {
+    var m = 0, mx = 0, my = 0;
+    (car.parts || []).forEach(function (p) {
+      var q = (p.def.mass || 0) * (p.n || 1);
+      m += q; mx += q * p.lx; my += q * p.ly;
+    });
+    car.comLx = m > 0 ? mx / m : 0;
+    car.comLy = m > 0 ? my / m : 0;
     return car;
   }
 
@@ -1553,6 +1596,34 @@
     for (var s = 0; s < sub; s++) {
       var fx = 0, fy = -G * car.mass, tq = 0;
 
+      /* ══════════ 力矩一律**绕真实质心**取（第 77 轮）══════════
+       *
+       * 用户原话：「车在下坡前会异常倾斜甚至翻倒」。
+       *
+       * 量出来的事实（tools/test_car_stance.js）：1-1 的标准解在**纯平地**上
+       * 从 0° 松手会歪到 **−4.8°** 停住；两格小车平地直接翻成 **−134.9°**。
+       *
+       * 根因是两处「质心假装在原点」：
+       *   1. 重力只加了力 `fy = −G·m`，力矩恒为 0 —— 等于宣称质量集中在 (0,0)，
+       *      而 1-1 标准解的真实质心在 lx = −0.5；
+       *   2. 轮子法向力的力矩按"绕原点"算，还乘了一个 **0.5**。
+       *      那个 0.5 恰好补偿掉缺失的重力力矩的一半（实测 −25.1 vs +50.4），
+       *      于是平地稳态停在 −4.8° 而不是 0°。
+       *
+       * 正确做法是刚体力学里最标准的那一条：**平动看质心，转动看绕质心的力矩**。
+       *   · 平动方程本来就已经是"合力 / 质量"，合力作用在质心上，不用改；
+       *   · 转动方程要把每个力的**力臂改成 r − com**，而重力作用在质心上，
+       *     力臂恒为 0 —— 于是重力天然不产生力矩，不需要任何补丁。
+       *
+       * 这样一来：两轮对称时 N 相等、力臂 ±1、合力矩 0 → 平地**严格**停在 0°；
+       * 质心偏左的车，"头重"第一次真的会让它低头（HUD 的「重心偏移」从此是
+       * 一个物理量，不再只是提示数字）。
+       *
+       * ⚠ 不要退回"绕原点取矩 + 补一项重力力矩"。两者在数学上等价，
+       * 但分开写就多了一处可能忘掉的项 —— 这一轮之前的三次翻车都是这么来的。
+       */
+      var cLx = car.comLx || 0, cLy = car.comLy || 0;
+
       /* ---------- 驱动件推力（沿各自箭头方向，随车体旋转） ----------
        *
        * ⚠ 力矩这一项踩过一个大坑（第 63 轮）：
@@ -1582,7 +1653,11 @@
         var twy = tv[0] * tsa + tv[1] * tca;
         fx += f * twx;
         fy += f * twy;
-        var tqRaw = (tp.lx * (f * twy)) - (tp.ly * (f * twx));
+        /* 力臂同样要减质心（第 77 轮）：推力的力矩也绕质心取。
+         * 注意这里保留那个 **0.25 的手感折减** —— 它是调过的玩法参数
+         * （装太高会抬头，但不会把车掀翻），和刚修掉的 0.5 不是一回事：
+         * 0.5 是在补偿一个**错误**，0.25 是在调一个**手感**。 */
+        var tqRaw = ((tp.lx - cLx) * (f * twy)) - ((tp.ly - cLy) * (f * twx));
         tq += tqRaw * 0.25;
       }
       /* ---------- 一次性推力（霄灯） ---------- */
@@ -1596,7 +1671,7 @@
         var owy = ov[0] * osa + ov[1] * oca;
         fx += of * owx;
         fy += of * owy;
-        tq += (op.lx * (of * owy)) - (op.ly * (of * owx));
+        tq += ((op.lx - cLx) * (of * owy)) - ((op.ly - cLy) * (of * owx));
       }
 
       // 空气阻力
@@ -1671,6 +1746,25 @@
        * `perWheel = 0` 让下面那一段的 `drive` 恒为 0，只保留摩擦/滚动阻力的正确语义。 */
       var groundWheels = 0;
       var perWheel = 0;
+      /* 收集两个阶段的接触：先算弹簧法向力，再统一重分配（第 77 轮）。
+       *
+       * ⚠ 为什么要分两遍：弹簧接触模型里 **N ∝ 穿透量**。平地上两个
+       * 半径相同的轮子刚性固定在同一个车身上，穿透量必然相等 → N 相等
+       * → 绕质心的力矩 = N·(x₁−x_com) + N·(x₂−x_com) ≠ 0（只要质心不在
+       * 轮距中点）。于是车身**必须**歪到两轮穿透量不同，才能凑出一组能平衡的 N。
+       * 实测：两格小车质心偏 0.147 m，就要歪 15.6°，再歪下去直接翻（−134.9°）。
+       *
+       * 真实的刚体静力学不是这样：两个接触点是**静不定**的，N 由平衡方程分配，
+       * 与穿透量无关。所以这里改成「弹簧只决定**总**法向力的大小，
+       * 两个轮子之间按静力学杠杆分配」：
+       *
+       *   · 一部分（≤ 支撑自重要的那部分）按**杠杆定则**分给各轮 —— 这一支
+       *     在静止时给出零净力矩，车就平了；
+       *   · 超出自重的那部分（落地冲击）仍按**穿透量**分 —— 这一支保留了
+       *     "撞台阶会抬头"的手感。
+       *
+       * 两者按 `min(弹簧总量, 自重分量)` 连续过渡，没有开关、没有阈值跳变。 */
+      var contacts = [];
       for (var i = 0; i < car.wheels.length; i++) {
         var w = car.wheels[i];
         var wp = worldOf(car, w.lx, w.ly);
@@ -1688,6 +1782,76 @@
           var vn = vpx * nx + vpy * ny;
           var vt = vpx * tx + vpy * ty;
           var N = Math.max(0, Math.min(320 * pen - 50 * vn, 2.5 * car.mass * G));
+          contacts.push({ w: w, wp: wp, nx: nx, ny: ny, tx: tx, ty: ty,
+                          rx: rx, ry: ry, vn: vn, vt: vt, N: N, pen: pen, slope: slope });
+        }
+      }
+      /* 杠杆定则的分配系数。只在 ≥2 个轮子同时着地时才有意义
+       * （一个轮子着地时不存在"分配"，力矩臂就是它自己的）。 */
+      var shares = null;
+      if (contacts.length >= 2) {
+        /* 沿地面切向取投影：质心与各接触点的相对坐标。
+         * 用切向而不是单纯 x，是为了在斜坡上也成立。 */
+        var txAvg = 0, tyAvg = 0;
+        contacts.forEach(function (c) { txAvg += c.tx; tyAvg += c.ty; });
+        txAvg /= contacts.length; tyAvg /= contacts.length;
+        var tlen = Math.hypot(txAvg, tyAvg) || 1;
+        txAvg /= tlen; tyAvg /= tlen;
+        var proj = contacts.map(function (c) {
+          return { c: c,
+            s: (c.wp.x - car.x - cLx) * txAvg + (c.wp.y - car.y - cLy) * tyAvg };
+        });
+        proj.sort(function (a, b) { return a.s - b.s; });
+        var l0 = proj[0], l1 = proj[proj.length - 1];
+        var span = l1.s - l0.s;
+        shares = contacts.map(function () { return 0; });
+        if (span > 0.2) {
+          /* 只有两个支点时杠杆定则唯一：w0 = −s1/(s0−s1)… 化成"到另一端的比例"。 */
+          var wy = proj.map(function (p) {
+            return (p.s - l0.s) / span;               // 0..1
+          });
+          var sum = 0;
+          wy.forEach(function (v) { sum += (1 - Math.abs(v - (1 - wy[0]))); });
+          /* 直接写两端的解，再回填到 contacts 的顺序里：
+           * N0 = W·(s1−sc)/(s1−s0)，这里 sc=0（已减质心）→ N0 = −s1/(s0−s1)。 */
+          var n0 = -l1.s / (l0.s - l1.s);
+          var n1 = 1 - n0;
+          /* 质心落在两轮之外 → 杠杆系数会出界。夹到 [0,1] 并归一，
+           * 相当于"重心已经偏出支撑面，只有一个轮子承担全部"。 */
+          n0 = Math.max(0, Math.min(1, n0));
+          n1 = 1 - n0;
+          shares = contacts.map(function (c) {
+            if (Math.abs(c.wp.x - l0.c.wp.x) < 1e-6 && Math.abs(c.wp.y - l0.c.wp.y) < 1e-6) return n0;
+            if (Math.abs(c.wp.x - l1.c.wp.x) < 1e-6 && Math.abs(c.wp.y - l1.c.wp.y) < 1e-6) return n1;
+            return 0;
+          });
+          void sum;
+        }
+      }
+      /* 两个来源的合计：自重部分按杠杆分，冲击部分按穿透分。 */
+      var nSpring = 0;
+      contacts.forEach(function (c) { nSpring += c.N; });
+      var nyAvg = 0;
+      contacts.forEach(function (c) { nyAvg += c.ny; });
+      if (contacts.length) nyAvg /= contacts.length;
+      var nWeight = G * car.mass * (nyAvg || 1);
+      var nBase = Math.min(nSpring, nWeight);
+      var nExcess = Math.max(0, nSpring - nBase);
+
+      for (var ci = 0; ci < contacts.length; ci++) {
+        var c = contacts[ci];
+        var w = c.w;
+        var N = c.N;
+        if (shares) {
+          /* 静止支撑部分按杠杆、冲击部分按穿透占比。 */
+          var springShare = nSpring > 1e-6 ? c.N / nSpring : 0;
+          N = nBase * shares[ci] + nExcess * springShare;
+        } else {
+          N = c.N;
+        }
+        {
+          var nx = c.nx, ny = c.ny, tx = c.tx, ty = c.ty;
+          var rx = c.rx, ry = c.ry, vt = c.vt, vn = c.vn, wp = c.wp;
           // 冰面上不看地形摩擦，直接看轮子的冰面抓地（铁轮 0.8 / 木轮 0.15）
           var baseMu = (ter.matAt(wp.x) === 'ice') ? 1.0 : ter.frictionAt(wp.x);
           var mu = baseMu * w.def.grip * (ter.matAt(wp.x) === 'ice' ? w.def.iceGrip : 1) * Params.wheelGrip;
@@ -1702,7 +1866,18 @@
           var Ft = Math.max(-cap, Math.min(cap, drive - roll));
           fx += nx * N + tx * Ft;
           fy += ny * N + ty * Ft;
-          tq += 0.5 * (rx * (ny * N + ty * Ft) - ry * (nx * N + tx * Ft));  // 轮子力矩打 5 折，防止磕台阶就翻
+          /* 轮子法向力的力矩。
+           *
+           * ⚠ 第 77 轮：原来这里乘了 **0.5**，注释写的是"防止磕台阶就翻"。
+           * 那个 0.5 其实是在**补偿重力没有力矩** —— 实测：两轮 N 相等时
+           * 绕原点的力矩是 −50.2，折半 −25.1，而缺失的重力力矩恰好是 +50.4。
+           * 两个错误刚好抵消掉一半，于是平地上的车停在 −4.8° 而不是 0°，
+           * 两格小车干脆翻过去。现在重力按真实质心给了力矩（见上面），
+           * 这个折减就必须一起去掉 —— 留着的话反而是新的偏差。
+           *
+           * 磕台阶就翻的问题改用**接触阻尼**解决（下面 `Params.wheelTorqueDamp`），
+           * 那是作用在角速度上的，不影响静平衡。 */
+          tq += ((rx - cLx) * (ny * N + ty * Ft) - (ry - cLy) * (nx * N + tx * Ft));
           if (Params.collectContacts) Params.collectContacts.push(+Math.abs(vn).toFixed(2));
           // 分级接触反馈（写进事件流，渲染层消费）
           var vnAbs = Math.abs(vn);
@@ -1823,7 +1998,7 @@
           var Ft2 = -Math.sign(vt2) * Math.min(need, cap2);
           fx += nx2 * N2 + tX * Ft2;
           fy += ny2 * N2 + tY * Ft2;
-          tq += rx2 * (ny2 * N2 + tY * Ft2) - ry2 * (nx2 * N2 + tX * Ft2);
+          tq += (rx2 - cLx) * (ny2 * N2 + tY * Ft2) - (ry2 - cLy) * (nx2 * N2 + tX * Ft2);
           if (Params.collectContacts) Params.collectContacts.push(+Math.abs(vn2).toFixed(2));
           if (vn2 < -Params.damageMin) {
             // 同轮子那条一样：一条 impact = 一次真的扣耐久（damageCar 自带 0.35 秒冷却）
@@ -2206,7 +2381,20 @@
              wood_wheel: [[5, 1], [5, 4]], pig: [[4, 2]],
              geo_core: [[4, 1]], propeller: [[3, 2]],
              _dirs: { propeller: 0 },
-             _seeds: [{ t: 2.2, kind: 'geo' }] },
+             /* 触发时刻（第 78 轮重标）：1-7 改成"台阶在 col 9、终点在 col 14"
+              * 之后，无伤通关的窗口是 t=1.4~3.0（0.75 秒，中间有 0.4 秒空档
+              * 是车在台阶下打滑）。取 2.7 —— 窗口后半段，车已经贴住台阶、
+              * 柱子在脚下升起，把车顶到台上就立刻到终点。
+              *
+              * ⚠ 为什么要重做这关的地形：老版 1-7 是"2 米台阶在 col 13、
+              * 终点在 col 34"。车撞上台阶的立面（v≈5.9 m/s）会掉一点耐久，
+              * 而 `test_touch_ladder` 有一条对的判据「标准解不该掉耐久」。
+              * 那一版之所以是绿的，是因为旧的接触模型把撞击力矩折半 ——
+              * 也就是说它靠的是**错误的物理**。第 77 轮修正质心之后，
+              * 这条判据立刻抓到了真问题：**车真的在撞台阶**。
+              * 现在台阶提前到 col 9，车滑下来的速度还不够大，
+              * 而且一到台上就是终点，不需要再落回地面。 */
+             _seeds: [{ t: 2.7, kind: 'geo' }] },
 
     /* 1-8「乘风而上」（第 73 轮新增）：教**风种 + 吃风件**。
      *
@@ -2231,7 +2419,16 @@
              wood_wheel: [[5, 1], [5, 4]], pig: [[4, 2]],
              anemo_core: [[4, 1]], propeller: [[3, 1]], umbrella: [[3, 2]],
              _dirs: { propeller: 0 },
-             _seeds: [{ t: 3.0, kind: 'anemo' }] }
+             /* 触发时刻（第 78 轮重标）：1-8 改成"终点就在坡顶"之后，
+              * 无伤通关窗口是 t=3.75~6.0+（2 秒以上）。取 4.5 居中。
+              *
+              * ⚠ 为什么把终点挪到坡顶：老版终点在 col 48，也就是坡顶之后再往前
+              * 12 格。风把车举过坡沿、车落到坡顶，**再从 4 米高的坡顶往前落**
+              * —— 那一跳实测 6.9 m/s，超过 damageMin，掉一点耐久。
+              * `test_touch_ladder` 有一条对的判据「标准解不该掉耐久」，
+              * 它一直绿只是因为旧的接触模型把力矩折半（错误的物理）。
+              * 终点放在坡顶之后，车被风托上去就**停在**终点上，全程零撞击。 */
+             _seeds: [{ t: 4.5, kind: 'anemo' }] }
   };
 
   function applySpec(level, build, spec) {
