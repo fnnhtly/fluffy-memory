@@ -84,6 +84,7 @@ const SCRIPTS = [
   'test_recentre.js',
   'test_wind_direction.js',
   'test_wind_fx.js',
+  'test_weld.js',
   'test_tray_scope.js'
 ];
 

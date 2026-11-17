@@ -259,15 +259,60 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     A.chk('爆炸粒子会自己消失（不会一直堆在 state 里）', nBurst2 < nBurst, `${nBurst} → ${nBurst2}`);
   }
 
-  // 反向对照：点在远处（车外 220px）不该有任何副作用
+  // 反向对照：点在**远离任何可点零件**的地方，不该有任何副作用
   {
+    /* ⚠ 必须先关掉这局的**自动动作脚本**。
+     *
+     * 这一局是 launchSpec(5,'1-6') 发的，而 1-6 的标准解带
+     * `_drops: [{t:1.5, n:2}]` —— 出发 1.5 秒后**自动**扔掉两个压舱石。
+     * 上一段（点气球 + 等 1.2 秒看粒子消失）早就跑过 1.5 秒了，
+     * 于是这里是这样的读数：
+     *     点之前 bags=0  →  点之后 bags=2
+     * 看起来像"点远处扔了两个沙袋"，其实是脚本自动扔的，
+     * 只是恰好落在这个窗口里。测的是**别人的动作**，不是这次点击。
+     *
+     * 两件事都要做：
+     *   1. 清空 actScript，别让脚本的动作混进这个观测窗口；
+     *   2. 等一下，确保窗口里再没有任何未完成的动作。
+     */
+    await ev('window.__rap.state.run.actScript = []');
+    await sleep(300);
     const b2 = JSON.parse(await ev(`(()=>{const s=window.__rap.state.run;
       return JSON.stringify({pops:s.balloonPops||0, bags:s.sandbagsDropped||0});})()`));
-    await click(scr.x - 220, scr.y - 60);
+    /* 反观点也不能写死"车外 220px"：那个偏移是为了躲开气球，
+     * 但同一辆车上还有沙袋。220px 换算成世界坐标够不够远，
+     * 取决于当时的 zoom 和车的姿态 —— 实测某些帧上正好落进沙袋的 0.85 米判定圈。
+     * 正确做法：**问引擎**哪个点离所有可点零件都最远。 */
+    const far = JSON.parse(await ev(`(()=>{
+      const S=window.__rap.state, car=S.run.car;
+      const cm=S.camLive, z=32*cm.zoom;
+      const ca=Math.cos(car.a), sa=Math.sin(car.a);
+      const tap=[];
+      car.parts.forEach(p => {
+        if (!p.def.stack && !p.def.oneShot) return;
+        const wx=car.x+p.lx*ca-p.ly*sa, wy=car.y+p.lx*sa+p.ly*ca;
+        tap.push({x:wx, y:wy});
+      });
+      if (!tap.length) return JSON.stringify({err:'no tappable part'});
+      let best=null, bestD=-1;
+      for (let ang=0; ang<Math.PI*2; ang+=Math.PI/12) {
+        const wx = car.x + Math.cos(ang)*4.5, wy = car.y + Math.sin(ang)*4.5;
+        let dmin = 1e9;
+        tap.forEach(t => { dmin = Math.min(dmin, Math.hypot(t.x-wx, t.y-wy)); });
+        if (dmin > bestD) { bestD = dmin; best = {x:wx, y:wy}; }
+      }
+      return JSON.stringify({
+        sx: 1280/2 + (best.x-cm.x)*z, sy: 720/2 - (best.y-cm.y)*z,
+        minDistM: +bestD.toFixed(2), nTap: tap.length });
+    })()`));
+    A.chk('前提：找到了一个离所有可点零件都很远的点（>2 米）',
+      !far.err && far.minDistM > 2.0, JSON.stringify(far));
+    await click(far.sx, far.sy);
     const a2 = JSON.parse(await ev(`(()=>{const s=window.__rap.state.run;
       return JSON.stringify({pops:s.balloonPops||0, bags:s.sandbagsDropped||0});})()`));
     A.chk('点车身外面不误触', a2.pops === b2.pops && a2.bags === b2.bags,
-      `pops ${b2.pops}→${a2.pops} bags ${b2.bags}→${a2.bags}`);
+      `pops ${b2.pops}→${a2.pops} bags ${b2.bags}→${a2.bags}` +
+      `（点在离最近可点件 ${far.minDistM} 米处，屏幕 ${Math.round(far.sx)},${Math.round(far.sy)}）`);
   }
   await shot('lu-03-run-after-pop');
 
