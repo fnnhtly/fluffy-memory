@@ -532,20 +532,31 @@
    */
   const BUILD_ANCHOR_COL = 2.5, BUILD_ANCHOR_ROW = 3.5;   // 车心在网格中的位置
 
+  /* 远景视差比例（第 65 轮，用户要求：「背景的山不要完全跟随镜头」）。
+   *
+   * 定义：远景在**屏幕**上的移动量 ÷ 地形在屏幕上的移动量。
+   *   0   = 完全不动（旧行为，看起来像贴在镜头上的壁纸）
+   *   1   = 和地形同速（山就在脚边，纵深没了）
+   *   0.36 = "几公里外"的观感
+   * 0.12 是同比例用在纵向上的值（俯视时山不会突然顶到天上）。
+   *
+   * 提到模块作用域，是因为它要能被 `state.hillParX` 覆盖 ——
+   * 测试要能临时把它设成 0 证明自己的量具会变红（见 test_hill_parallax）。 */
+  const DEFAULT_HILL_PAR_X = 0.36, DEFAULT_HILL_PAR_Y = 0.12;
+
   /* 车心离地多高。**这是个常量，不许跟着 state.build 变**。
    *
    * 原来这里算的是"当前车上最低的那个轮子的下沿"，想让拼装区的车
    * 严丝合缝地贴在地面上。想法没错，后果很糟：
-   * 空车时 `lowest = 0.5`，放下**第一个轮子**的瞬间 `lowest` 变成 -0.35 左右，
-   * 整块拼装板连着里面的车**凭空往上跳 0.85 米**（实测 1-1 是 95.7 px，
-   * 比一格还高）。玩家的手还按在原来的格子上，格子已经跑了；
-   * 而这 0.85 米恰好也是"拼装区的车"和"出发后的车"在竖直方向上的差。
+   * 空车时 `lowest = 0.5`，放下**第一个轮子**的瞬间 `lowest` 变成 -1.84，
+   * 整块拼装板连着里面的车**凭空往上跳 2.3 米**（比一格还高）。
+   * 玩家的手还按在原来的格子上，格子已经跑了。
    *
-   * 现在固定成"有轮子的标准车"的静止高度：轮子半米 + 车架离地。
-   * 这样拼装板**永远不动**，而拼装时看到的高度仍然就是出发时的高度。
-   * 竖直方向允许有误差（不同搭法轮子位置不同），横向必须严格对齐 ——
-   * 用户那句「拼装的车要出现在地图相同位置」说的就是横向那件事。 */
-  const BUILD_REST_Y = 0.86;
+   * 现在固定成**标准车的实际静止高度** —— 这个数不是猜的，
+   * `tools/probe_rest_height.js` 对真实的标准车量出来是 1.85 m
+   * （木框行 ly=-1.5、轮底 -1.84，`createRun` 把车心放在地表 +1.85）。
+   * 用同一个数，拼装时看到的高度就是出发时的高度，而且拼装板**永远不动**。 */
+  const BUILD_REST_Y = 1.85;
 
   /* 网格锚点的世界坐标 = 车的出发位置。
    * 横向和 game.js `createRun` 的 startX 完全一致（列 + 0.5）；
@@ -2134,19 +2145,39 @@ const BIOMES = {
     glow.addColorStop(0, CAVE ? 'rgba(150,200,220,.13)' : 'rgba(255,248,196,.32)');
     glow.addColorStop(1, 'rgba(255,248,196,0)');
     fillScreen(glow);
-    // 远山剪影（原神感的层峦）
-    // 底边要伸到远景地面之下，否则一圈三角形会在屏幕固定高度上"切"出一条直线
-    ctx.fillStyle = PAL.hill;
-    for (let i = 0; i < 5; i++) {
-      const bx = i * 300 - 80, h = 90 - (i % 3) * 18;
-      ctx.beginPath();
-      ctx.moveTo(bx, DH * 0.62);
-      ctx.lineTo(bx + 150, DH * 0.42 - h);
-      ctx.lineTo(bx + 300, DH * 0.62);
-      ctx.closePath(); ctx.fill();
-    }
+    /* 原来这里还有一圈**钉死在屏幕 0.62DH** 的三角形远山。
+     * 第 65 轮删掉了：它不跟镜头、不跟地形，纯壁纸；
+     * 下面那层带视差的远山才是真的"远处"。留两层同样的三角形
+     * 只会让纵深看起来是重影。 */
 
     // ---------- 丛林：三层剪影 ----------
+    /* 背景山必须**有视差**，不能是贴在镜头上的一张壁纸。
+     *
+     * 用户原话：「背景的山不要完全跟随镜头啊」。他说的现象是：拖动镜头时
+     * 山峦一动不动，只有前景地形在动 —— 那不是"远处的山"，是"贴在眼睛上的纸"。
+     * （反面也一样糟：山和地形同速，等于山就在脚边，纵深没了。）
+     *
+     * 定义一个比例 HILL_PAR = 远景在屏幕上的移动速度 / 地形在屏幕上的移动速度：
+     *   · 0   → 完全不动（旧行为，壁纸）；
+     *   · 1   → 和地形同速（山贴在脚边）；
+     *   · 0.36 → "几公里外"的观感。
+     *
+     * 换算：镜头右移 Δ，世界在屏幕上左移 Δ·s（s = PPM·zoom）。
+     * 所以远景要左移 Δ·s·HILL_PAR，即 translate(−Δ·s·HILL_PAR)。
+     * 写成 −Δ·s·(1−HILL_PAR) 是错的（那是 64%），第一版就是这么写反的。
+     *
+     * 纵向同理，比例更小（0.12）：俯视时山不会突然顶到天上，平视时又压得住地平线。
+     *
+     * 顺带把这两个位移写进 state，**渲染与测试读同一个数** ——
+     * 这条项目铁律在这里同样适用：量具不许另抄一份公式。 */
+    const HILL_PAR_X = (state.hillParX == null) ? DEFAULT_HILL_PAR_X : state.hillParX;
+    const HILL_PAR_Y = (state.hillParY == null) ? DEFAULT_HILL_PAR_Y : state.hillParY;
+    const hillShiftX = (cam.x - level().start.col) * PPM * cam.zoom * HILL_PAR_X;
+    const hillShiftY = (cam.y - 9) * PPM * cam.zoom * HILL_PAR_Y;
+    state.hillShiftX = hillShiftX;
+    state.hillShiftY = hillShiftY;
+    state.terrainShiftX = (cam.x - level().start.col) * PPM * cam.zoom;
+
     function canopy(baseY2, r0, dy, color, alpha, leafy) {
       ctx.save();
       ctx.globalAlpha = alpha;
@@ -2184,11 +2215,23 @@ const BIOMES = {
     farGround.addColorStop(1, PAL.jungle[1]);
     ctx.fillStyle = farGround;
     ctx.fillRect(-VIEW_OFF_X - 4, horizonY - 170, VIEW_W + VIEW_OFF_X * 2 + 8, 290);
+
+    /* 远山 + 远近两层丛林：全部包在一个视差平移里。
+     *
+     * 平移量 hillShiftX/Y 在上面算好。
+     * 为什么用 ctx.translate 包住整段，而不是给每个三角形单独加偏移：
+     * 这三个层次必须**共享同一个视差**，一旦各算各的，层与层之间会出现
+     * 相对滑动，看起来像三层纸片在飘，比不动更糟。
+     *
+     * 平移量已经是"远景在屏幕上的位移"（见上面的换算），所以这里直接用负号，
+     * 不能再乘 (1−比例) —— 那是第一版的错，把它变成了 64%。 */
+    ctx.save();
+    ctx.translate(-hillShiftX, -hillShiftY);
     // 远山（最淡，最高）
     ctx.fillStyle = CAVE ? 'rgba(8,16,22,.85)' : PAL.hill;
     const hillN2 = Math.ceil((VIEW_W + VIEW_OFF_X * 2) / 220) + 3;
-    for (let i = 0; i < hillN2; i++) {
-      const bx = i * 220 - 120 - VIEW_OFF_X, hh = 120 - (i % 3) * 26;
+    for (let i = 0; i < hillN2 + 6; i++) {
+      const bx = (i - 3) * 220 - 120 - VIEW_OFF_X, hh = 120 - (i % 3) * 26;
       ctx.beginPath();
       ctx.moveTo(bx, horizonY + 30);
       ctx.lineTo(bx + 130, horizonY + 30 - hh);
@@ -2199,6 +2242,7 @@ const BIOMES = {
     canopy(horizonY + 34, 42, 0, PAL.jungle[0], 0.9, false);
     // 中景丛林（中）
     canopy(horizonY + 62, 50, 6, PAL.jungle[1], 0.96, false);
+    ctx.restore();
     // 中景与近景之间的雾（洞穴里是冷雾，不能撒暖白）
     const fogCol = CAVE ? '190,220,235' : '226,240,210';
     const fogM = ctx.createLinearGradient(0, horizonY + 40, 0, horizonY + 130);
@@ -3447,10 +3491,12 @@ const BIOMES = {
       ctx.beginPath();
       ctx.moveTo(LC.x - 14, LC.y + 1); ctx.lineTo(LC.x - 4, LC.y + 11); ctx.lineTo(LC.x + 15, LC.y - 11);
       ctx.stroke();
-      /* 未就绪时这颗钮是灰的，但**字不能跟着灰**：这说明行是"要你做点什么"
-       * 的唯一提示，灰到底就读不出来了（实测 #93a3ae 在网格底衬上只有 3.05，
-       * 低于 4.5 的小字门槛）。灰按钮 + 亮字是标准做法。 */
-      text('出发', LC.x, L.y + L.h + 20, 14, ready ? '#dff0ff' : '#c3d2de', 'center', true);
+      /* 未就绪时这颗钮是灰的，但**字必须是白的**：这一行是"要你做点什么"的
+       * 唯一提示，跟着按钮一起变灰就读不出来了。
+       * 底色是半透明深色压在草地上（实测 bg ≈ rgb(82,94,93)），
+       * #c3d2de 在这里只有 4.36 —— 差一点点过不了 4.5 的小字门槛。
+       * 灰按钮 + 白字是标准做法，也不必为此把按钮压得更黑。 */
+      text('出发', LC.x, L.y + L.h + 20, 14, ready ? '#dff0ff' : '#ffffff', 'center', true);
 
       // 左侧三个小圆钮（图标 + 右侧文字，装在同一个圆角坞里）
       const knob = (rect, drawIcon, label, active) => {
@@ -4186,8 +4232,8 @@ const BIOMES = {
         const bandY = 232, bandH = 104;
         const bg2 = ctx.createLinearGradient(0, bandY, 0, bandY + bandH);
         bg2.addColorStop(0, 'rgba(8,16,22,0)');
-        bg2.addColorStop(0.28, 'rgba(8,16,22,.72)');
-        bg2.addColorStop(0.72, 'rgba(8,16,22,.72)');
+        bg2.addColorStop(0.28, 'rgba(8,16,22,.80)');
+        bg2.addColorStop(0.72, 'rgba(8,16,22,.80)');
         bg2.addColorStop(1, 'rgba(8,16,22,0)');
         ctx.fillStyle = bg2; ctx.fillRect(0, bandY, DW, bandH);
         const ln = ctx.createLinearGradient(0, 0, DW, 0);
@@ -4200,7 +4246,11 @@ const BIOMES = {
         // 关卡号 + 名字（轻微从右滑入）
         const sl = (1 - Math.min(1, (2.0 - t) / 0.3)) * 26;
         text(lv.levelId + '　' + lv.name, DW / 2 + sl, bandY + 62, 30, '#ffe9b0', 'center', true);
-        text(goals.join('　·　'), DW / 2, bandY + 92, 13, 'rgba(228,240,250,.95)', 'center');
+        /* 横幅副标题的底色是整条渐隐胶片带的中段（rgba(8,16,22,.72) 压在天空上），
+         * 中段实测 bg ≈ rgb(90,106,108)。这条 13px 小字原先 4.40，差一点点过线 ——
+         * 而它是唯一告诉玩家"这关要干什么"的那句话，不能靠运气读。
+         * 提亮到 #ffffff 并把胶片带压深一档（见上面 bg2 的 0.72 → 0.80）。 */
+        text(goals.join('　·　'), DW / 2, bandY + 92, 13, '#ffffff', 'center');
         ctx.restore();
       }
     }

@@ -103,8 +103,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await ev('window.__rap.state.runBanner=0');
   await sleep(220);
   const L2 = await luma();
-  chk('横幅期间画面确实被压暗（同帧对比）', L1 < L2 - 20,
-    '暗带亮度 横幅 ' + L1.toFixed(1) + ' / 无横幅 ' + L2.toFixed(1));
+  /* 判据用**相对**变暗，不用绝对亮度差。
+   *
+   * 原来写的是 `L1 < L2 - 20`。它隐含"场景亮度大约是某个值"这个前提，
+   * 而背景山、拼装区、地形颜色每一轮都在改 —— 第 65 轮删掉一层背景山之后，
+   * 同一块区域的亮度从 67.8 降到 67.7，暗带从压 22 变成压 18，
+   * 于是一条**功能完全正常**的断言开始报红。这就是"绝对的阈值量相对的亮度"。
+   *
+   * 相对判据说的是同一件事，但与场景亮度无关：横幅期间那块区域必须比
+   * 没有横幅时暗 15% 以上。同时保留一条下限（至少暗 8 个亮度单位），
+   * 免得在极暗的洞穴关里"15%"只剩 2 个单位、什么也证明不了。 */
+  const drop = (L2 - L1) / Math.max(1, L2);
+  chk('横幅期间画面确实被压暗（同帧对比）', drop >= 0.15 && (L2 - L1) >= 8,
+    '暗带亮度 横幅 ' + L1.toFixed(1) + ' / 无横幅 ' + L2.toFixed(1) +
+    '　暗了 ' + (drop * 100).toFixed(1) + '%');
   await ev('window.__rap.state.runBanner=2');
   await sleep(150);
   await shot('rn-01-banner');

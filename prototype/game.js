@@ -318,7 +318,29 @@
   }
 
   // ---------------- 组装 ----------------
-  var BUILD_COLS = 6, BUILD_ROWS = 8, CELL = 1.0;
+  /* 网格尺寸 + **车体局部坐标的锚点行**。
+   *
+   * ⚠ 锚点必须是一个**常量**，不能写成 `(BUILD_ROWS - 1) / 2`。
+   *
+   * 这条踩得很惨（第 65 轮）。原来 `partPos()` 是：
+   *     y = ((BUILD_ROWS - 1) / 2 - r) * CELL
+   * 于是"把网格从 8 行改成 6 行"会把**所有零件的局部坐标整体 +1 米**。
+   * 世界位置完全没变（`createRun` 会把车心贴到地面），但力矩是按
+   * `r = 零件局部坐标 - 车体局部原点` 算的，局部原点一动，力臂就变了 1 米 ——
+   * 1-1 的标准解从"3 星通关"直接变成"翻车、猪掉了"，六关全部失败
+   * （`tools/dbg_row_diff.js` / `dbg_tq_sites.js` 量的：同一个几何，
+   * 轮子力臂 ry 从 -1.5 变成 -2.5，力矩差 15%）。
+   *
+   * 换句话说：物理对"格子画在第几行"敏感，这在几何上就是错的。
+   * 修法就是把锚点钉死成常量 —— 标准车的车身在**第 4 行**，
+   * 那是从第 1 天起所有关卡数据和六份 spec 都遵守的约定。
+   *
+   * 这样把行数从 8 改成 6 就变成**纯视觉**改动：局部坐标逐位不变
+   * （`tools/probe_row_shift.js` 验证），物理逐位不变，
+   * 而网格下方那两行"埋在地底的空格子"消失了。
+   * 用户那句「拼装区不要嵌入地底」说的正是那两行。 */
+  var BUILD_COLS = 6, BUILD_ROWS = 6, CELL = 1.0;
+  var BUILD_ANCHOR_ROW = 3.5;      // 车身所在行（常量，与行数无关）
 
   function newBuild() { return { cells: {}, order: [], hist: [] }; }
 
@@ -641,8 +663,9 @@
 
   // ---------------- 车 ----------------
   function partPos(r, c) {
-    // 建造格 → 车体局部坐标（米）；第 4 行为中线
-    return { x: (c - (BUILD_COLS - 1) / 2) * CELL, y: ((BUILD_ROWS - 1) / 2 - r) * CELL };
+    /* 建造格 → 车体局部坐标（米）。锚点是常量 BUILD_ANCHOR_ROW，
+     * 不是 (BUILD_ROWS-1)/2 —— 为什么必须是常量，见 BUILD_ROWS 那段注释。 */
+    return { x: (c - (BUILD_COLS - 1) / 2) * CELL, y: (BUILD_ANCHOR_ROW - r) * CELL };
   }
 
   // 发射守卫：至少要有 1 个结构件 + 1 个轮子 + 1 只小猪（在木框里）
@@ -1919,6 +1942,8 @@
     isDirectional: isDirectional,
     PARTS: PARTS, TRAY_ORDER: TRAY_ORDER, DEFAULTS: DEFAULTS, Params: Params,
     BUILD_COLS: BUILD_COLS, BUILD_ROWS: BUILD_ROWS, CELL: CELL,
+    /* 车身在网格里的锚点行（常量）。测试要能断言"行数变了但锚点没变"。 */
+    BUILD_ANCHOR_ROW: BUILD_ANCHOR_ROW,
     resetParams: resetParams, makeTerrain: makeTerrain,
     newBuild: newBuild, tryPlace: tryPlace, canPlace: canPlace, removeAt: removeAt, undo: undo,
     dropHistory: dropHistory, pushHistory: pushHistory, rotateAt: rotateAt, clearBuild: clearBuild, budgetLeft: budgetLeft,

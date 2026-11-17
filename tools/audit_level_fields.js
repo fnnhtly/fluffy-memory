@@ -112,9 +112,17 @@ console.log('\n=== B. 数据 schema 与"第二份真相" ===');
     LEVELS.every(lv => (lv.materials || []).every(m =>
       Object.keys(m).sort().join(',') === 'cols,type')), '');
 
-  /* 代码里必须仍然定义着这些常量（否则建造区/格子尺寸就没主人了） */
-  chk('game.js 仍然定义 BUILD_COLS=6 / BUILD_ROWS=8',
-    /var BUILD_COLS = 6, BUILD_ROWS = 8/.test(gameSrc), '');
+  /* 代码里必须仍然定义着这些常量（否则建造区/格子尺寸就没主人了）。
+   * 行数**不写死**：第 65 轮把 BUILD_ROWS 从 8 改成 6（拼装区不再埋进地底），
+   * 这条本来会因为"数字变了"报红 —— 但它真正该守的是"有人管着这两个尺寸"，
+   * 不是"数字永远等于 8"。所以改成断言"两者都是正整数、且锚点行是常量"，
+   * 具体的数值由 tools/test_grid_is_visual.js 从另一面（物理不变性）把守。 */
+  const mDim = /var BUILD_COLS = (\d+), BUILD_ROWS = (\d+)/.exec(gameSrc);
+  chk('game.js 仍然定义 BUILD_COLS / BUILD_ROWS（都是正整数）',
+    !!mDim && +mDim[1] > 0 && +mDim[2] > 0,
+    mDim ? mDim[1] + ' × ' + mDim[2] : '没找到');
+  chk('game.js 把车身锚点行定义成常量（不跟着行数走）',
+    /var BUILD_ANCHOR_ROW = [\d.]+/.test(gameSrc), '');
   chk('game.js 仍然定义 CELL=1.0', /CELL = 1\.0/.test(gameSrc), '');
   chk('index.html 仍然定义 PPM=32', /PPM = 32/.test(htmlSrc), '');
 }

@@ -90,8 +90,12 @@ ok('1-5 不装驱动件也能通关 → 3 星（仙术机关就够了）',
     r1.ok && r2.ok && r3.ok && !r4.ok && r4.reason === 'budget',
     JSON.stringify([r1, r2, r3, r4]));
 
-  const r5 = RAP.tryPlace(lv, b, 'wood_wheel', 7, 5);
-  ok('零件必须贴着木框才能放', !r5.ok && r5.reason === 'connect', JSON.stringify(r5));
+  /* 用"网格最下面的那一行"来测"离得远的格子放不上"，而不是写死第 7 行。
+   * 第 65 轮把网格从 8 行改成 6 行（拼装区不再埋进地底），写死的 7 就变成了
+   * `outside` —— 它测的其实是"越界"，不是"不连通"，于是这条断言开始
+   * 以一个错误的理由通过/失败。几何从 RAP.BUILD_ROWS 现取，行数再变也不会骗人。 */
+  const r5 = RAP.tryPlace(lv, b, 'wood_wheel', RAP.BUILD_ROWS - 1, RAP.BUILD_COLS - 1);
+  ok('零件必须贴着木框才能放', !r5.ok && r5.reason === 'connect', JSON.stringify(r5) + ' rows=' + RAP.BUILD_ROWS);
 
   const r6 = RAP.tryPlace(lv, b, 'wood_wheel', 3, 1);
   ok('轮子可以放在木框正上方（贴结构件）', r6.ok, JSON.stringify(r6));
