@@ -3354,7 +3354,7 @@ const BIOMES = {
       if (!isHover && !isSelectedType) {
         // 只留一个很小的朝向点，不画箭头（保持"这里有方向件"的可读性）
         const p0 = at(k);
-        const v0 = RAP.dirVec(cell.dir || 0);
+        const v0 = RAP.blowVec(cell.part, cell.dir || 0);
         ctx.fillStyle = 'rgba(255,255,255,.5)';
         ctx.beginPath();
         ctx.arc(p0.x + v0[0] * PX * 0.34, p0.y - v0[1] * PX * 0.34, PX * 0.07, 0, Math.PI * 2);
@@ -3362,11 +3362,20 @@ const BIOMES = {
         return;
       }
       const p = at(k);
-      drawDirArrow(p.x, p.y, cell.dir || 0, PX, RAP.PARTS[cell.part].color, isHover);
+      /* 箭头画的是**风/喷流的方向**（第 68 轮，用户要求：
+       * 「为什么不把风相关的零件的箭头改成风的方向，让车受反作用力沿风的
+       * 反方向运动」）。对 blowsAir 的零件（风车桨/喷气口），箭头与车受力方向
+       * 相反 —— 桨把空气往左推，车就向右跑。`blowVec` 是那唯一一份换算，
+       * 行驶期的风特效读的也是它。 */
+      const bv = RAP.blowVec(cell.part, cell.dir || 0);
+      const arrowDir = (bv[0] === 1 && bv[1] === 0) ? 0
+        : (bv[0] === 0 && bv[1] === 1) ? 1
+        : (bv[0] === -1 && bv[1] === 0) ? 2 : 3;
+      drawDirArrow(p.x, p.y, arrowDir, PX, RAP.PARTS[cell.part].color, isHover);
       state.arrowDrawN = (state.arrowDrawN || 0) + 1;   // 供测试统计"这一帧画了几个箭头"
       if (isHover) {
-        const vv = RAP.dirVec(cell.dir || 0);
-        const wd = { '1,0': '右', '-1,0': '左', '0,1': '上', '0,-1': '下' }[vv[0] + ',' + vv[1]] || '';
+        const vv = RAP.blowVec(cell.part, cell.dir || 0);
+        const wd = { '1,0': '往右吹', '-1,0': '往左吹', '0,1': '往上吹', '0,-1': '往下吹' }[vv[0] + ',' + vv[1]] || '';
         text(wd, p.x + vv[0] * PX * 0.8, p.y - vv[1] * PX * 0.8 + 5, 14, '#ffffff', 'center', true);
       }
     });
@@ -4457,6 +4466,11 @@ const BIOMES = {
     drawDebris(cam);
     drawBursts(cam);
     drawDust(cam);
+    /* 风/喷流特效必须在车体**之后**画（它是从零件口喷出来的，压在车上更自然），
+     * 但要排在尘土之前那一类"地面反馈"外 —— 顺序：车身 → 风 → 尘 → 彩带。 */
+    state.windFxDrawN = 0;
+    spawnWindFx(car, elapsed);
+    drawWindFx(cam);
     drawConfetti(cam);
 
     // ---- 速度线（高速时在屏幕边缘流动）----
@@ -5756,6 +5770,103 @@ const BIOMES = {
     });
   }
 
+  /* ══════════ 风 / 喷流的特效（第 68 轮，用户要求）══════════
+   *
+   * 用户原话：「为什么不给风相关的零件使用的时候给风的特效」。
+   *
+   * 之前风车桨和喷气口在行驶期**完全没有视觉输出**：车自己往前跑，
+   * 而桨是静止的一个图标。玩家看不出"力是从哪来的"，
+   * 也看不出"我现在还有没有推力"。
+   *
+   * 做法：
+   *   · 每个正在出力的 blowAir 零件，沿 `blowVec`（风的方向，见 game.js）
+   *     吐出一串流线；
+   *   · 流线是**粒子**而不是贴图，因为它们必须随车体旋转 —— 车翻过来时
+   *     风也要跟着翻；
+   *   · 生成点在零件车体局部坐标处（和车一起动），速度 = 风方向 × 风速 + 少量抖动；
+   *   · 生命周期很短（0.35 秒），所以"停推"之后半秒内画面就干净了。
+   *
+   * 为什么在渲染层生成而不是引擎：这是纯视觉，不该进物理、
+   * 也不该让 headless 的断言依赖它。引擎已经通过 `p.powered` / `p.burn`
+   * 说清"有没有在出力"，这里只是把它画出来。
+   *
+   * ⚠ 生成速率必须按 dt 累积，不能"每帧生成 n 个" ——
+   * 那样 30fps 和 60fps 的粒子数量差一倍，看起来像两辆不同的车。
+   */
+  function spawnWindFx(car, dt) {
+    state.windFx = state.windFx || [];
+    state.windAcc = state.windAcc || 0;
+    /* 每秒吐多少条：一个零件 34 条/秒。三层并联时画面才有"风"的密度。 */
+    const RATE = 34;
+    const ca = Math.cos(car.a), sa = Math.sin(car.a);
+    let emitting = 0;
+    (car.parts || []).forEach(p => {
+      const d = RAP.PARTS[p.part];
+      if (!d || !d.blowsAir) return;
+      const on = !!(p.powered && d.tool) || (p.burn > 0);
+      if (!on) return;
+      emitting++;
+      const bv = RAP.blowVec(p.part, p.dir || 0);
+      // 风在世界里 = 车体局部方向随车旋转
+      const wx = bv[0] * ca - bv[1] * sa;
+      const wy = bv[0] * sa + bv[1] * ca;
+      const ox = car.x + p.lx * ca - p.ly * sa;
+      const oy = car.y + p.lx * sa + p.ly * ca;
+      // 按 dt 累积（见上面那段注释）
+      state.windAcc += dt * RATE;
+      while (state.windAcc >= 1) {
+        state.windAcc -= 1;
+        const sp = 5.2 + Math.random() * 1.8;
+        state.windFx.push({
+          x: ox + wx * 0.35, y: oy + wy * 0.35,
+          vx: wx * sp + (Math.random() - 0.5) * 0.9,
+          vy: wy * sp + (Math.random() - 0.5) * 0.9,
+          life: 0.34, maxLife: 0.34,
+          w: 2.0 + Math.random() * 2.2,
+          hue: d.blowsAir ? (p.part === 'jet' ? 1 : 0) : 0    // 0 = 风（青白），1 = 蒸汽（暖）
+        });
+      }
+    });
+    state.windEmitting = emitting;
+    /* 推进 + 回收。放到渲染层推进是安全的：它只影响自己。 */
+    const keep = [];
+    for (const f of state.windFx) {
+      f.life -= dt;
+      if (f.life <= 0) continue;
+      f.x += f.vx * dt; f.y += f.vy * dt;
+      f.vx *= (1 - 2.2 * dt); f.vy *= (1 - 2.2 * dt);
+      keep.push(f);
+    }
+    state.windFx = keep;
+    // 上限：万一一帧卡了很久（切回来时 dt 被夹到 0.05），别让数组爆掉
+    if (state.windFx.length > 260) state.windFx.splice(0, state.windFx.length - 260);
+  }
+
+  function drawWindFx(cam) {
+    if (!state.windFx || !state.windFx.length) return;
+    const s = PPM * cam.zoom;
+    state.windFx.forEach(f => {
+      const p = worldToScreen(f.x, f.y, cam);
+      const k = f.life / f.maxLife;                 // 1 → 0
+      ctx.save();
+      /* 风是"青白色流线"：越老越透明、越细。用线段而不是圆点，
+       * 因为流线才有方向感 —— 圆点看起来像灰尘。 */
+      const len = (0.30 + 0.55 * (1 - k)) * s;
+      const nrm = Math.hypot(f.vx, f.vy) || 1;
+      const dx = f.vx / nrm * len, dy = -f.vy / nrm * len;
+      ctx.globalAlpha = 0.10 + 0.42 * k;
+      ctx.strokeStyle = f.hue ? 'rgba(255,214,170,.95)' : 'rgba(206,244,255,.95)';
+      ctx.lineWidth = Math.max(1, f.w * (0.45 + 0.55 * k) * (cam.zoom / 1.6));
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + dx, p.y + dy);
+      ctx.stroke();
+      ctx.restore();
+    });
+    state.windFxDrawN = state.windFx.length;   // 供测试读"这一帧画了几条"
+  }
+
   function drawDebris(cam) {
     if (!state.debris.length) return;
     state.debris.forEach(d => {
@@ -6223,6 +6334,9 @@ const BIOMES = {
    * 导出 buildCellPx() 给测试用；老的 BUILD_PX 保留成一个 getter 形态的函数，
    * 免得还在读它的探针直接崩（读到的值是**当前**格边长）。 */
   window.__rap = { state, RAP, levels, startLevel, launch, launchSpec, buildOrigin,
+                   /* 风特效生成器：签名与内部一致（car, dt）。
+                    * 测试要能直接按固定步长驱动它，才证明得出"帧率无关"。 */
+                   spawnWindFx: (car, dt) => spawnWindFx(car, dt),
                    /* 第 66 轮：视角两颗钮的几何（绘制与判定同一份）+ 缓动状态 */
                    observeBtnRect, recentreRect, buildViewAwayFromHome,
                    buildCellPx, get BUILD_PX() { return buildCellPx(); },

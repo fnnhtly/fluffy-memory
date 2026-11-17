@@ -86,12 +86,25 @@
                 desc: '璃月的岩之种。只能放进框里。全车 +5 动力容量，但重 2.2 kg。' },
 
     /* ---------- 驱动件：消耗容量产生推力，必须连通 ---------- */
+    /* ⚠ `blowsAir: true` 不是装饰，它决定**箭头往哪边指**（第 68 轮，用户要求：
+     * 「为什么不把风相关的零件的箭头改成风的方向，让车受反作用力沿风的
+     * 反方向运动」）。
+     *
+     * 物理上，螺旋桨和喷口都是**把空气往一边推、自己被反作用力推向另一边**。
+     * 但 `dir` 一直表示"车受力的方向"，于是画出来的箭头和玩家看到的物理现象
+     * 正好相反：箭头朝右，桨叶却应该在往左吹风。
+     *
+     * 现在把"吹风方向"显式记下来：
+     *   · `dirVec(dir)` 仍然是**车受力方向**（物理不变，六关的标准解不受影响）；
+     *   · 画箭头时对 `blowsAir` 的零件取反 —— 箭头指风走的方向；
+     *   · 行驶期的风特效也按同一个取反后的方向吹。
+     * 这样"箭头 = 风"、"车 = 反向"，玩家看一眼就懂，也不用改任何数值。 */
     propeller: { label: '风车桨', mass: 0.5, tool: true, dir: true, thrust: 5.0, drawPower: 1,
-                 color: '#8fd6e8',
-                 desc: '蒙德风车桨。沿箭头持续推力 5.0 m/s²，占 1 点动力容量。必须接动力源。' },
+                 blowsAir: true, color: '#8fd6e8',
+                 desc: '蒙德风车桨。风往箭头方向吹，推力 5.0 m/s²，占 1 点动力容量。' },
     jet: { label: '喷气口', mass: 0.7, tool: true, dir: true, thrust: 9.0, drawPower: 2,
-           color: '#e08a5a',
-           desc: '枫丹蒸汽喷口。推力 9.0 m/s²，要占 2 点容量。动力紧张时不划算。' },
+           blowsAir: true, color: '#e08a5a',
+           desc: '枫丹蒸汽喷口。喷汽产生推力 9.0 m/s²，车被反推，占 2 点容量。' },
 
     /* ---------- 浮力 / 配重：位置决定生死 ---------- */
     balloon: { label: '热气球', stack: true, maxStack: 3, liftMass: 3.2, mass: 0.05,
@@ -366,6 +379,21 @@
   var DIRV = [[1, 0], [0, 1], [-1, 0], [0, -1]];
   function dirVec(dir) { return DIRV[(dir || 0) % 4]; }
   function isDirectional(part) { return !!(PARTS[part] && PARTS[part].dir); }
+  /* 这一格零件的**风/喷流往哪边**（单位向量）。
+   *
+   * 对 `blowsAir` 的零件（风车桨/喷气口）来说，`dir` 记的是"车受力方向"，
+   * 而风吹的方向正好相反；其余方向件（仙术机关/霄灯）是自己被推出去，
+   * 箭头就是力的方向，不取反。
+   *
+   * 抽成函数而不是在绘制里写 `if (blowsAir) dir += 2`：行驶期的风特效
+   * 和建造期的箭头必须是**同一个方向**，而这个方向以后可能还要被
+   * 别的地方读（比如风场判定）。两份独立算的方向，迟早在画面里打起来。 */
+  function blowVec(part, dir) {
+    var v = dirVec(dir || 0);
+    var d = PARTS[part];
+    if (d && d.blowsAir) return [-v[0], -v[1]];
+    return v;
+  }
 
   /* ══════════════ 动力连通性（第 63 轮新增，参考的核心机制）══════════════
    *
@@ -1940,6 +1968,9 @@
     canLaunch: canLaunch,
     dirVec: dirVec,
     isDirectional: isDirectional,
+    /* 风/喷流的方向（对 blowsAir 零件与 dirVec 相反）。绘制箭头、风特效、
+     * 以及以后的任何"风往哪吹"判断，都必须读这一个函数。 */
+    blowVec: blowVec,
     PARTS: PARTS, TRAY_ORDER: TRAY_ORDER, DEFAULTS: DEFAULTS, Params: Params,
     BUILD_COLS: BUILD_COLS, BUILD_ROWS: BUILD_ROWS, CELL: CELL,
     /* 车身在网格里的锚点行（常量）。测试要能断言"行数变了但锚点没变"。 */
