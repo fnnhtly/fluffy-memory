@@ -104,6 +104,18 @@ function chk(label, cond, extra) {
         window.__rap.RAP.step(S.run, 1/60);
       }
       S.runBanner = 0; S.shake = 0;
+      /* 把镜头钉住（第 71 轮为测试建的 state.__lockCam）。
+       *
+       * 不钉的话 camLastDraw 取决于 sleep 期间渲染了几帧 ——
+       * 缓动没收敛时车在屏幕上的位置偏几十像素，采样框就采到旁边的草地。
+       * 实测同一份代码两次跑，1-1 的"车与背景亮度差"一次报 3、一次报 29.9。
+       *
+       * 钉住之后位置是确定的。这是项目反复出现的同一个教训：
+       * 量具要读一个确定的量。
+       * 注意：这段在模板字符串内部，注释里不能出现反引号。 */
+      const c = S.run.car, ter = S.run.terrain;
+      S.__lockCam = { x: c.x + 2.0,
+        y: Math.max(c.y, ter.surfaceY(c.x)) + 1.5, zoom: 1.85 };
       return 1;})()`);
     await sleep(320);
 

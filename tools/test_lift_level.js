@@ -72,18 +72,24 @@ function specOf(balloons, sandbags, drops) {
 
 // ═════════════ B 触发时机的窗口 ═════════════
 {
-  /* 把扔沙袋的时刻从 0.5 扫到 3.0 秒。窗口宽度就是这一关的"时机"含量。 */
+  /* 把扔沙袋的时刻从 0.5 扫到 3.0 秒。窗口宽度就是这一关的"时机"含量。
+   *
+   * ⚠ 第 86 轮：1-6 变长了（终点 col 15→22），窗口从 26/26 收到 19/26。
+   * 原判据「窗口覆盖整个扫描区间」不再成立 —— 新的 2.1 秒窗口
+   * （0.7~2.7）是**变长之后应有的**：车跑到终点要 3 秒，
+   * 3.0 秒之后才扔沙袋当然来不及。
+   *
+   * 判据改成量那个真正成立的性质：**窗口 ≥ 1.5 秒**（不是卡帧操作）。 */
   const ok = [];
   for (let t = 0.5; t <= 3.01; t += 0.1) {
     const st = R.simulate(LV, specOf(3, 2, [{ t: +t.toFixed(1), n: 2 }]), { maxTime: 40 });
     if (st.result === 'win' && st.stars === 3) ok.push(+t.toFixed(1));
   }
   lines.push('扔沙袋时刻能三星的范围：' + (ok.join(',') || '（无）'));
-  lines.push('窗口宽度 ' + (ok.length ? (ok[ok.length - 1] - ok[0] + 0.1).toFixed(1) : 0) + ' 秒');
-  /* 判据：窗口要么**足够宽**（不是卡帧操作），要么**不存在**（说明扔的时机不影响）。
-   * 两者都说明"这一关不是靠卡时机"，这是好事 —— 但要量出来是哪一种。 */
-  chk('B 扔沙袋的时机不影响通关（窗口覆盖整个扫描区间）',
-    ok.length >= 24, ok.length + ' / 26 个采样点');
+  const width = ok.length ? (ok[ok.length - 1] - ok[0] + 0.1) : 0;
+  lines.push('窗口宽度 ' + width.toFixed(1) + ' 秒');
+  chk('B 扔沙袋的时机不构成门槛（窗口 ≥ 1.5 秒）', width >= 1.5,
+    width.toFixed(1) + 's（' + ok.length + ' / 26 个采样点）');
 }
 
 // ═════════════ C 不是只有一个解 ═════════════
@@ -126,7 +132,16 @@ function specOf(balloons, sandbags, drops) {
 
 // ═════════════ E 第 80 轮那个"17 次硬撞击"是量法造成的 ═════════════
 {
-  /* 用手写循环（不处理 _drops）复现，再用 simulate 对照。 */
+  /* ⚠ 第 86 轮：1-6 的地形改了（终点 col 15→22，坡放缓），
+   * 于是"手写循环不扔沙袋"这个假象**不再复现**（硬接触 0 次）。
+   *
+   * E2 原本的意图是"证明结论的具体来源"，也就是"这个假象能被造出来"。
+   * 但假象依赖的是**旧地形**：当时车不扔沙袋会一路飘到顶、反复磕天花板。
+   * 新地形下它不会飘那么高，所以假象消失。
+   *
+   * 判据改成量那个**仍然成立**的性质：走 simulate 时没有硬撞击
+   * （E1 不变），并且手写循环和 simulate 的**结果一致**
+   * （证明"时间轴"是唯一差别，而不是别的什么东西）。 */
   R.resetParams({ collectContacts: [] });
   const spec = JSON.parse(JSON.stringify(R.SPECS['1-6']));
   const b = R.newBuild(); R.applySpec(LV, b, spec);
@@ -137,12 +152,17 @@ function specOf(balloons, sandbags, drops) {
   const proper = R.simulate(LV, JSON.parse(JSON.stringify(R.SPECS['1-6'])), { maxTime: 40 });
   const properImpacts = proper.events.filter(e => e.indexOf('impact') === 0).length;
 
-  lines.push('手写循环（不扔沙袋）：硬接触 ' + manualHard + ' 次');
-  lines.push('simulate（正确处理 _drops）：impact ' + properImpacts + ' 次');
-  chk('E1 走 simulate 时没有硬撞击（第 80 轮的 17 次是量法造成的）',
-    properImpacts === 0, properImpacts + ' 次');
-  chk('E2 那个假象能被复现（证明结论的具体来源）',
-    manualHard > 0, manualHard + ' 次');
+  lines.push('手写循环（不扔沙袋）：' + st.result + '，硬接触 ' + manualHard + ' 次');
+  lines.push('simulate（正确处理 _drops）：' + proper.result + '，impact ' + properImpacts + ' 次');
+  chk('E1 走 simulate 时没有硬撞击', properImpacts === 0, properImpacts + ' 次');
+  /* 手写循环的结果必须和"simulate 但同样不扔沙袋"一致 —— 两者都是不扔，
+   * 差别只在相机/渲染，而这两样都不影响引擎结果。 */
+  const noDrop = JSON.parse(JSON.stringify(R.SPECS['1-6']));
+  noDrop._drops = [];
+  const properNoDrop = R.simulate(LV, noDrop, { maxTime: 40 });
+  chk('E2 手写循环和「simulate 但不扔沙袋」结果一致（时间轴是唯一差别）',
+    st.result === properNoDrop.result,
+    st.result + ' vs ' + properNoDrop.result);
 }
 
 console.log(lines.join('\n'));

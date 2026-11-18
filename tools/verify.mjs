@@ -124,6 +124,11 @@ const SCRIPTS = [
   /* 第 85 轮：可辨识度。八关各抓一帧，量"全黑占比 / 车与背景的亮度差 /
    * 地形跳变次数"。这一条抓到 1-3 的洞穴配色 68.1% 的像素亮度 < 40。 */
   'test_legibility.js',
+  /* 第 86 轮：HUD 会不会挡住车 / 木箱 / 终点旗。
+   * ⚠ 这一条第一版读 `state.camLive` 算屏幕坐标，而 camLive 只在**渲染**时更新，
+   * 用 RAP.step() 推进时它不动 —— 于是量出了"1-6 车被盖 75%"这个假数据。
+   * 现在按 drawRun 的同一套公式算镜头，再加一条真渲染截图的视觉自证。 */
+  'test_hud_occlusion.js',
   /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
    * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
   'test_watchdog_structural.js',
