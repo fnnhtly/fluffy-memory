@@ -7322,7 +7322,19 @@ const BIOMES = {
                    sfxStats: () => SFX.stats(), sfxResetStats: () => SFX._resetStats(),
                    /* 音效分支记录（只存名字，不给逻辑用）：测试读不到 WebAudio，
                     * 靠它才能断言"碎框走的是 structBreak 这一支"而不是靠人耳。 */
-                   fxLog: () => fxLog.slice(), clearFxLog: () => { fxLog.length = 0; } };
+                   fxLog: () => fxLog.slice(), clearFxLog: () => { fxLog.length = 0; },
+                   /* ⚠ `BIOMES` 导出成 getter（第 97 轮）。
+                    *
+                    * 为什么要导出：`test_level_variety` / `test_drive_variety`
+                    * 的反向验证需要"把所有 biome 的配色统一成同一套"——
+                    * 那是**最强变异**：如果八关共用一个 biome 之后判据还不红，
+                    * 说明它量的其实是地形/镜头，不是配色。
+                    *
+                    * 走源码替换的话，八个 biome 的文本各不相同，很容易漏一个
+                    * （前两版反向验证就是这么失败两次的）。运行期覆盖则不会漏。
+                    *
+                    * 注意是**取引用**而非快照：测试要改的是同一个对象。 */
+                   get BIOMES() { return BIOMES; } };
   startLevel(0);
   requestAnimationFrame(frame);
 })();
