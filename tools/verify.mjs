@@ -136,6 +136,17 @@ const SCRIPTS = [
   'test_hud_geometry.js',
   /* 第 87 轮：离地时车正下方的地面必须在画面内（落点可见性）。 */
   'test_ground_visible.js',
+  /* 第 88 轮：`pillarRise` 的守卫。这一条是 `mutation_sweep.js` 扫出来的 ——
+   * 把 pillarRise 从 0.35 改成 0 或 2.0，全部 33 个纯 Node 测试里没有一条变红。
+   * 而它的注释写着"更慢的话车会先滑出柱子的范围，更快的话视觉上像瞬移"。 */
+  'test_pillar_rise.js',
+  /* 第 88 轮：`pillarRise` 的守卫。这一条是 `tools/mutation_sweep.js` 扫出来的 ——
+   * 把 pillarRise 从 0.35 改成 0 或 2.0，全部 33 个纯 Node 测试里没有一条变红。
+   * 而它的注释写着"更慢的话车会先滑出柱子的范围，更快的话视觉上像瞬移"。
+   *
+   * ⚠ `mutation_sweep.js` 本身**不进这套回归**：它跑 19 个变异 × 34 个测试，
+   * 约 4 分钟。它是开发期审计工具，每十几轮手动跑一次
+   * （`node tools/mutation_sweep.js`），结果记在 docs/parts-redesign.md。 */
   /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
    * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
   'test_watchdog_structural.js',
