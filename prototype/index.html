@@ -1390,6 +1390,36 @@
      * 否则新局开局 0.25 秒内的碎框会被当成上一局的重复。 */
     state.lastEventLen = 0;
     state.lastBreakSfx = -9;
+    /* ⚠ 同样属于"跨局存活、必须在新局清掉"的一族（第 93 轮）。
+     *
+     * 第 92 轮只补了两个游标，顺着查了一遍渲染层的字段生命周期：
+     * **22 个字段既不在 launch 也不在 startLevel 里重置**。
+     * 其中大部分靠每帧自然衰减没事，但有两类是真漏：
+     *
+     *   1. `shakePeak` / `flashPeak` 是**峰值**，只增不减 ——
+     *      上一局撞到 1.2，新局开局就带着 1.2。
+     *      第 92 轮的强度阶梯测试必须手动清零才能测，正是被它污染的。
+     *   2. 粒子数组与 `fireworkFlash` 在**失败瞬间**（车飞出地图）会残留 ——
+     *      实测连续三局：第 2 局开场还飘着上一局的 18 个尘土 + 29 个碎片。
+     *
+     * 这些都是**纯表现层**字段：清掉不影响任何物理/玩法判定，
+     * 但不清的话玩家开新局第一眼看到的是上一局的爆炸现场。 */
+    state.shake = 0;
+    state.flash = 0;
+    state.vignette = 0;
+    state.slowmo = 0;
+    state.shakePeak = 0;
+    state.flashPeak = 0;
+    state.fireworkFlash = 0;
+    state.dust = [];
+    state.debris = [];
+    state.bursts = [];
+    state.confetti = [];
+    state.boxBurst = [];
+    state.boxPop = null;
+    state.boxPulse = 0;
+    state.pigMood = 'normal';
+    state.pigShake = false;
   }
 
   /* 标准解发射：给测试用的一步到位入口。

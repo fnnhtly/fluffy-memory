@@ -146,26 +146,34 @@ function chk(label, cond, extra) {
       S.dust=[]; S.debris=[];
       S.run.events.push(${JSON.stringify(evStr)});
       return 1;})()`);
-    /* ⚠ 塞完事件后**立刻**开始读，中间不留长 sleep。
-     * lvl1 的峰值只活 2 帧（33ms），而一次 sleep(18) + evaluate 往返就要 25ms ——
-     * 第一版循环 8 次、每次 18ms，第一次读到时峰值已经衰减完了。
-     * 现在第一次读只等一帧（20ms），并且**先读峰值再读抖值**。 */
+    /* ⚠ 采样要**等事件被消费**，不是等固定时长。
+     *
+     * `consumeRunEvents()` 每帧跑一次，把 `lastEventLen` 推到 `events.length`。
+     * 只要等到 `lastEventLen === events.length`，就说明事件**一定**被消费了；
+     * 而 `shakePeak` / `flashPeak` 是只增不减的观测字段，消费之后它就有了。
+     *
+     * 第一版按固定 20ms 采样 —— 偶尔第一帧落在"事件还没被消费"的空档里，
+     * 于是 `touch lvl=1` 偶发报"完全没有反馈"（实测 8 次里 1 次）。
+     * 那不是产品问题，是**用固定时长猜一个异步完成时刻**（这个项目的第 N 次）。 */
     let best = null;
-    for (let i = 0; i < 10; i++) {
-      await sleep(i === 0 ? 20 : 22);
+    let consumed = false;
+    for (let i = 0; i < 14; i++) {
+      await sleep(i === 0 ? 16 : 20);
       const r = JSON.parse(await ev(`(()=>{const S=window.__rap.state;
         return JSON.stringify({
+          evLen: (S.run.events||[]).length,
+          lastEventLen: S.lastEventLen||0,
           shake: +(S.shake||0).toFixed(3),
           flash: +(S.flash||0).toFixed(3),
           vig: +(S.vignette||0).toFixed(3),
           shakePeak: +(S.shakePeak||0).toFixed(3),
           flashPeak: +(S.flashPeak||0).toFixed(3),
           dust: (S.dust||[]).length,
-          debris: (S.debris||[]).length,
-          slowmo: +(S.slowmo||0).toFixed(2)
+          debris: (S.debris||[]).length
         });})()`));
       if (!best) best = r;
       else {
+        best.evLen = r.evLen; best.lastEventLen = r.lastEventLen;
         best.shake = Math.max(best.shake, r.shake);
         best.flash = Math.max(best.flash, r.flash);
         best.vig = Math.max(best.vig, r.vig);
@@ -173,20 +181,16 @@ function chk(label, cond, extra) {
         best.flashPeak = Math.max(best.flashPeak, r.flashPeak);
         best.dust = Math.max(best.dust, r.dust);
         best.debris = Math.max(best.debris, r.debris);
-        best.slowmo = Math.max(best.slowmo, r.slowmo);
       }
+      /* 事件已消费 + 采样到至少一次状态之后就可以停 */
+      if (r.lastEventLen >= r.evLen && i >= 2) { consumed = true; break; }
     }
-    /* ⚠ 兜底：`touch lvl=1` 的峰值只有 0.10，而抖值 2 帧就衰减到 0。
-     * 4 个异步采样点全部可能落在它**之后** —— 那不是产品缺陷，
-     * 是"用轮询抓 33 ms 的脉冲"。所以这里再查一次
-     * `state.shakePeak`（纯观测字段，一旦写过就不会归零）。
-     * 如果连它都是 0，那才是真的没消费。 */
-    const peakOnly = JSON.parse(await ev(`(()=>{const S=window.__rap.state;
-      return JSON.stringify({ shakePeak:+(S.shakePeak||0).toFixed(3),
-        flashPeak:+(S.flashPeak||0).toFixed(3) });})()`));
-    if (best) {
-      best.shakePeak = Math.max(best.shakePeak, peakOnly.shakePeak);
-      best.flashPeak = Math.max(best.flashPeak, peakOnly.flashPeak);
+    if (!consumed) {
+      /* 兜底：再读一次峰值，确认不是"没消费" */
+      const last = JSON.parse(await ev(`(()=>{const S=window.__rap.state;
+        return JSON.stringify({ evLen:(S.run.events||[]).length,
+          lastEventLen:S.lastEventLen||0 });})()`));
+      lines.push('  ⚠ 采样超时：events ' + last.evLen + ' / 已消费 ' + last.lastEventLen);
     }
     return best;
   }
