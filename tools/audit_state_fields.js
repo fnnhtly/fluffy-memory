@@ -167,7 +167,19 @@ const DUNDER_TEST_ONLY = {
    * 正常游玩时它永远是 undefined。 */
   freezeRun: '测试钩子：冻住物理，配合 __lockCam 让"设好状态抓一帧"能复现。' +
              '写的人是 test_hud_occlusion / test_legibility，' +
-             '渲染层读它来决定是否跳过这一帧的 RAP.step。正常游玩时永远是 undefined。'
+             '渲染层读它来决定是否跳过这一帧的 RAP.step。正常游玩时永远是 undefined。',
+  /* 第 89 轮加的同族钩子。
+   *
+   * 为什么需要它：现有测试量的是**逻辑**（trayRect 的坐标、hintFor 的文案），
+   * 所以把 drawTray 整个早退掉，那些断言照样通过 —— 它们量的是
+   * "该画在哪"，不是"画出来了没有"。要证明后者，只能在隐藏前后各抓一帧
+   * 做像素差分，而改源码重载会丢状态。
+   *
+   * 写的人是 test_draw_presence.js（直接赋 state.__hideDraw = 'drawTray' 等），
+   * 渲染层读它来决定跳过哪一个绘制调用。正常游玩时永远是 undefined。 */
+  hideDraw: '测试钩子：按名字跳过某一个绘制函数，用于"隐藏前后像素差分"。' +
+            '写的人是 test_draw_presence，渲染层读它来决定跳过哪个 drawXxx。' +
+            '正常游玩时永远是 undefined。'
 };
 const orphan = [...dunderRead].filter(k => !dunderWritten.has(k) && !DUNDER_TEST_ONLY[k]).sort();
 const allowed = [...dunderRead].filter(k => !dunderWritten.has(k) && DUNDER_TEST_ONLY[k]).sort();

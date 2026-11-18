@@ -6707,7 +6707,7 @@ const BIOMES = {
           ctx.restore();
         }
       }
-      drawTray();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawTray') drawTray();
       drawObserveBtn();
       drawRecentreBtn();
       drawButtons();
@@ -7025,8 +7025,16 @@ const BIOMES = {
      * 零件说明页/暂停卡，而"我要提示"恰恰是那一刻的念头。
      * 画在底层就等于"那个页面里没有提示"。
      * 但欢迎页例外 —— 新玩家还没看过规则，提示卡由点击处理挡住不显示。 */
-    drawHintBtn();
-    drawHintCard();
+    /* ⚠ `state.__hideDraw` 是**测试钩子**（第 89 轮），只由 test_draw_presence.js 写。
+     *
+     * 为什么需要它：现有测试量的是**逻辑**（`trayRect(i)` 的坐标、
+     * `hintFor(lv,tier)` 的文案），所以把 `drawTray` 整个早退掉，
+     * 那些断言照样通过 —— 它们量的是"该画在哪"，不是"画出来了没有"。
+     * 要证明"画出来了"，只能在隐藏前后各抓一帧做像素差分，
+     * 而改源码重载会丢状态，所以留一个只影响绘制的开关。
+     * 玩家永远不设它（默认 undefined）。 */
+    if (!state.__hideDraw || state.__hideDraw !== 'drawHintBtn') drawHintBtn();
+    if (!state.__hideDraw || state.__hideDraw !== 'drawHintCard') drawHintCard();
     drawToast();
   }
   // 首次进入自动显示欢迎引导

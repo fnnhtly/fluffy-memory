@@ -140,13 +140,20 @@ const SCRIPTS = [
    * 把 pillarRise 从 0.35 改成 0 或 2.0，全部 33 个纯 Node 测试里没有一条变红。
    * 而它的注释写着"更慢的话车会先滑出柱子的范围，更快的话视觉上像瞬移"。 */
   'test_pillar_rise.js',
+  /* 第 89 轮：**画面里该有的东西真的画出来了吗**。
+   * `mutation_browser.js` 扫出来三条（drawTray / drawHintBtn / drawHintCard）
+   * 整个早退掉也没有任何测试变红 —— 因为现有测试量的是**逻辑**
+   * （`trayRect(i)` 的坐标、`hintFor` 的文案），不是像素。
+   * 这一条对每个"必须看得见"的东西做隐藏前后像素差分。 */
+  'test_draw_presence.js',
   /* 第 88 轮：`pillarRise` 的守卫。这一条是 `tools/mutation_sweep.js` 扫出来的 ——
    * 把 pillarRise 从 0.35 改成 0 或 2.0，全部 33 个纯 Node 测试里没有一条变红。
    * 而它的注释写着"更慢的话车会先滑出柱子的范围，更快的话视觉上像瞬移"。
    *
    * ⚠ `mutation_sweep.js` 本身**不进这套回归**：它跑 19 个变异 × 34 个测试，
    * 约 4 分钟。它是开发期审计工具，每十几轮手动跑一次
-   * （`node tools/mutation_sweep.js`），结果记在 docs/parts-redesign.md。 */
+   * （`node tools/mutation_sweep.js`），结果记在 docs/parts-redesign.md。
+   * 同理 `mutation_browser.js`（9 变异 × 9 浏览器测试，约 14 分钟）。 */
   /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
    * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
   'test_watchdog_structural.js',
