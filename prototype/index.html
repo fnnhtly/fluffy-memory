@@ -2267,9 +2267,22 @@ const BIOMES = {
   cave: { rock: [74, 96, 112], grass: '#5e8a62', grass2: '#3f6448', grass3: '#82b07c',
     edge: '#101d1b', skyTop: '#16283a', skyMid: '#1e3648', skyLow: '#2a4a5c',
     hill: '#16303f', jungle: ['#1e3e36', '#17322c', '#112722'], cave: true, dim: 0.08 },
-  ice: { rock: [150, 178, 198], grass: '#cfeef8', grass2: '#9ed4e8', grass3: '#f0ffff',
-    edge: '#4a7286', skyTop: '#9FCBE8', skyMid: '#D8EEF8', skyLow: '#F4FCFF',
-    hill: '#8FB6CC', jungle: ['#7FA8BE', '#6B95AC', '#5A8199'], cave: false, dim: 0.26 },
+  /* ⚠ 第 96 轮：冰面往**更冷更白**推了一档。
+   *
+   * 建造页可辨识度探针（排除 UI 之后量）报 1-4 vs 1-8 **刚好卡在阈值 18**。
+   * 两者在排除 UI 之后的平均色分别是 rgb(85,107,120) 和 rgb(78,117,119) ——
+   * 灰蓝 vs 青绿，在地平线附近撞在一起。
+   *
+   * 1-4 是冰面，语义上本来就该更冷更白。所以改的是 1-4：
+   *   rock  [150,178,198] → [176,204,218]（更亮、更偏蓝）
+   *   skyTop #9FCBE8 → #B4DCF2，hill #8FB6CC → #A8C8DC
+   *   jungle 三档各提亮约 18
+   *
+   * dim 不动：它控制建造期那层压暗，改了会同时影响"看得清"那条判据。
+   * （注意：这段注释在模板字符串内部，不能出现反引号 —— 第十三次。） */
+  ice: { rock: [176, 204, 218], grass: '#ddf5fd', grass2: '#b0e0f0', grass3: '#f8ffff',
+    edge: '#4a7286', skyTop: '#B4DCF2', skyMid: '#E2F2FA', skyLow: '#F8FEFF',
+    hill: '#A8C8DC', jungle: ['#97C0D4', '#83AEC4', '#71A0B4'], cave: false, dim: 0.26 },
   /* 黄昏（1-5）。岩体往**紫**推，和 1-1 的绿灰、1-6 的沙黄都分开。
    * 这三个 biome 的 rock 是缩略图主色，所以它们的 RGB 必须两两差 ≥ 18，
    * 否则选关页上分不出谁是谁（tools/test_level_thumbs 把守）。 */
@@ -2303,9 +2316,22 @@ const BIOMES = {
    * rock 和 skyBiome 的沙黄、canyon 的橙、dusk 的紫都拉开了距离，
    * 而且和"岩柱从脚下升起"这个玩法在语义上也贴。
    * `cave: false` —— 它是有天空的露天峡谷，不是洞。 */
+  /* ⚠ 第 96 轮：天空与远景山压深两档。
+   *
+   * 建造页可辨识度探针（排除 UI 之后量）报 1-2 vs 1-7 平均色距 19、签名差 5.8%
+   * —— 都刚好卡在阈值上。查下来是"暖色天空 + 暖色远山"两套撞车：
+   *
+   *   canyon（1-2）skyTop #E8A96B  hill #B07A5A   浅橙
+   *   gorge （1-7）skyTop #C8807A  hill #a8686a   浅粉红
+   *
+   * 排除 UI 之后画面大部分是天空和远景山，而岩体（rock 差 58）只占下半屏。
+   *
+   * 改 1-7 而不改 1-2，理由是语义：1-7 是「岩窟」，本来就该更暗更闷。
+   * rock 不动 —— 它是缩略图主色，改它会连带 test_level_thumbs 的阈值。
+   * （注意：这段注释在模板字符串内部，不能出现反引号 —— 第十三/十四次。） */
   gorge: { rock: [176, 92, 96], grass: '#c88a6a', grass2: '#a86a52', grass3: '#e8b48a',
-    edge: '#3a2020', skyTop: '#C8807A', skyMid: '#E8B49A', skyLow: '#F8DCC4',
-    hill: '#a8686a', jungle: ['#7A4638', '#5E3428', '#46241C'], cave: false, dim: 0.16 },
+    edge: '#3a2020', skyTop: '#8E5A56', skyMid: '#C08878', skyLow: '#DCB498',
+    hill: '#7A4A48', jungle: ['#5E3428', '#46241C', '#32180F'], cave: false, dim: 0.16 },
   /* 「风原」（1-8 用，第 73 轮新增）。
    *
    * 1-8 一开始借了 `field`，但 1-1 也是 field —— 两张缩略图平均色差只有 16。
