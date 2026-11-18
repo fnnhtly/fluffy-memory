@@ -1374,6 +1374,22 @@
     state.heldBtn = 0;
     state.paused = false;       // 同理：上一局的自动暂停不该带进这一局
     state.autoPaused = false;
+    /* ⚠ 新的一局，**事件游标必须归零**（第 92 轮）。
+     *
+     * `state.run.events` 是每局新建的数组（`createRun` 里 `events: []`），
+     * 但 `state.lastEventLen` 是**渲染层**的游标，跨局存活。
+     * 不重置的话：上一局结束时它是 9，新局事件从 0 开始 ——
+     * 消费循环从 index 9 起，**前 9 条事件永远不会被演出来**。
+     *
+     * 实测症状：连续跑两局时，第二局的 `part_broken`（碎框）
+     * 落在前 9 条里，于是 `structBreak` 一声都没响，
+     * 而 `test_break_sfx` 的"8 米落体碎了框"那条断言因此变红。
+     * （它单独跑是绿的 —— 因为单独跑时 lastEventLen 从 0 起。）
+     *
+     * 同理 `lastBreakSfx`（碎框音效的 0.25 秒去重时刻）也要清，
+     * 否则新局开局 0.25 秒内的碎框会被当成上一局的重复。 */
+    state.lastEventLen = 0;
+    state.lastBreakSfx = -9;
   }
 
   /* 标准解发射：给测试用的一步到位入口。
@@ -6630,6 +6646,185 @@ const BIOMES = {
     }
     requestAnimationFrame(frame);
   }
+  /* 消费这一帧的新事件 —— **不受 __freezeRun / paused 影响**（第 92 轮）。
+   *
+   * ⚠ 这一整段原来是内联在物理循环里的。于是测试一旦设 `__freezeRun = true`
+   * 冻住画面，**事件就一个都不消费** —— 所有撞击 / 碎框 / 种子演出都消失，
+   * 而"冻住物理"的本意只是"这一帧不推进物理"。
+   *
+   * 产品层面这也是对的：已经写进 `run.events` 的事就该被演出来。
+   * 暂停时也不该丢（否则恢复之后永远补不上）。
+   *
+   * ⚠ 外层**不能**再声明一个 `const evs` —— 被抽出来的那段自己有一句
+   * （第一版就这样，报 "Identifier 'evs' has already been declared"，
+   *  而这个项目第 6 轮就踩过同一个错）。所以这里只读长度、用别的名字。
+   */
+  function consumeRunEvents() {
+    const st = state.run;
+    if (!st || !st.events || !st.events.length) return;
+    if (st.events.length === (state.lastEventLen || 0)) return;
+    // 撞击检测（用事件流，避免改物理）
+    const evs = state.run.events || [];
+    if (evs.length !== (state.lastEventLen || 0)) {
+      for (let i = state.lastEventLen || 0; i < evs.length; i++) {
+        if (evs[i].indexOf('impact') === 0) {
+          state.slowmo = 0.35;
+          state.shake = Math.min(1.4, state.shake + 0.85);
+          state.flash = 1;
+          state.vignette = 1;
+          spawnDebris(state.run.car.x, state.run.car.y + 0.4);
+        } else if (evs[i].indexOf('burst') === 0) {
+          /* 气球炸了：在炸点撒一圈橡皮屑 + 一小团粉色雾。
+           * 没有这个，点气球只有"数字变了"、画面上什么都不发生 ——
+           * 玩家会以为没点中。坐标由物理层写进事件串，渲染层只负责画。 */
+          const mb = evs[i].match(/x=(-?[\d.]+) y=(-?[\d.]+)/);
+          const bx = mb ? parseFloat(mb[1]) : state.run.car.x;
+          const by = mb ? parseFloat(mb[2]) : state.run.car.y;
+          spawnBurstFx(bx, by);
+          SFX.pop();
+        } else if (evs[i].indexOf('sandbag_drop') === 0) {
+          SFX.bagDrop();
+        } else if (evs[i].indexOf('box ') === 0) {
+          /* 捡到木箱的**演出**（第 91 轮）。
+           *
+           * ⚠ 这段**必须挂在事件流上**，不能挂在
+           * `boxesGot > prevBox` 上 —— 那个写法是死代码：
+           * `prevBox` 在读之前，`RAP.step` 已经把箱子捡起来了
+           * （step 在前，prevBox 在后），于是条件恒为 false。
+           * 我第一版就是那么写的，整段演出**永远不执行**，
+           * 而像素差分只看到 HUD 数字变了（5.9%）。
+           *
+           * 事件串里带着坐标：`box 1 col=4 row=7` —— 用它当爆发点。
+           * 三层反馈，量级从大到小：
+           *   ① 箱子上炸一圈金色碎屑（state.boxBurst）
+           *   ② 车顶飘一个「+1 木箱」，0.9 秒上浮淡出（state.boxPop）
+           *   ③ HUD 的木箱计数面板短暂放大（state.boxPulse）
+           */
+          SFX.box();
+          const mx = evs[i].match(/col=(-?[\d.]+)/);
+          const bx = mx ? parseFloat(mx[1]) + 0.5 : state.run.car.x;
+          const by = RAP.groundY(state.run, bx - 0.5) + 0.6;
+          state.boxBurst = state.boxBurst || [];
+          for (let k = 0; k < 10; k++) {
+            const ang = (k / 10) * Math.PI * 2 + Math.random() * 0.4;
+            const sp = 1.8 + Math.random() * 2.6;
+            state.boxBurst.push({
+              x: bx, y: by,
+              vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.7 + 1.8,
+              r: 2 + Math.random() * 3,
+              life: 0.45 + Math.random() * 0.25, maxLife: 0.7,
+              color: ['#ffd93d', '#f6c453', '#ffffff'][k % 3]
+            });
+          }
+          state.boxPop = { t: 0, x: state.run.car.x, y: state.run.car.y + 1.6 };
+          state.boxPulse = 1;
+        } else if (evs[i].indexOf('firework_light') === 0) {
+          /* 霄灯被点亮（第 63 轮新增零件）。玩家点它一下 → 开始烧 1.2 秒。
+           * 没有这条的话，点一下之后画面上除了灯身闪一下什么都不发生，
+           * 而"它到底点着了没有"是这一关最关键的判断。 */
+          SFX.place(0.5);
+          state.fireworkFlash = 1;
+        } else if (evs[i].indexOf('firework_out') === 0) {
+          /* 霄灯烧完。这一刻玩家必须知道 —— 推力没了，
+           * 从此这盏灯只是配重。用轻的一声 + 一点烟。 */
+          SFX.bagDrop();
+        } else if (evs[i].indexOf('wind_field') === 0) {
+          /* 风场生成 / 结束（第 71 轮）。
+           * 风场是**看不见的力**，所以它在画面上必须有明确的开始和结束 ——
+           * 玩家按了 2 号键，如果只有一股粒子，他不会知道自己买了 3 秒。 */
+          if (evs[i].indexOf('wind_field_end') === 0) {
+            SFX.bagDrop();
+          } else {
+            SFX.pop();
+          }
+        } else if (evs[i].indexOf('pillar') === 0) {
+          /* 岩柱升起。低沉的"轰"和轻的"噗"都表达不了"地长出来了"，
+           * 用触地音 + 一次轻震屏最接近。
+           * ⚠ SFX 里没有 `impact` 这个名字（那是**事件**名，不是音效名）。
+           * 音效只有 thud / hurt / crack / structBreak 几个；
+           * 写成 SFX.impact() 会每帧抛 TypeError，被 frame() 吞掉之后
+           * 整个渲染循环停在上一帧 —— 表现是"画什么都没反应"。 */
+          SFX.thud(2);
+          state.shake = Math.max(state.shake || 0, 0.5);
+        } else if (evs[i].indexOf('dash_start') === 0) {
+          /* 冲刺开始：这一下的音量必须比普通动作大，
+           * 因为接下来 4 秒玩家是"失控"的（速度快、方向固定）。 */
+          SFX.pop();
+          state.flash = Math.max(state.flash || 0, 0.35);
+        } else if (evs[i].indexOf('dash_end') === 0) {
+          SFX.bagDrop();
+        } else if (evs[i].indexOf('barrier_block') === 0) {
+          /* 撞上雷屏障。和"撞墙"必须能听出区别 ——
+           * 屏障是"再试一次就好"，不是"这把废了"。 */
+          SFX.thud(1);
+          toast('雷屏障挡路：用雷种冲刺才穿得过');
+        } else if (evs[i].indexOf('part_broken') === 0) {
+          /* 木框碎了：这局的「不散架」已经没了，必须有一声和"裂缝"完全不同的音。
+           * 原来这里什么都不做 —— 碎框唯一的表现是通用撞击音 + 木框耐久条消失，
+           * 玩家听到的和"撞了一下"一模一样，但代价差一颗星。
+           *
+           * 一次撞击会同时碎掉**每一块**结构件（2~3 格），也就是连发 2~3 条
+           * part_broken 事件。三条音效在同一毫秒叠起来不是"更响"，
+           * 而是一团糊掉的噪声（实测 8 米落体响了 3 声）。
+           * 所以这里按 0.25 秒去重：一次撞击 = 一声断裂。 */
+          if (!state.lastBreakSfx || state.run.time - state.lastBreakSfx > 0.25) {
+            state.lastBreakSfx = state.run.time;
+            SFX.structBreak();
+            state.shake = Math.min(1.3, state.shake + 0.55);
+            state.flash = Math.max(state.flash, 0.45);
+          }
+        } else if (evs[i].indexOf('struct_hurt') === 0) {
+          /* 木框掉耐久（还没碎）。在它之前，这件事在画面上是**完全静默**的：
+           * 只有木头上多一道相对淡的缝，没有音、没有抖、没有闪。
+           * 于是「不散架」这颗星是靠"你回头自己发现"来惩罚玩家的。
+           * 这里给它一声木头裂的音 + 一点点抖，量级比 touch lvl=4 小一半：
+           * 掉耐久不是灾难片，是提醒。 */
+          SFX.crack();
+          state.shake = Math.min(1.1, state.shake + 0.30);
+        } else if (evs[i].indexOf('motor_out') === 0) {
+          /* 马达断电。引擎一直在写这条事件（game.js），渲染层原来是**零消费者**：
+           * 车不再被推动，玩家只看到它慢慢停住，然后 8 秒没进展判负，
+           * 失败卡写"一直在原地打转：8 秒没能更靠近终点"。
+           * 真实原因是电池用光。1-3 的整关设计就是围着电量转的，
+           * 归零却没有任何提示，等于把最关键的一次状态变化藏起来。
+           * 这里给一次明确提示 + 一次闷响（不是撞击级别，是"东西停了"）。 */
+          toast('电池用光了 —— 马达停了');
+          SFX.motorOut();
+        } else if (evs[i].indexOf('touch lvl=') === 0) {
+          // 分级接触反馈
+          const lv = parseInt(evs[i].split('lvl=')[1], 10) || 1;
+          const mx = evs[i].match(/x=([\d.]+)/);
+          const px = mx ? parseFloat(mx[1]) : state.run.car.x;
+          const strengths = [0, 0.10, 0.22, 0.42, 0.85];
+          state.shake = Math.min(1.2, state.shake + strengths[lv]);
+          /* 记下"这一局震到过的最大值"（第 63 轮加）。
+           *
+           * 为什么需要：`state.shake` 每帧按 elapsed*3.2 衰减，
+           * Lv2 的 0.22 只要 70 ms 就掉到 0.05 以下。任何
+           * **按固定间隔轮询**的测试（100 ms 一次）几乎必然错过峰值 ——
+           * tools/test_touch_fx 就是这么误报的："Lv≥2 出现 1 次，
+           * 震屏峰值 0.05"，而实际上它确实震过。
+           *
+           * 记一个峰值字段，测试读它，就不用和帧率赛跑。
+           * 这个字段是**纯观测值**，不参与任何物理/玩法判定。 */
+          state.shakePeak = Math.max(state.shakePeak || 0, state.shake);
+          if (lv >= 3) { state.flash = Math.max(state.flash, 0.35); }
+          /* `flash` 每帧衰减 `elapsed × 7` —— 0.35 只活 **50 ms**。
+           * 峰值留一个观测字段（和 shakePeak 同族，第 92 轮加），
+           * 否则任何"读一次"的量具都会错过它（第 92 轮的强度阶梯就撞过）。 */
+          state.flashPeak = Math.max(state.flashPeak || 0, state.flash || 0);
+          if (lv >= 2) { state.vignette = Math.max(state.vignette, lv >= 3 ? 0.7 : 0.25); }
+          // 尘土：级别 1~2 个小，3~4 用碎片
+          const n = [0, 3, 5, 8, 10][lv] || 3;
+          if (lv >= 3) spawnDebris(px, state.run.car.y + 0.2);
+          spawnDust(px, state.run.car.y - 0.3, n);
+          SFX.thud(lv);
+        }
+      }
+      state.lastEventLen = evs.length;
+    }
+  }
+
   function frameBody(now) {
     applyCanvasSize();
     state.frameCount = (state.frameCount || 0) + 1;   // 只用于"rAF 还活着吗"这类测试
@@ -6882,202 +7077,15 @@ const BIOMES = {
             }
           }
           RAP.step(state.run, 1 / 60);
-          // 撞击检测（用事件流，避免改物理）
-          const evs = state.run.events || [];
-          if (evs.length !== (state.lastEventLen || 0)) {
-            for (let i = state.lastEventLen || 0; i < evs.length; i++) {
-              if (evs[i].indexOf('impact') === 0) {
-                state.slowmo = 0.35;
-                state.shake = Math.min(1.4, state.shake + 0.85);
-                state.flash = 1;
-                state.vignette = 1;
-                spawnDebris(state.run.car.x, state.run.car.y + 0.4);
-              } else if (evs[i].indexOf('burst') === 0) {
-                /* 气球炸了：在炸点撒一圈橡皮屑 + 一小团粉色雾。
-                 * 没有这个，点气球只有"数字变了"、画面上什么都不发生 ——
-                 * 玩家会以为没点中。坐标由物理层写进事件串，渲染层只负责画。 */
-                const mb = evs[i].match(/x=(-?[\d.]+) y=(-?[\d.]+)/);
-                const bx = mb ? parseFloat(mb[1]) : state.run.car.x;
-                const by = mb ? parseFloat(mb[2]) : state.run.car.y;
-                spawnBurstFx(bx, by);
-                SFX.pop();
-              } else if (evs[i].indexOf('sandbag_drop') === 0) {
-                SFX.bagDrop();
-              } else if (evs[i].indexOf('box ') === 0) {
-                /* 捡到木箱的**演出**（第 91 轮）。
-                 *
-                 * ⚠ 这段**必须挂在事件流上**，不能挂在
-                 * `boxesGot > prevBox` 上 —— 那个写法是死代码：
-                 * `prevBox` 在读之前，`RAP.step` 已经把箱子捡起来了
-                 * （step 在前，prevBox 在后），于是条件恒为 false。
-                 * 我第一版就是那么写的，整段演出**永远不执行**，
-                 * 而像素差分只看到 HUD 数字变了（5.9%）。
-                 *
-                 * 事件串里带着坐标：`box 1 col=4 row=7` —— 用它当爆发点。
-                 * 三层反馈，量级从大到小：
-                 *   ① 箱子上炸一圈金色碎屑（state.boxBurst）
-                 *   ② 车顶飘一个「+1 木箱」，0.9 秒上浮淡出（state.boxPop）
-                 *   ③ HUD 的木箱计数面板短暂放大（state.boxPulse）
-                 */
-                SFX.box();
-                const mx = evs[i].match(/col=(-?[\d.]+)/);
-                const bx = mx ? parseFloat(mx[1]) + 0.5 : state.run.car.x;
-                const by = RAP.groundY(state.run, bx - 0.5) + 0.6;
-                state.boxBurst = state.boxBurst || [];
-                for (let k = 0; k < 10; k++) {
-                  const ang = (k / 10) * Math.PI * 2 + Math.random() * 0.4;
-                  const sp = 1.8 + Math.random() * 2.6;
-                  state.boxBurst.push({
-                    x: bx, y: by,
-                    vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.7 + 1.8,
-                    r: 2 + Math.random() * 3,
-                    life: 0.45 + Math.random() * 0.25, maxLife: 0.7,
-                    color: ['#ffd93d', '#f6c453', '#ffffff'][k % 3]
-                  });
-                }
-                state.boxPop = { t: 0, x: state.run.car.x, y: state.run.car.y + 1.6 };
-                state.boxPulse = 1;
-              } else if (evs[i].indexOf('firework_light') === 0) {
-                /* 霄灯被点亮（第 63 轮新增零件）。玩家点它一下 → 开始烧 1.2 秒。
-                 * 没有这条的话，点一下之后画面上除了灯身闪一下什么都不发生，
-                 * 而"它到底点着了没有"是这一关最关键的判断。 */
-                SFX.place(0.5);
-                state.fireworkFlash = 1;
-              } else if (evs[i].indexOf('firework_out') === 0) {
-                /* 霄灯烧完。这一刻玩家必须知道 —— 推力没了，
-                 * 从此这盏灯只是配重。用轻的一声 + 一点烟。 */
-                SFX.bagDrop();
-              } else if (evs[i].indexOf('wind_field') === 0) {
-                /* 风场生成 / 结束（第 71 轮）。
-                 * 风场是**看不见的力**，所以它在画面上必须有明确的开始和结束 ——
-                 * 玩家按了 2 号键，如果只有一股粒子，他不会知道自己买了 3 秒。 */
-                if (evs[i].indexOf('wind_field_end') === 0) {
-                  SFX.bagDrop();
-                } else {
-                  SFX.pop();
-                }
-              } else if (evs[i].indexOf('pillar') === 0) {
-                /* 岩柱升起。低沉的"轰"和轻的"噗"都表达不了"地长出来了"，
-                 * 用触地音 + 一次轻震屏最接近。
-                 * ⚠ SFX 里没有 `impact` 这个名字（那是**事件**名，不是音效名）。
-                 * 音效只有 thud / hurt / crack / structBreak 几个；
-                 * 写成 SFX.impact() 会每帧抛 TypeError，被 frame() 吞掉之后
-                 * 整个渲染循环停在上一帧 —— 表现是"画什么都没反应"。 */
-                SFX.thud(2);
-                state.shake = Math.max(state.shake || 0, 0.5);
-              } else if (evs[i].indexOf('dash_start') === 0) {
-                /* 冲刺开始：这一下的音量必须比普通动作大，
-                 * 因为接下来 4 秒玩家是"失控"的（速度快、方向固定）。 */
-                SFX.pop();
-                state.flash = Math.max(state.flash || 0, 0.35);
-              } else if (evs[i].indexOf('dash_end') === 0) {
-                SFX.bagDrop();
-              } else if (evs[i].indexOf('barrier_block') === 0) {
-                /* 撞上雷屏障。和"撞墙"必须能听出区别 ——
-                 * 屏障是"再试一次就好"，不是"这把废了"。 */
-                SFX.thud(1);
-                toast('雷屏障挡路：用雷种冲刺才穿得过');
-              } else if (evs[i].indexOf('part_broken') === 0) {
-                /* 木框碎了：这局的「不散架」已经没了，必须有一声和"裂缝"完全不同的音。
-                 * 原来这里什么都不做 —— 碎框唯一的表现是通用撞击音 + 木框耐久条消失，
-                 * 玩家听到的和"撞了一下"一模一样，但代价差一颗星。
-                 *
-                 * 一次撞击会同时碎掉**每一块**结构件（2~3 格），也就是连发 2~3 条
-                 * part_broken 事件。三条音效在同一毫秒叠起来不是"更响"，
-                 * 而是一团糊掉的噪声（实测 8 米落体响了 3 声）。
-                 * 所以这里按 0.25 秒去重：一次撞击 = 一声断裂。 */
-                if (!state.lastBreakSfx || state.run.time - state.lastBreakSfx > 0.25) {
-                  state.lastBreakSfx = state.run.time;
-                  SFX.structBreak();
-                  state.shake = Math.min(1.3, state.shake + 0.55);
-                  state.flash = Math.max(state.flash, 0.45);
-                }
-              } else if (evs[i].indexOf('struct_hurt') === 0) {
-                /* 木框掉耐久（还没碎）。在它之前，这件事在画面上是**完全静默**的：
-                 * 只有木头上多一道相对淡的缝，没有音、没有抖、没有闪。
-                 * 于是「不散架」这颗星是靠"你回头自己发现"来惩罚玩家的。
-                 * 这里给它一声木头裂的音 + 一点点抖，量级比 touch lvl=4 小一半：
-                 * 掉耐久不是灾难片，是提醒。 */
-                SFX.crack();
-                state.shake = Math.min(1.1, state.shake + 0.30);
-              } else if (evs[i].indexOf('motor_out') === 0) {
-                /* 马达断电。引擎一直在写这条事件（game.js），渲染层原来是**零消费者**：
-                 * 车不再被推动，玩家只看到它慢慢停住，然后 8 秒没进展判负，
-                 * 失败卡写"一直在原地打转：8 秒没能更靠近终点"。
-                 * 真实原因是电池用光。1-3 的整关设计就是围着电量转的，
-                 * 归零却没有任何提示，等于把最关键的一次状态变化藏起来。
-                 * 这里给一次明确提示 + 一次闷响（不是撞击级别，是"东西停了"）。 */
-                toast('电池用光了 —— 马达停了');
-                SFX.motorOut();
-              } else if (evs[i].indexOf('touch lvl=') === 0) {
-                // 分级接触反馈
-                const lv = parseInt(evs[i].split('lvl=')[1], 10) || 1;
-                const mx = evs[i].match(/x=([\d.]+)/);
-                const px = mx ? parseFloat(mx[1]) : state.run.car.x;
-                const strengths = [0, 0.10, 0.22, 0.42, 0.85];
-                state.shake = Math.min(1.2, state.shake + strengths[lv]);
-                /* 记下"这一局震到过的最大值"（第 63 轮加）。
-                 *
-                 * 为什么需要：`state.shake` 每帧按 elapsed*3.2 衰减，
-                 * Lv2 的 0.22 只要 70 ms 就掉到 0.05 以下。任何
-                 * **按固定间隔轮询**的测试（100 ms 一次）几乎必然错过峰值 ——
-                 * tools/test_touch_fx 就是这么误报的："Lv≥2 出现 1 次，
-                 * 震屏峰值 0.05"，而实际上它确实震过。
-                 *
-                 * 记一个峰值字段，测试读它，就不用和帧率赛跑。
-                 * 这个字段是**纯观测值**，不参与任何物理/玩法判定。 */
-                state.shakePeak = Math.max(state.shakePeak || 0, state.shake);
-                if (lv >= 3) { state.flash = Math.max(state.flash, 0.35); }
-                if (lv >= 2) { state.vignette = Math.max(state.vignette, lv >= 3 ? 0.7 : 0.25); }
-                // 尘土：级别 1~2 个小，3~4 用碎片
-                const n = [0, 3, 5, 8, 10][lv] || 3;
-                if (lv >= 3) spawnDebris(px, state.run.car.y + 0.2);
-                spawnDust(px, state.run.car.y - 0.3, n);
-                SFX.thud(lv);
-              }
-            }
-            state.lastEventLen = evs.length;
-          }
         }
       }
-      /* ⚠ **事件消费必须在冻结守卫之外**（第 91 轮）。
+      /* 事件消费**在物理守卫之外**（第 92 轮抽出成函数）。
        *
-       * 上面那一整段（碰撞检测 / 分级反馈 / 各事件演出）原来全在
-       * `if (... && !state.__freezeRun)` 里面。于是测试设了
-       * `__freezeRun = true` 之后**事件根本不被消费** ——
-       * 我加的捡木箱演出永远不触发，而差分只看到 HUD 数字变了。
-       *
-       * 事件消费只读 `state.run.events`、只改渲染层状态
-       * （shake / flash / particles），不推进物理，
-       * 所以冻结物理时它仍然该跑。 */
-      if (state.run && state.run.events && state.run.events.length) {
-        const evs2 = state.run.events;
-        if (evs2.length !== (state.lastEventLen2 || 0)) {
-          for (let i = state.lastEventLen2 || 0; i < evs2.length; i++) {
-            if (evs2[i].indexOf('box ') === 0) {
-              SFX.box();
-              const mx = evs2[i].match(/col=(-?[\d.]+)/);
-              const bxx = mx ? parseFloat(mx[1]) + 0.5 : state.run.car.x;
-              const byy = RAP.groundY(state.run, bxx) + 0.6;
-              state.boxBurst = state.boxBurst || [];
-              for (let k = 0; k < 10; k++) {
-                const ang = (k / 10) * Math.PI * 2 + Math.random() * 0.4;
-                const sp = 1.8 + Math.random() * 2.6;
-                state.boxBurst.push({
-                  x: bxx, y: byy,
-                  vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.7 + 1.8,
-                  r: 2 + Math.random() * 3,
-                  life: 0.45 + Math.random() * 0.25, maxLife: 0.7,
-                  color: ['#ffd93d', '#f6c453', '#ffffff'][k % 3]
-                });
-              }
-              state.boxPop = { t: 0, x: state.run.car.x, y: state.run.car.y + 1.6 };
-              state.boxPulse = 1;
-            }
-          }
-          state.lastEventLen2 = evs2.length;
-        }
-      }
+       * 它只读 `state.run.events`、只改渲染层状态（shake / flash / 粒子），
+       * 不推进物理 —— 所以 `__freezeRun` 与 `paused` 都不该挡住它。
+       * 已经写进事件流的事就该被演出来，否则"冻住画面"会顺带把所有
+       * 撞击/碎框/种子演出一起吞掉（第 91 轮为此踩过一次）。 */
+      consumeRunEvents();
       if (state.run && state.run.phase === 'resolved' && state.phase === 'run') {
         state.phase = 'resolved';
         state.resultT = 0;
