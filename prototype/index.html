@@ -6688,8 +6688,8 @@ const BIOMES = {
       ctx.globalAlpha = 1;   // 强制复位（缓存切换可能残留 alpha）
       const uiAlpha = state.introT < 0.35 ? 0 : Math.min(1, (state.introT - 0.35) / 0.35);
       if (uiAlpha < 1) ctx.globalAlpha = uiAlpha;
-      drawGrid();
-      drawBuildCar();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawGrid') drawGrid();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawBuildCar') drawBuildCar();
       if (state.bounce) {
         state.bounce.t += dt;
         const k = Math.min(1, state.bounce.t / 0.25);
@@ -6708,17 +6708,17 @@ const BIOMES = {
         }
       }
       if (!state.__hideDraw || state.__hideDraw !== 'drawTray') drawTray();
-      drawObserveBtn();
-      drawRecentreBtn();
-      drawButtons();
-      drawTabs();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawObserveBtn') drawObserveBtn();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawRecentreBtn') drawRecentreBtn();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawButtons') drawButtons();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawTabs') drawTabs();
       /* 地形预览条必须用这一帧的 ter（可能刚重建过），并且只画在建造期：
        * 行驶期玩家已经在跑那段地形了，再挂一条缩略图只是噪音。 */
-      drawBuildPreview(ter);
-      drawHud();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawBuildPreview') drawBuildPreview(ter);
+      if (!state.__hideDraw || state.__hideDraw !== 'drawHud') drawHud();
       /* 摇杆画在**所有 UI 之上**：它出现在玩家按下的地方，
        * 那可能正好压在托盘或网格上，被盖住就看不见自己推了多远。 */
-      drawJoystick();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawJoystick') drawJoystick();
       if (uiAlpha < 1) ctx.globalAlpha = 1;
       ctx.restore();
     } else if (state.phase === 'run' || state.phase === 'resolved') {
@@ -6994,13 +6994,13 @@ const BIOMES = {
       }
       const prevBox = state.run ? state.run.boxesGot : 0;
       const prevHp = state.run ? state.run.pigHP : 3;
-      drawRun(dt);
+      if (!state.__hideDraw || state.__hideDraw !== 'drawRun') drawRun(dt);
       if (state.run) {
         if (state.run.boxesGot > prevBox) SFX.box();
         if (state.run.pigHP < prevHp) SFX.hurt();
       }
-      drawTabs();
-      drawHud();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawTabs') drawTabs();
+      if (!state.__hideDraw || state.__hideDraw !== 'drawHud') drawHud();
       // 结算推镜：0.2 秒内把镜头推近 12%（再盖卡片，避免硬切）
       if (state.phase === 'resolved' && state.outroT < 1) {
         state.outroT = Math.min(1, state.outroT + dt / 0.2);
@@ -7010,17 +7010,17 @@ const BIOMES = {
       if (state.slowmo > 0 && state.phase === 'run') {
         fillScreen('rgba(232,200,122,.08)');
       }
-      if (state.phase === 'resolved') drawResult(dt);
-      drawButtons();
+      if (state.phase === 'resolved' && (!state.__hideDraw || state.__hideDraw !== 'drawResult')) drawResult(dt);
+      if (!state.__hideDraw || state.__hideDraw !== 'drawButtons') drawButtons();
     }
-    drawWelcome();
-    drawLevelSelect();
-    drawHelp();
+    if (!state.__hideDraw || state.__hideDraw !== 'drawWelcome') drawWelcome();
+    if (!state.__hideDraw || state.__hideDraw !== 'drawLevelSelect') drawLevelSelect();
+    if (!state.__hideDraw || state.__hideDraw !== 'drawHelp') drawHelp();
     /* 静音钮画在**所有面板之后**：欢迎页、选关页、零件说明、暂停卡都会盖住
      * 大半个屏幕，而那几页正好是玩家最想静音的地方（尤其是被自动暂停的时候）。
      * 画在最底层就等于"看起来在那儿、其实点不着"—— 本项目已经踩过一次
      * （右上角的钮被引导层吞掉，见 test_mute.js 的 B4/B5）。 */
-    drawMuteBtn();
+    if (!state.__hideDraw || state.__hideDraw !== 'drawMuteBtn') drawMuteBtn();
     /* 提示钮和静音钮同一层（也画在所有面板之后）：卡关的玩家正在看着
      * 零件说明页/暂停卡，而"我要提示"恰恰是那一刻的念头。
      * 画在底层就等于"那个页面里没有提示"。

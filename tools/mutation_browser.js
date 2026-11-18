@@ -39,7 +39,7 @@ const TESTS = [
   'test_touch_fx.js',          // 像素：撞击特效
   'test_build_preview.js',     // 建造期：地形预览条
   'test_wind_fx.js',           // 像素：风特效
-  'test_draw_presence.js'      // 像素：该画的东西真的画出来了（第 89 轮）
+  'test_draw_presence_all.js'  // 像素：该画的东西真的画出来了（第 89/90 轮，14 项）
 ];
 
 /* 实际可用的变异在下面按函数签名生成，避免手抄整段代码。 */
