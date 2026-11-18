@@ -129,6 +129,13 @@ const SCRIPTS = [
    * 用 RAP.step() 推进时它不动 —— 于是量出了"1-6 车被盖 75%"这个假数据。
    * 现在按 drawRun 的同一套公式算镜头，再加一条真渲染截图的视觉自证。 */
   'test_hud_occlusion.js',
+  /* 第 87 轮：HUD 与车驻留区的**纯几何**判据。
+   * test_hud_occlusion 的逐帧遮挡其实是恒等式（车在屏幕上的位置由镜头公式
+   * 固定为 cx∈[427,550]、cy∈[427,449]，而 HUD 下沿是 234 —— 结构上不可能相交）。
+   * 真正守"HUD 不挡车"的是这一条，它带自证：HUD 下移 300px 时必须红。 */
+  'test_hud_geometry.js',
+  /* 第 87 轮：离地时车正下方的地面必须在画面内（落点可见性）。 */
+  'test_ground_visible.js',
   /* 第 82 轮：看门狗的结构性安全边际（W 必须大于最长标准解时长）。
    * 以及 test_watchdog_health.js —— 走引擎的 trace 复扫阈值。 */
   'test_watchdog_structural.js',

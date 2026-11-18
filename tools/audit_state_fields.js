@@ -154,7 +154,20 @@ console.log('写：' + ([...dunderWritten].sort().join(', ') || '（无）'));
  * 登记必须写明"谁写、为什么渲染层需要读"。 */
 const DUNDER_TEST_ONLY = {
   lockCam: '测试钩子：钉住镜头做逐像素差分。写的人是 test_seed_fx.js（直接赋 state.__lockCam），' +
-           '渲染层读它来决定是否跳过镜头缓动与震屏。正常游玩时它永远是 undefined。'
+           '渲染层读它来决定是否跳过镜头缓动与震屏。正常游玩时它永远是 undefined。',
+  /* 第 87 轮加的同级钩子。
+   *
+   * 为什么需要它：`__lockCam` 只锁**镜头**，而 rAF 循环里仍在
+   * `RAP.step(state.run, 1/60)` —— 于是"锁了镜头"之后车还在往前跑，
+   * 几帧后它已经跑出取景范围。实测 camLastDraw 锁在 8.98 而
+   * carX 从 12.59 涨到 19.11，同一个判据两次跑给出 38% 和 26%。
+   *
+   * 写的人是 test_hud_occlusion.js / test_legibility.js（直接赋
+   * state.__freezeRun = true），渲染层读它来决定是否跳过这一帧的物理推进。
+   * 正常游玩时它永远是 undefined。 */
+  freezeRun: '测试钩子：冻住物理，配合 __lockCam 让"设好状态抓一帧"能复现。' +
+             '写的人是 test_hud_occlusion / test_legibility，' +
+             '渲染层读它来决定是否跳过这一帧的 RAP.step。正常游玩时永远是 undefined。'
 };
 const orphan = [...dunderRead].filter(k => !dunderWritten.has(k) && !DUNDER_TEST_ONLY[k]).sort();
 const allowed = [...dunderRead].filter(k => !dunderWritten.has(k) && DUNDER_TEST_ONLY[k]).sort();

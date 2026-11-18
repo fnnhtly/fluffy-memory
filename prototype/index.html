@@ -6773,7 +6773,17 @@ const BIOMES = {
        * 拿着一个被外部改过的 time 一算 noGainFor 就立刻判负，
        * 把刚设好的 win 覆盖成 fail，结算卡永远出不来。
        * （第 39 轮加看门狗之后，排版审计和对比度审计就是这样同时挂的。） */
-      if (state.run && state.phase === 'run' && state.run.phase === 'run' && !state.paused) {
+      /* 测试用的**物理冻结**（第 87 轮）。和 `__lockCam` 同一族。
+       *
+       * 为什么需要它：`__lockCam` 只锁镜头，rAF 循环里仍在
+       * `RAP.step(state.run, 1/60)` —— 于是"锁住镜头"之后车还在往前跑，
+       * 几帧后它已经跑到画面外，采样区随之漂移。
+       * 需要在 evaluate 里"设好状态、抓一帧"的地方（视觉自证那类），
+       * 没有这个开关就只能靠 sleep 猜帧数，同一个判据两次跑数值不同。
+       *
+       * `state.__freezeRun` 只由测试写，玩家永远不设它。 */
+      if (state.run && state.phase === 'run' && state.run.phase === 'run' &&
+          !state.paused && !state.__freezeRun) {
         // 固定 60Hz 累加
         const timeScale = state.slowmo > 0 ? 0.3 : 1;
         state.run.acc = (state.run.acc || 0) + dt * timeScale;

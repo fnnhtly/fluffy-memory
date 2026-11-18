@@ -116,6 +116,9 @@ function chk(label, cond, extra) {
       const c = S.run.car, ter = S.run.terrain;
       S.__lockCam = { x: c.x + 2.0,
         y: Math.max(c.y, ter.surfaceY(c.x)) + 1.5, zoom: 1.85 };
+      /* 同时冻住物理（第 87 轮加的同级钩子）。
+       * 只锁镜头不够：rAF 循环里仍在 RAP.step，车会跑出锁定的取景范围。 */
+      S.__freezeRun = true;
       return 1;})()`);
     await sleep(320);
 
