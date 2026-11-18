@@ -5444,8 +5444,8 @@ const BIOMES = {
       if (isNew) text('NEW', cx, cy - 44, 10, '#ffd93d', 'center', true);
     }
 
-    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 400, 16, '#cfe0ec', 'left');
-    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 400, 16, '#cfe0ec', 'center');
+    text(`用时 ${st.time.toFixed(2)} s`, X + 42, cardY + 388, 16, '#cfe0ec', 'left');
+    text(`木箱 ${st.boxesGot}/${st.boxes.length}`, X + W / 2 - 40, cardY + 388, 16, '#cfe0ec', 'center');
     /* 结算卡右侧原来是「能量剩 N」（第 63 轮），再后来是「动力 需求/供给」
      * （第 63 轮），第 71 轮容量系统删掉之后**两个都不存在**了。
      * 现在显示**种子用了几颗** —— 这是这一版唯一和"我用掉了什么"有关的数。
@@ -5455,12 +5455,21 @@ const BIOMES = {
       const u = st.seedUse || { anemo: 0, geo: 0, electro: 0 };
       const used = (u.anemo || 0) + (u.geo || 0) + (u.electro || 0);
       const txt = total === 0 ? '无种子' : ('种子 ' + used + ' / ' + total);
-      text(txt, X + W - 42, cardY + 400, 16, '#cfe0ec', 'right');
+      text(txt, X + W - 42, cardY + 388, 16, '#cfe0ec', 'right');
     }
 
-    // 这一关的累计星数 —— 让"还差一颗"变成一件看得见的事
+    /* 这一关的累计星数 —— 让"还差一颗"变成一件看得见的事。
+     *
+     * ⚠ 这一行原来画在 `cardY + 428`，而卡片高 424 ——
+     * **整整 4 px 落在卡底外面**，压在金色边框上（第 94 轮截图里看得很清楚）。
+     * 原来没有任何判据会发现它：`test_layout_audit` 只查"有没有越出屏幕"，
+     * 而这一行离屏幕底还有 142 px。
+     *
+     * 现在挪到 `cardY + 410`（和上面那行 400 差 10 px，行距够），
+     * 卡底下方留 14 px 余量。同时底部那句"用时/木箱/种子"下移到 396，
+     * 两行之间保持 14 px。 */
     text('本关 ★ ' + starsOf(tgoals) + ' / 3　总计 ★ ' + totalStars() + ' / ' + (levels.length * 3),
-      X + W / 2, cardY + 428, 13, 'rgba(200,222,238,.85)', 'center');
+      X + W / 2, cardY + 410, 13, 'rgba(200,222,238,.85)', 'center');
 
     if (!win) {
       /* 失败原因分两行：第一行是引擎判的**类**（卡住 / 没进展 / 飘走），
