@@ -4631,9 +4631,25 @@ const BIOMES = {
       ctx.strokeStyle = COL.goldDim; ctx.lineWidth = 1; ctx.stroke();
       text(state.run.time.toFixed(2) + ' s', RT.timer.x + RT.timer.w - 16, RT.timer.y + 21, 16, '#ffd93d', 'right');
       if (boxLine) {
-        ctx.fillStyle = 'rgba(10,18,24,.88)';
+        /* 捡到木箱时这一块面板短暂放大（`state.boxPulse` 1 → 0，0.45 秒）。
+         * 第 91 轮加的第三层反馈：HUD 数字本身变了还不够显眼，
+         * 面板放大能让**扫过一眼**也注意到。 */
+        const pl = state.boxPulse || 0;
+        const sc = 1 + pl * 0.22;
+        ctx.save();
+        if (pl > 0.01) {
+          const bx2 = RT.box.x + RT.box.w / 2, by2 = RT.box.y + RT.box.h / 2;
+          ctx.translate(bx2, by2); ctx.scale(sc, sc); ctx.translate(-bx2, -by2);
+        }
+        ctx.fillStyle = pl > 0.01 ? 'rgba(58,44,16,.94)' : 'rgba(10,18,24,.88)';
         roundRect(RT.box.x, RT.box.y, RT.box.w, RT.box.h, 8); ctx.fill();
-        text(boxLine, RT.box.x + RT.box.w - 16, RT.box.y + 19, 13, '#cfe0ef', 'right');
+        if (pl > 0.01) {
+          ctx.strokeStyle = 'rgba(255,215,120,' + (0.55 + pl * 0.45).toFixed(2) + ')';
+          ctx.lineWidth = 2; ctx.stroke();
+        }
+        text(boxLine, RT.box.x + RT.box.w - 16, RT.box.y + 19, 13,
+          pl > 0.01 ? '#ffe9b0' : '#cfe0ef', 'right');
+        ctx.restore();
       }
       /* 木框耐久条（第 45 轮）。
        *
@@ -4912,6 +4928,7 @@ const BIOMES = {
     drawDebris(cam);
     drawBursts(cam);
     drawDust(cam);
+    drawBoxBurst(cam);
     /* 风/喷流特效必须在车体**之后**画（它是从零件口喷出来的，压在车上更自然），
      * 但要排在尘土之前那一类"地面反馈"外 —— 顺序：车身 → 风 → 尘 → 彩带。 */
     state.windFxDrawN = 0;
@@ -6231,6 +6248,48 @@ const BIOMES = {
     }
   }
 
+  /* ══════════ 捡木箱的演出（第 91 轮）══════════
+   *
+   * 三层反馈：
+   *   ① 木箱位置炸一圈金色碎屑（state.boxBurst，粒子）
+   *   ② 车顶飘一个「+1 木箱」（state.boxPop，0.9 秒上浮淡出）
+   *   ③ HUD 的木箱计数面板短暂放大（state.boxPulse，在 drawHud 里用）
+   *
+   * 为什么需要：在这之前这件事在画面上的唯一表现是右上角那个数字
+   * 从 0/1 变 1/1，加一声音效。玩家这时候眼睛盯着车。
+   * 第 91 轮的量法（右上角计数面板、隐藏前后差分）显示只有 4.6%。
+   */
+  function drawBoxBurst(cam) {
+    if (state.boxBurst && state.boxBurst.length) {
+      state.boxBurst.forEach(b => {
+        const p = worldToScreen(b.x, b.y, cam);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, b.life / b.maxLife));
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, b.r * (0.5 + b.life / b.maxLife * 0.9), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+    if (state.boxPop) {
+      const k = state.boxPop.t / 0.9;
+      if (k < 1) {
+        const p = worldToScreen(state.boxPop.x, state.boxPop.y + k * 1.2, cam);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - k * k);
+        ctx.font = 'bold ' + Math.round(30 - k * 8) + 'px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(40,28,8,.75)';
+        ctx.strokeText('+1 木箱', p.x, p.y);
+        ctx.fillStyle = '#ffd93d';
+        ctx.fillText('+1 木箱', p.x, p.y);
+        ctx.restore();
+      }
+    }
+  }
+
   function drawDust(cam) {
     if (!state.dust || !state.dust.length) return;
     state.dust.forEach(d => {
@@ -6745,6 +6804,23 @@ const BIOMES = {
         });
         state.dust = state.dust.filter(d => d.life > 0);
       }
+      /* 捡木箱的粒子 + 浮动文字 + HUD 脉冲（第 91 轮） */
+      if (state.boxBurst && state.boxBurst.length) {
+        state.boxBurst.forEach(b => {
+          b.x += b.vx * dt; b.y += b.vy * dt;
+          b.vx *= (1 - 2.4 * dt);
+          b.vy -= 1.4 * dt;
+          b.life -= dt;
+        });
+        state.boxBurst = state.boxBurst.filter(b => b.life > 0);
+      }
+      if (state.boxPop) {
+        state.boxPop.t += dt;
+        if (state.boxPop.t >= 0.9) state.boxPop = null;
+      }
+      if (state.boxPulse > 0) {
+        state.boxPulse = Math.max(0, state.boxPulse - dt / 0.45);
+      }
       // 纸花：抛物线 + 摇曳 + 淡出
       if (state.confetti.length) {
         state.confetti.forEach(c2 => {
@@ -6827,6 +6903,40 @@ const BIOMES = {
                 SFX.pop();
               } else if (evs[i].indexOf('sandbag_drop') === 0) {
                 SFX.bagDrop();
+              } else if (evs[i].indexOf('box ') === 0) {
+                /* 捡到木箱的**演出**（第 91 轮）。
+                 *
+                 * ⚠ 这段**必须挂在事件流上**，不能挂在
+                 * `boxesGot > prevBox` 上 —— 那个写法是死代码：
+                 * `prevBox` 在读之前，`RAP.step` 已经把箱子捡起来了
+                 * （step 在前，prevBox 在后），于是条件恒为 false。
+                 * 我第一版就是那么写的，整段演出**永远不执行**，
+                 * 而像素差分只看到 HUD 数字变了（5.9%）。
+                 *
+                 * 事件串里带着坐标：`box 1 col=4 row=7` —— 用它当爆发点。
+                 * 三层反馈，量级从大到小：
+                 *   ① 箱子上炸一圈金色碎屑（state.boxBurst）
+                 *   ② 车顶飘一个「+1 木箱」，0.9 秒上浮淡出（state.boxPop）
+                 *   ③ HUD 的木箱计数面板短暂放大（state.boxPulse）
+                 */
+                SFX.box();
+                const mx = evs[i].match(/col=(-?[\d.]+)/);
+                const bx = mx ? parseFloat(mx[1]) + 0.5 : state.run.car.x;
+                const by = RAP.groundY(state.run, bx - 0.5) + 0.6;
+                state.boxBurst = state.boxBurst || [];
+                for (let k = 0; k < 10; k++) {
+                  const ang = (k / 10) * Math.PI * 2 + Math.random() * 0.4;
+                  const sp = 1.8 + Math.random() * 2.6;
+                  state.boxBurst.push({
+                    x: bx, y: by,
+                    vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.7 + 1.8,
+                    r: 2 + Math.random() * 3,
+                    life: 0.45 + Math.random() * 0.25, maxLife: 0.7,
+                    color: ['#ffd93d', '#f6c453', '#ffffff'][k % 3]
+                  });
+                }
+                state.boxPop = { t: 0, x: state.run.car.x, y: state.run.car.y + 1.6 };
+                state.boxPulse = 1;
               } else if (evs[i].indexOf('firework_light') === 0) {
                 /* 霄灯被点亮（第 63 轮新增零件）。玩家点它一下 → 开始烧 1.2 秒。
                  * 没有这条的话，点一下之后画面上除了灯身闪一下什么都不发生，
@@ -6930,6 +7040,44 @@ const BIOMES = {
           }
         }
       }
+      /* ⚠ **事件消费必须在冻结守卫之外**（第 91 轮）。
+       *
+       * 上面那一整段（碰撞检测 / 分级反馈 / 各事件演出）原来全在
+       * `if (... && !state.__freezeRun)` 里面。于是测试设了
+       * `__freezeRun = true` 之后**事件根本不被消费** ——
+       * 我加的捡木箱演出永远不触发，而差分只看到 HUD 数字变了。
+       *
+       * 事件消费只读 `state.run.events`、只改渲染层状态
+       * （shake / flash / particles），不推进物理，
+       * 所以冻结物理时它仍然该跑。 */
+      if (state.run && state.run.events && state.run.events.length) {
+        const evs2 = state.run.events;
+        if (evs2.length !== (state.lastEventLen2 || 0)) {
+          for (let i = state.lastEventLen2 || 0; i < evs2.length; i++) {
+            if (evs2[i].indexOf('box ') === 0) {
+              SFX.box();
+              const mx = evs2[i].match(/col=(-?[\d.]+)/);
+              const bxx = mx ? parseFloat(mx[1]) + 0.5 : state.run.car.x;
+              const byy = RAP.groundY(state.run, bxx) + 0.6;
+              state.boxBurst = state.boxBurst || [];
+              for (let k = 0; k < 10; k++) {
+                const ang = (k / 10) * Math.PI * 2 + Math.random() * 0.4;
+                const sp = 1.8 + Math.random() * 2.6;
+                state.boxBurst.push({
+                  x: bxx, y: byy,
+                  vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.7 + 1.8,
+                  r: 2 + Math.random() * 3,
+                  life: 0.45 + Math.random() * 0.25, maxLife: 0.7,
+                  color: ['#ffd93d', '#f6c453', '#ffffff'][k % 3]
+                });
+              }
+              state.boxPop = { t: 0, x: state.run.car.x, y: state.run.car.y + 1.6 };
+              state.boxPulse = 1;
+            }
+          }
+          state.lastEventLen2 = evs2.length;
+        }
+      }
       if (state.run && state.run.phase === 'resolved' && state.phase === 'run') {
         state.phase = 'resolved';
         state.resultT = 0;
@@ -6996,7 +7144,10 @@ const BIOMES = {
       const prevHp = state.run ? state.run.pigHP : 3;
       if (!state.__hideDraw || state.__hideDraw !== 'drawRun') drawRun(dt);
       if (state.run) {
-        if (state.run.boxesGot > prevBox) SFX.box();
+        /* 捡木箱的演出已经移到**事件流**里（`box` 分支）——
+         * 原来写在这里的 `boxesGot > prevBox` 是死代码：
+         * `prevBox` 在读之前，上面的 `RAP.step` 已经把箱子捡起来了。
+         * 留着这个注释是为了下次有人想在这里加"数值变化"反馈时不再踩。 */
         if (state.run.pigHP < prevHp) SFX.hurt();
       }
       if (!state.__hideDraw || state.__hideDraw !== 'drawTabs') drawTabs();
